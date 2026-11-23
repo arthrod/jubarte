@@ -4086,3 +4086,85 @@ fn ring1_flags_duplicate_durable_ids() {
         report.findings
     );
 }
+
+/// A package whose body and one header each hold a drawing, the header
+/// referenced by `sections` sections: the shapes Windows Word 2024 refused
+/// as corrupt in jubarte 0.19.0 redlines (2026-11-23).
+fn drawing_story_package(body_id: &str, header_id: &str, sections: usize) -> Vec<u8> {
+    const NS: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture""#;
+    let drawing = |id: &str| {
+        format!(
+            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="914400" cy="914400"/><wp:docPr id="{id}" name="Shape {id}"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="p"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill/><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#
+        )
+    };
+    let sect = r#"<w:sectPr><w:headerReference w:type="default" r:id="rIdH"/></w:sectPr>"#;
+    let breaks: String = (1..sections)
+        .map(|_| format!("<w:p><w:pPr>{sect}</w:pPr></w:p>"))
+        .collect();
+    let doc = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {NS}><w:body>{}{breaks}{sect}</w:body></w:document>"#,
+        drawing(body_id)
+    );
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {NS}>{}</w:hdr>"#,
+        drawing(header_id)
+    );
+    let mut pkg = PartFs::open(&zip_with_parts(&[
+        ("word/document.xml", &doc),
+        ("word/header1.xml", &header),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#,
+        ),
+    ]))
+    .unwrap();
+    pkg.add_content_type_override(
+        "word/header1.xml",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+    );
+    pkg.to_zip().unwrap()
+}
+
+fn doc_pr_findings(bytes: &[u8]) -> Vec<jubarte::validate::Finding> {
+    jubarte::validate::ring1(&PartFs::open(bytes).unwrap())
+        .into_iter()
+        .filter(|f| f.code == "DUPLICATE_DOCPR_ID")
+        .collect()
+}
+
+/// A header drawing repeating the body drawing's id is a finding on the
+/// header, and repair numbers the two apart.
+#[test]
+fn probe_doc_pr_id_repeated_across_parts() {
+    assert!(doc_pr_findings(&drawing_story_package("1", "2", 1)).is_empty());
+    let bytes = drawing_story_package("1", "1", 1);
+    let findings = doc_pr_findings(&bytes);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].part, "word/header1.xml");
+    assert!(!findings[0].word_fatal && findings[0].repairable);
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(doc_pr_findings(&repaired.docx).is_empty());
+    let header = common::docx::part_string(&repaired.docx, "word/header1.xml").unwrap();
+    assert!(header.contains(r#"id="2""#), "{header}");
+}
+
+/// A header with drawings that two sections reference repeats its own
+/// ids once Word loads it per section; repair gives the second section a
+/// copy whose drawings are numbered apart.
+#[test]
+fn probe_header_with_drawings_shared_by_sections() {
+    assert!(doc_pr_findings(&drawing_story_package("1", "2", 1)).is_empty());
+    let bytes = drawing_story_package("1", "2", 2);
+    let findings = doc_pr_findings(&bytes);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].part, "word/header1.xml");
+    assert!(
+        findings[0].message.contains("2 sections"),
+        "{}",
+        findings[0].message
+    );
+    let repaired = jubarte::validate::repair(&bytes).unwrap();
+    assert!(doc_pr_findings(&repaired.docx).is_empty());
+    let copy = common::docx::part_string(&repaired.docx, "word/header1_1.xml").unwrap();
+    assert!(copy.contains(r#"id="3""#), "{copy}");
+}

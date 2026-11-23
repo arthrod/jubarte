@@ -29,7 +29,7 @@
 //! | `MISSING_REL_TARGET` | yes when used by markup; unused relationships are unverified warning leads (#1938) | no |
 //! | `PICTURE_BULLET_UNDEFINED` | yes | no |
 //! | `DUPLICATE_REVISION_ID` | no: Word opens same-kind duplicates (102 probes, 2026-10-18, #1137); the OOXML validator refuses them (`Sem_UniqueAttributeValue`); error diagnostic | yes: renumbered |
-//! | `DUPLICATE_DOCPR_ID` | no (lead) | yes: renumbered |
+//! | `DUPLICATE_DOCPR_ID` | no (lead): also across story parts and for a header or footer with drawings that two sections share; Windows Word 2024 refused 16 such redlines and opened 24 (2026-11-23) | yes: renumbered across parts; a shared part with drawings is copied per section |
 //! | `VML_SHAPE_TYPE_INVALID` | no: self-referential or missing VML type; warning (#1800) | no |
 //! | `PARA_ID_OUT_OF_RANGE` | no: Word opens it; the schema forbids it | yes: renumbered |
 //! | `TEXT_INSIDE_DELETION`, `DELTEXT_OUTSIDE_DELETION`, `MOVEFROM_WITH_DELTEXT` | yes | yes: `w:t` and `w:delText` swapped |
@@ -1519,6 +1519,7 @@ pub fn ring1(pkg: &PartFs) -> Vec<Finding> {
     check_relationship_integrity(pkg, &mut out);
     check_picture_bullets(pkg, &mut out);
     check_revision_and_drawing_ids(pkg, &mut out);
+    check_doc_pr_ids_across_stories(pkg, &mut out);
     check_para_text_id_bounds(pkg, &mut out);
     check_del_text_under_del(pkg, &mut out);
     check_deleted_text_has_deletion(pkg, &mut out);
@@ -2566,6 +2567,93 @@ fn num_durable_id<'a>(dom: &'a Dom, num: NodeId, namespace: &str) -> Option<&'a 
         }
     }
     None
+}
+
+/// `wp:docPr` ids are document-wide, not per part. A header or footer
+/// drawing that repeats a body drawing's id, or a header or footer with
+/// drawings that two sections reference (Word loads it once per section, so
+/// its ids repeat), made Windows Word 2024 refuse 16 jubarte 0.19.0 redlines
+/// as corrupt (remote Word, 2026-11-23); a copy with fresh ids opened each.
+/// Word opened 24 others that also repeat ids across parts, so this stays a
+/// lead, like the in-part repeat. `mc:Fallback` twins are Word's own and
+/// stay out, as in [`collect_ids`].
+fn check_doc_pr_ids_across_stories(pkg: &PartFs, out: &mut Vec<Finding>) {
+    let Some(main) = main_part(pkg) else {
+        return;
+    };
+    let mut stories = vec![main.clone()];
+    stories.extend(crate::document_comparer::drawing_story_parts(pkg, &main));
+    let mut holder: HashMap<String, String> = HashMap::new();
+    let mut with_drawings: HashSet<String> = HashSet::new();
+    for part in &stories {
+        if !pkg
+            .part_bytes(part)
+            .is_some_and(|b| b.windows(6).any(|w| w == b":docPr"))
+        {
+            continue;
+        }
+        let Some((dom, root)) = parse_part(pkg, part) else {
+            continue;
+        };
+        let mut own: HashSet<String> = HashSet::new();
+        for e in dom.descendants(root, None) {
+            if !dom.name(e).is_some_and(|n| n.local_name() == "docPr")
+                || !dom.ancestors(e, Some(&MC::name("Fallback"))).is_empty()
+            {
+                continue;
+            }
+            with_drawings.insert(part.clone());
+            let Some(id) = dom
+                .attributes(e)
+                .into_iter()
+                .find(|(n, _)| n.local_name() == "id")
+                .map(|(_, v)| v)
+            else {
+                continue;
+            };
+            if !own.insert(id.clone()) {
+                continue; // an in-part repeat: collect_ids reports it
+            }
+            match holder.get(&id) {
+                Some(first) => out.push(Finding::new(
+                    "DUPLICATE_DOCPR_ID",
+                    part,
+                    element_path(&dom, e),
+                    format!("wp:docPr id '{id}' in '{part}' repeats a drawing's id in '{first}'"),
+                )),
+                None => {
+                    holder.insert(id, part.clone());
+                }
+            }
+        }
+    }
+    if with_drawings.len() <= usize::from(with_drawings.contains(&main)) {
+        return;
+    }
+    let Some((dom, root)) = parse_part(pkg, &main) else {
+        return;
+    };
+    let mut sections: HashMap<String, usize> = HashMap::new();
+    for (_, parts) in crate::document_comparer::section_story_parts(&dom, root, pkg, &main) {
+        for part in parts {
+            *sections.entry(part).or_default() += 1;
+        }
+    }
+    let mut shared: Vec<_> = sections
+        .into_iter()
+        .filter(|(part, n)| *n > 1 && with_drawings.contains(part))
+        .collect();
+    shared.sort();
+    for (part, n) in shared {
+        out.push(Finding::new(
+            "DUPLICATE_DOCPR_ID",
+            &part,
+            "",
+            format!(
+                "'{part}' holds drawings and {n} sections reference it: Word loads it once per section, so its wp:docPr ids repeat"
+            ),
+        ));
+    }
 }
 
 fn check_revision_and_drawing_ids(pkg: &PartFs, out: &mut Vec<Finding>) {
@@ -3689,6 +3777,9 @@ pub fn repair(docx: &[u8]) -> Result<Repaired, ValidateError> {
         transitional
     };
     let mut pkg = PartFs::open(&bytes)?;
+    if has("DUPLICATE_DOCPR_ID") {
+        crate::document_comparer::fix_up_drawing_ids_across_package(&mut pkg, false);
+    }
     for part in parts_with(&["MC_UNBOUND_PREFIX"]) {
         edit_part(&mut pkg, &part, |dom, root| {
             crate::comparer::finalize::bind_compatibility_prefixes(dom, root);

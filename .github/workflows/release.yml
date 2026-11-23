@@ -273,13 +273,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --no-index --find-links jubarte-python/dist jubarte-docx
+          python -m pip install --no-index --no-deps jubarte-python/dist/jubarte_docx-*.whl
           python -c "import jubarte as j; print(j.capabilities()['engine_version'])"
       - if: matrix.manylinux == 'musllinux_1_2'
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD/jubarte-python/dist:/dist:ro" python:3.12-alpine \
-            sh -ec 'pip install --no-index --find-links /dist jubarte-docx && python -c "import jubarte as j; print(j.capabilities()[\"engine_version\"])"'
+            sh -ec 'python -m pip install --no-index --no-deps /dist/jubarte_docx-*.whl && python -c "import jubarte as j; print(j.capabilities()[\"engine_version\"])"'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-${{ needs.version.outputs.version }}-${{ matrix.artifact }}

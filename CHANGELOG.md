@@ -15,6 +15,18 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-23
+
+### Fixed
+
+- **Drawing ids are unique across the whole document** (#2539). A redline numbered `wp:docPr` ids from 1 in each part, so a header, footer, footnote, endnote or comment drawing could repeat a body drawing's id. A header or footer with drawings that two sections reference is loaded once per section, so its own ids repeated too. Windows Word 2024 refused 16 jubarte 0.19.0 redlines with these shapes as corrupt. The compare now gives each extra section its own copy of such a part and numbers drawing ids across every story part (untouched ids are kept under `preserve_untouched`). All 16 open with the fix, and the 40 pairs Word already opened still open.
+
+### Changed
+
+- **`jubarte validate` checks drawing ids across story parts** (#2539). `DUPLICATE_DOCPR_ID` now also reports a drawing id held in two parts and a header or footer with drawings that two sections share. It stays a lead, not Word-fatal: Word opened 24 other redlines that repeat ids across parts. `jubarte validate --repair` renumbers across parts and copies the shared part.
+- **Dependencies refreshed** (#2535, #2536, #2539): zip 9.8, regex, clap and the rest of the four Cargo.locks within their semver ranges, mcp 2.3 for the Python extra. `filetime` stays at 0.2.29, because 0.2.30 adds a build script `deny.toml` does not allow.
+- **Release tooling** (#2539): `scripts/mini-release.sh` cuts a small release and refuses one whose version-bearing files name more than one version; the manylinux build checks the rustup installer's sha256; the wheel smoke test installs the built wheel alone.
+
 ## [0.19.0] - 2026-11-21
 
 > **Summary.** jubarte 0.19.0 is licensed under Apache-2.0 and ships as nine crates published together: the jubarte facade and CLI over jubarte-dom, jubarte-opc, jubarte-redlines, jubarte-render, jubarte-doc, jubarte-markdown, jubarte-edit and jubarte-cli. Python moves to jubarte-docx, imported as jubarte. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.02 (Docxodus 71.67), counting as 0 the 3 redlines Word 16.115 crashes opening; PDFs mean 78.02 (LibreOffice 58.07) with no failed document.
@@ -5286,6 +5298,7 @@ measured Q0 performance stack) plus release tooling (`VERSIONING.md`,
 - See [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the covering tests are marked
   `#[ignore]` with matching reasons.
 
+[0.20.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.20.0
 [0.19.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.19.0
 [0.18.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.18.0
 [0.17.0]: https://github.com/jandira-tech/jubarte/releases/tag/v0.17.0
