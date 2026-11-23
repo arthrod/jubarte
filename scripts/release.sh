@@ -393,21 +393,7 @@ crates_has()  { scripts/publish_crates.sh "$VER" --pending 2>/dev/null | tail -1
 # failed on a live release), while the listing is purged on upload.
 # jubarte-docx is the engine's distribution and jubarte-redlines its shim
 # (jubarte-python/compat); a release holds both.
-pypi_dist_has() {
-  python3 - "$1" "$VER" <<'PY'
-import json
-import sys
-from urllib.request import urlopen
-
-package, version = sys.argv[1:]
-try:
-    with urlopen(f"https://pypi.org/pypi/{package}/json", timeout=15) as response:
-        releases = json.load(response)["releases"]
-except (OSError, ValueError, KeyError):
-    sys.exit(1)
-sys.exit(version not in releases)
-PY
-}
+pypi_dist_has() { curl -sf --max-time 15 "https://pypi.org/pypi/$1/json" | python3 -c 'import json, sys; sys.exit(sys.argv[1] not in json.load(sys.stdin)["releases"])' "$VER"; }
 pypi_has()    { pypi_dist_has jubarte-docx && pypi_dist_has jubarte-redlines; }
 npm_has()     { [ "$(npm view "jubarte-wasm@$VER" version 2>/dev/null)" = "$VER" ]; }
 npm_cli_has() { [ "$(npm view "jubarte-redlines@$VER" version 2>/dev/null)" = "$VER" ]; }
