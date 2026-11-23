@@ -85,6 +85,65 @@ pub(crate) fn rename_repeated_doc_pr_ids(dom: &mut Dom, root: NodeId) {
     }
 }
 
+/// Give every drawing in a set of story parts a `wp:docPr/@id` no other
+/// drawing in the set holds: the ids are document-wide, and Word refuses a
+/// package whose header drawing repeats a body drawing's id (14 jubarte
+/// 0.19.0 redlines, remote Word 2024, 2026-11-23). `parts` come in document
+/// order (main document first). `preserve_untouched` keeps each id's first
+/// holder and renames only repeats, as [`rename_repeated_doc_pr_ids`] does
+/// within one part; otherwise every drawing is numbered 1..n across the set.
+/// Returns, per part, whether any id changed.
+pub(crate) fn number_doc_prs_across_parts(
+    parts: &mut [(Dom, NodeId)],
+    preserve_untouched: bool,
+) -> Vec<bool> {
+    let id = id_attr();
+    let mut changed = vec![false; parts.len()];
+    let set = |dom: &mut Dom, node: NodeId, value: u32, flag: &mut bool| {
+        let value = value.to_string();
+        if dom.attribute(node, &id) != Some(value.as_str()) {
+            dom.set_attribute_value(node, &id, Some(&value));
+            *flag = true;
+        }
+    };
+    if preserve_untouched {
+        let mut taken: HashSet<u32> = parts
+            .iter()
+            .flat_map(|(dom, root)| {
+                doc_pr_nodes(dom, *root)
+                    .into_iter()
+                    .filter_map(|n| dom.attribute(n, &id)?.parse::<u32>().ok())
+            })
+            .collect();
+        let mut next = taken.iter().copied().max().unwrap_or(0);
+        let mut seen = HashSet::new();
+        for (k, (dom, root)) in parts.iter_mut().enumerate() {
+            for node in doc_pr_nodes(dom, *root) {
+                if let Some(own) = dom.attribute(node, &id).and_then(|v| v.parse::<u32>().ok())
+                    && seen.insert(own)
+                {
+                    continue;
+                }
+                next = next.wrapping_add(1);
+                while next == 0 || taken.contains(&next) {
+                    next = next.wrapping_add(1);
+                }
+                taken.insert(next);
+                set(dom, node, next, &mut changed[k]);
+            }
+        }
+    } else {
+        let mut next = 0u32;
+        for (k, (dom, root)) in parts.iter_mut().enumerate() {
+            for node in doc_pr_nodes(dom, *root) {
+                next += 1;
+                set(dom, node, next, &mut changed[k]);
+            }
+        }
+    }
+    changed
+}
+
 /// Renumber every drawing's `wp:docPr/@id` starting from 1, in document
 /// order. Matches elements whose local name is `docPr` (and not only the
 /// transitional `WP` URI) so Strict and remapped drawings are renumbered
@@ -360,6 +419,33 @@ mod repeated_doc_pr_id_tests {
         let (mut dom, root) = drawings(&[&max, &max, &max, "1"]);
         rename_repeated_doc_pr_ids(&mut dom, root);
         assert_eq!(ids(&dom, root), [max.as_str(), "2", "3", "1"]);
+    }
+
+    /// A header numbered from 1 on its own repeats the body's ids; numbered
+    /// across the parts, every drawing in the document has its own
+    /// (jubarte 0.19.0 redlines Word refused, 2026-11-23).
+    #[test]
+    fn drawings_are_numbered_across_story_parts() {
+        let mut parts = vec![
+            drawings(&["1", "2"]),
+            drawings(&["1"]),
+            drawings(&["1", "2"]),
+        ];
+        let changed = number_doc_prs_across_parts(&mut parts, false);
+        let all: Vec<Vec<String>> = parts.iter().map(|(d, r)| ids(d, *r)).collect();
+        assert_eq!(all, [vec!["1", "2"], vec!["3"], vec!["4", "5"]]);
+        assert_eq!(changed, [false, true, true]);
+    }
+
+    /// An edit's redline keeps each id's first holder and renames only the
+    /// repeats in later parts.
+    #[test]
+    fn untouched_ids_survive_and_repeats_across_parts_are_renamed() {
+        let mut parts = vec![drawings(&["4", "9"]), drawings(&["4", "5"])];
+        let changed = number_doc_prs_across_parts(&mut parts, true);
+        let all: Vec<Vec<String>> = parts.iter().map(|(d, r)| ids(d, *r)).collect();
+        assert_eq!(all, [vec!["4", "9"], vec!["10", "5"]]);
+        assert_eq!(changed, [false, true]);
     }
 
     /// A new id is none a later drawing already holds.

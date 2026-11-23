@@ -2102,7 +2102,170 @@ fn compare_documents_impl(
     // breaks took over (redlineB_* parts) is left with no reference: Word's
     // own redlines carry none, and its half-matched fields read as broken.
     crate::revision_processor::drop_unreferenced_headers_footers(&mut out);
+    isolate_shared_drawing_stories(&mut out, &main1);
+    number_doc_prs_in_package(&mut out, &main1, settings.preserve_untouched);
     out.to_zip()
+}
+
+/// The relationship types whose parts are WordprocessingML stories that can
+/// hold drawings beside the main document.
+#[doc(hidden)]
+pub const DRAWING_STORY_REL_SUFFIXES: [&str; 5] =
+    ["/header", "/footer", "/footnotes", "/endnotes", "/comments"];
+
+/// The package-wide drawing-id repair compare ends with, for `validate
+/// --repair`: a shared header or footer with drawings gets one copy per
+/// further section, then every story's `wp:docPr` ids are numbered in one
+/// space. `preserve_untouched` keeps first holders' ids.
+#[doc(hidden)]
+pub fn fix_up_drawing_ids_across_package(pkg: &mut PartFs, preserve_untouched: bool) {
+    let main = pkg
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    isolate_shared_drawing_stories(pkg, &main);
+    number_doc_prs_in_package(pkg, &main, preserve_untouched);
+}
+
+/// The main document's header, footer, notes and comments parts, sorted.
+#[doc(hidden)]
+pub fn drawing_story_parts(pkg: &PartFs, main: &str) -> Vec<String> {
+    let Some(rels) = pkg.read_rels_for(main) else {
+        return Vec::new();
+    };
+    let mut related: Vec<String> = rels
+        .items
+        .iter()
+        .filter(|r| r.target_mode.as_deref() != Some("External"))
+        .filter(|r| {
+            DRAWING_STORY_REL_SUFFIXES
+                .iter()
+                .any(|s| r.rel_type.ends_with(s))
+        })
+        .map(|r| referenced_part(pkg, main, &r.target))
+        .filter(|n| n != main)
+        .collect();
+    related.sort();
+    related.dedup();
+    related
+}
+
+/// Word loads a header or footer once for every section that references it,
+/// so a part with drawings that two sections share repeats its drawings'
+/// `wp:docPr` ids, and Word refuses the package (7c98e8f2b6 and c04ae787d4,
+/// remote Word 2024, 2026-11-23; a copy with fresh ids opens). Word itself
+/// never writes such a share. Give each further section its own copy of a
+/// shared part that has drawings; [`number_doc_prs_in_package`] then
+/// numbers the copy's drawings apart from the original's.
+fn isolate_shared_drawing_stories(out: &mut PartFs, main: &str) {
+    let Some(xml) = out.part_string(main) else {
+        return;
+    };
+    let Some(rels) = out.read_rels_for(main) else {
+        return;
+    };
+    let rels: std::collections::HashMap<String, (String, String)> = rels
+        .items
+        .iter()
+        .map(|r| (r.id.clone(), (r.rel_type.clone(), r.target.clone())))
+        .collect();
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut changed = false;
+    for sect in section_props(&dom, root) {
+        let references: Vec<NodeId> = dom
+            .elements(sect, None)
+            .into_iter()
+            .filter(|&r| {
+                dom.name_is(r, &W::header_reference()) || dom.name_is(r, &W::footer_reference())
+            })
+            .collect();
+        for reference in references {
+            let Some(rid) = dom.attribute(reference, &R::id()).map(str::to_string) else {
+                continue;
+            };
+            if seen.insert(rid.clone()) {
+                continue;
+            }
+            let Some((rel_type, target)) = rels.get(&rid) else {
+                continue;
+            };
+            let part = referenced_part(out, main, target);
+            let Some(bytes) = out.part_bytes(&part).map(<[u8]>::to_vec) else {
+                continue;
+            };
+            if !bytes.windows(6).any(|w| w == b":docPr") {
+                continue;
+            }
+            let copy = unused_sibling_part_name(out, &part);
+            out.set_part(&copy, bytes);
+            if let Some(part_rels) = out.read_rels_for(&part)
+                && let Ok(rels_xml) = part_rels.to_xml()
+            {
+                out.set_part(&rels_part_name(&copy), rels_xml);
+            }
+            if let Some(content_type) = out.content_type_for(&part) {
+                out.add_content_type_override(&copy, &content_type);
+            }
+            let copy_target = crate::opc::relative_rel_target(main, &copy);
+            let copy_rid = out.add_document_relationship(main, rel_type, &copy_target);
+            dom.set_attribute_value(reference, &R::id(), Some(&copy_rid));
+            changed = true;
+        }
+    }
+    if changed {
+        out.set_part(main, dom.serialize_element(root).into_bytes());
+    }
+}
+
+/// `word/header3.xml` → the first `word/header3_N.xml` no part has.
+fn unused_sibling_part_name(out: &PartFs, part: &str) -> String {
+    let stem = part.strip_suffix(".xml").unwrap_or(part);
+    (1u32..)
+        .map(|n| format!("{stem}_{n}.xml"))
+        .find(|name| out.part_bytes(name).is_none())
+        .unwrap_or_else(|| format!("{stem}_copy.xml"))
+}
+
+/// `word/header3.xml` → `word/_rels/header3.xml.rels`.
+fn rels_part_name(part: &str) -> String {
+    match part.rsplit_once('/') {
+        Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
+        None => format!("_rels/{part}.rels"),
+    }
+}
+
+/// Number the drawings of the main document and of every header, footer,
+/// footnotes, endnotes and comments part it relates in one id space: each
+/// part was numbered from 1 on its own, and Word refuses a package whose
+/// header drawing repeats a body drawing's `wp:docPr` id (14 jubarte 0.19.0
+/// redlines, remote Word 2024, 2026-11-23).
+fn number_doc_prs_in_package(out: &mut PartFs, main: &str, preserve_untouched: bool) {
+    let mut names = vec![main.to_string()];
+    names.extend(drawing_story_parts(out, main));
+    let mut parts = Vec::new();
+    let mut kept = Vec::new();
+    for name in names {
+        let Some(xml) = out.part_string(&name) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        if let Some(root) = dom.root(doc) {
+            parts.push((dom, root));
+            kept.push(name);
+        }
+    }
+    let changed =
+        crate::comparer::fixups::number_doc_prs_across_parts(&mut parts, preserve_untouched);
+    for ((name, (dom, root)), changed) in kept.iter().zip(&parts).zip(changed) {
+        if changed {
+            out.set_part(name, dom.serialize_element(*root).into_bytes());
+        }
+    }
 }
 
 /// The inherited-shape repairs and schema-order pass every package we build
