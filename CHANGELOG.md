@@ -25,7 +25,7 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 - **`jubarte validate` checks drawing ids across story parts** (#2539). `DUPLICATE_DOCPR_ID` now also reports a drawing id held in two parts and a header or footer with drawings that two sections share. It stays a lead, not Word-fatal: Word opened 24 other redlines that repeat ids across parts. `jubarte validate --repair` renumbers across parts and copies the shared part.
 - **Dependencies refreshed** (#2535, #2536, #2539): zip 9.8, regex, clap and the rest of the four Cargo.locks within their semver ranges, mcp 2.3 for the Python extra. `filetime` stays at 0.2.29, because 0.2.30 adds a build script `deny.toml` does not allow.
-- **Release tooling** (#2539): `scripts/mini-release.sh` cuts a small release and refuses one whose version-bearing files name more than one version; the manylinux build checks the rustup installer's sha256; the wheel smoke test installs the built wheel alone.
+- **Release tooling** (#2539, #2542): `scripts/mini-release.sh` cuts a small release and refuses one whose version-bearing files name more than one version; the manylinux build checks the rustup installer's sha256; the wheel smoke test installs the built wheel alone; the PyPI probe gives up after 15 seconds.
 
 ## [0.19.0] - 2026-11-21
 
