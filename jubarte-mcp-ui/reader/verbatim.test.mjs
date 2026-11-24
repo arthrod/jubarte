@@ -105,3 +105,10 @@ test('a fence keeps the backslash before a brace the engine reads as no tag', ()
   assert.deepEqual(fenced('\\{r1\ufeff}'), ['\\{r1\ufeff}', 0]);
   assert.deepEqual(fenced('\\{r1 @A move X\u0085Y}'), ['\\{r1 @A move X\u0085Y}', 0]);
 });
+
+// codex's last review: in a code fence a backslash before an opener is
+// text, and the change still opens (critic.rs encode, line 1251).
+test('a change opens after a backslash inside a fence, as the engine reads it', () => {
+  assert.deepEqual(fenced('\\{++x++}'), ['\\x', 1]);
+  assert.deepEqual(fenced('\\{==h==}'), ['\\h', 0]);
+});

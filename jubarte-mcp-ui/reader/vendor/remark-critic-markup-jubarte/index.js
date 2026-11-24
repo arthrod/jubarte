@@ -385,7 +385,9 @@ export function prepareCritic(input, options = {}) {
         at += unescaped.length;
         continue;
       }
-      const possibleForm = source[at] === '{' && !isEscaped(source, at)
+      // In a code fence a backslash before an opener is text and the span
+      // still opens: Markdown reads no escape there (critic.rs encode).
+      const possibleForm = source[at] === '{' && (inFence(at) !== null || !isEscaped(source, at))
         ? FORMS.find((candidate) => source.startsWith(candidate.open, at))
         : null;
       if (possibleForm && !(possibleForm.bit & allowed)) {
