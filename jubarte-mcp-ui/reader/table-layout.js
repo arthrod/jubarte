@@ -77,18 +77,21 @@ export function composeWithTables(snapshot,runtime,input){
  function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
  // Right-to-left text without the engine's w:bidi (#51, #53, #55; engine gap #54): a
  // paragraph reads in the direction of its first strong letter (Unicode P2). Runs are cut
- // where the class of their text changes (R, L, or a number, EN), and the bidi algorithm
+ // where the class of their text changes (R, L, or a number, EN or AN), and the bidi algorithm
  // is applied at run level: W7 makes a number after an L an L; N1 gives neutral text the
  // direction of agreeing neighbours (a number counts as R), else the paragraph's; I1/I2
  // give the levels (a number at 2); L2 orders the runs. The browser orders the text inside
  // each run.
  const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u,DIGIT=/\p{Nd}/u;
  const SEPARATOR=/^[,.\/:\u00a0\u060c\u202f\u2044+\-\u2212]$/u,TERMINATOR=/^[#%\u00b0\u00b1\u2030-\u2034\p{Sc}]+$/u;
- function charClass(ch){if(STRONG.test(ch))return RTL.test(ch)?'R':'L';return DIGIT.test(ch)?'EN':null;}
+ // Arabic-Indic digits and the Arabic decimal and thousands separators are Arabic numbers
+ // (AN): W7 leaves them, N1 counts them as R, and W4 joins only common separators (#60).
+ const ARABIC_NUMBER=/[\u0660-\u0669\u066b\u066c\u0600-\u0605\u06dd\u08e2]/u,COMMON_SEPARATOR=/^[,.\/:\u00a0\u060c\u202f\u2044]$/u;
+ function charClass(ch){if(ARABIC_NUMBER.test(ch))return 'AN';if(STRONG.test(ch))return RTL.test(ch)?'R':'L';return DIGIT.test(ch)?'EN':null;}
  // W4 and W5 on characters: a separator between two digits, and terminators beside one,
  // are part of the number.
  function numberClasses(chars){const classes=chars.map(charClass);
-  chars.forEach((ch,i)=>{if(!classes[i]&&SEPARATOR.test(ch)&&classes[i-1]==='EN'&&classes[i+1]==='EN')classes[i]='EN';});
+  chars.forEach((ch,i)=>{if(classes[i])return;for(const c of ['EN','AN'])if(classes[i-1]===c&&classes[i+1]===c&&(c==='EN'?SEPARATOR:COMMON_SEPARATOR).test(ch))classes[i]=c;});
   for(const step of [1,-1])for(let k=0;k<chars.length;k++){const i=step===1?k:chars.length-1-k;if(!classes[i]&&TERMINATOR.test(chars[i])&&classes[i-step]==='EN')classes[i]='EN';}
   return classes;}
  function isRtl(block){for(const r of block.runs||[]){for(const ch of r.text||'')if(STRONG.test(ch))return RTL.test(ch);}return false;}
@@ -106,10 +109,10 @@ export function composeWithTables(snapshot,runtime,input){
   const cut=line.runs.flatMap(r=>{const n=[...(r.text||'')].length,own=lineClasses.slice(k,k+n);k+=n;return splitByClass(r,own);});
   const runs=cut.map(p=>p.run),classes=cut.map(p=>p.cls);
   // W7: a number whose previous strong run is L (or the paragraph, when LTR) is L.
-  let strong=sos;const typed=classes.map(c=>{if(c==='R'||c==='L'){strong=c;return c;}if(c==='EN')return strong==='L'?'L':'EN';return null;});
-  const asStrong=c=>c==='EN'?'R':c;
+  let strong=sos;const typed=classes.map(c=>{if(c==='R'||c==='L'){strong=c;return c;}if(c==='EN')return strong==='L'?'L':'EN';return c==='AN'?'AN':null;});
+  const asStrong=c=>c==='EN'||c==='AN'?'R':c;
   const resolved=typed.map((c,i)=>{if(c)return c;let before=sos,after=sos;for(let j=i-1;j>=0;j--)if(typed[j]){before=asStrong(typed[j]);break;}for(let j=i+1;j<typed.length;j++)if(typed[j]){after=asStrong(typed[j]);break;}return before===after?before:sos;});
-  const levels=resolved.map(c=>c==='EN'?2:base===1?(c==='R'?1:2):(c==='R'?1:0)),order=runs.map((_,i)=>i);
+  const levels=resolved.map(c=>c==='EN'||c==='AN'?2:base===1?(c==='R'?1:2):(c==='R'?1:0)),order=runs.map((_,i)=>i);
   for(let level=Math.max(...levels);level>=1;level--)for(let i=0;i<order.length;){if(levels[order[i]]<level){i++;continue;}let j=i;while(j<order.length&&levels[order[j]]>=level)j++;order.splice(i,j-i,...order.slice(i,j).reverse());i=j;}
   let x=Math.min(...runs.map(r=>r.x));const placed=new Array(runs.length);
   for(const i of order){const r=runs[i];placed[i]={...r,x,dir:levels[i]%2?'rtl':base===1?'ltr':undefined};x+=r.width||0;}

@@ -475,3 +475,21 @@ describe("list markers are Word's, from the engine (#59)", () => {
     done();
   });
 });
+
+describe("Arabic-Indic digits are Arabic numbers, class AN (#60)", () => {
+  const at = (composed, w) => bodyRuns(composed, 0).find((r) => r.text.includes(w)).x;
+  it("two formatted Arabic-Indic numbers after English read right to left as a group", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 -->\nA **\u0661\u0662\u0663** _\u0664\u0665\u0666_\n`,
+    );
+    expect(at(composed, "A")).toBeLessThan(at(composed, "\u0664\u0665\u0666"));
+    expect(at(composed, "\u0664\u0665\u0666")).toBeLessThan(at(composed, "\u0661\u0662\u0663"));
+    done();
+  });
+  it("European digits after English keep reading left to right (W7)", () => {
+    const { composed, done } = compose(`${header()}<!-- p0 -->\nA **123** _456_\n`);
+    expect(at(composed, "A")).toBeLessThan(at(composed, "123"));
+    expect(at(composed, "123")).toBeLessThan(at(composed, "456"));
+    done();
+  });
+});
