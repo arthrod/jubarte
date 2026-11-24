@@ -830,3 +830,32 @@ describe("a cell is aligned once (#81)", () => {
     forced.done();
   });
 });
+
+describe("CJK lines keep their punctuation where Word does (#82)", () => {
+  const linesOf = (composed) =>
+    composed.layout.pages
+      .flatMap((p) =>
+        p.frames[0].fragments.flatMap((f) =>
+          (f.lines || []).map((l) => l.runs.map((r) => r.text).join("")),
+        ),
+      )
+      .filter(Boolean);
+  it("no line starts with closing punctuation or ends with an opening bracket, wherever the break falls", () => {
+    for (let n = 80; n <= 100; n++) {
+      const text = `${"漢".repeat(n)}。${"漢".repeat(10)}「${"漢".repeat(n)}」${"漢".repeat(20)}`;
+      const { composed, done } = compose(
+        `---\nview: tracked\npage: Letter portrait\n---\n\n${text}\n`,
+      );
+      const lines = linesOf(composed);
+      expect(lines.join("")).toBe(text);
+      for (const line of lines) {
+        expect({ n, line: line.slice(0, 1) }).not.toEqual({
+          n,
+          line: expect.stringMatching(/[。」]/),
+        });
+        expect({ n, end: line.slice(-1) }).not.toEqual({ n, end: "「" });
+      }
+      done();
+    }
+  });
+});

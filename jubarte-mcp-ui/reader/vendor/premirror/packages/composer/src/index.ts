@@ -139,6 +139,11 @@ function pmPosAtRunOffset(run: StyledRun, charFrom: number, charTo: number): { f
 const LETTER = /[\p{L}\p{N}\p{M}]/u;
 const BREAKS_ANYWHERE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
+// Kinsoku (Word's East Asian line breaking, #82): no line starts with the first set, none
+// ends with the second.
+export const NO_LINE_START = /^[)\]}）〕］｝〉》」』】〙〗〟’”｠»、。，．・：；？！ヽヾーァィゥェォッャュョヮヵヶぁぃぅぇぉっゃゅょゎゕゖ々〻‐゠–〜～…‥]$/u;
+export const NO_LINE_END = /^[([{（〔［｛〈《「『【〘〖〝‘“｟«]$/u;
+
 export function isWordChar(ch: string | undefined): boolean {
   if (ch === undefined || ch === "") return false;
   const unit = ch.charCodeAt(0);
@@ -461,6 +466,22 @@ function breakBlockIntoLineDrafts(
                 best = backtracked;
               }
             }
+          }
+        }
+
+        // Jubarte fork: kinsoku, as Word wraps East Asian text. Closing punctuation never
+        // starts a line and an opening bracket never ends one; the break moves back a
+        // grapheme while the line keeps at least one (#82).
+        if (best > offset && best < piece.length) {
+          const previousStart = (at: number): number => {
+            let back = at - 1;
+            while (back > offset && !graphemeEnds.has(back)) back--;
+            return back;
+          };
+          while (best > offset && (NO_LINE_START.test(piece[best]!) || NO_LINE_END.test(piece[best - 1]!))) {
+            const back = previousStart(best);
+            if (back <= offset) break;
+            best = back;
           }
         }
 

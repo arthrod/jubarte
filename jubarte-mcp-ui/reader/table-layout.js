@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {composeLayout} from '@premirror/composer';
+import {composeLayout,NO_LINE_START,NO_LINE_END} from '@premirror/composer';
 import {createFootnoteAllocator,flattenLayoutBlocks} from './footnote-layout.js';
 
 /** A table extension around the real Premirror measurer and line composer.
@@ -294,6 +294,9 @@ export function constrainLines(lines,w,lh,glyphWidth,indent={first:0,rest:0}){
       let end=start,used=0,lastBreak=-1;const room=w-at(out.length+pieces.length);
       while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>room+0.01)break;used+=c.cw;end++;if(space(c.ch))lastBreak=end;}
       if(end<chars.length&&lastBreak>start)end=lastBreak;
+      // Kinsoku, as Word wraps East Asian text: closing punctuation never starts a line and an
+      // opening bracket never ends one; the break moves back a character (#82).
+      else if(end<chars.length)while(end-1>start&&(NO_LINE_START.test(chars[end].ch)||NO_LINE_END.test(chars[end-1].ch)))end--;
       pieces.push(chars.slice(start,end));start=end;
     }
     if(pieces.length<=1){out.push(line);continue;}
