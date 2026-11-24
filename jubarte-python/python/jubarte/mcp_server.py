@@ -88,17 +88,39 @@ _PREVIEW_LIMIT = 2 * 1024 * 1024
 # picture as a chip whose tooltip is this address, so it is sent its type and
 # size, not its bytes (a document's pictures can pass the limit alone).
 _IMAGE_DEFINITION = re.compile(r"^(\[[^\]\n]+\]: )<data:([\w.+-]+/[\w.+-]+);base64,([A-Za-z0-9+/=]*)>", re.M)
+_FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
 def _image_stand_ins(markdown: str) -> str:
-    """`[image1]: <data:image/png;base64,…>` as `[image1]: <image/png, 412 KB>`."""
+    """`[image1]: <data:image/png;base64,…>` as `[image1]: <image/png, 412 KB>`.
+
+    Only a definition outside fenced code: inside one the shape is the
+    document's text, and the card draws it as written (#31).
+    """
 
     def stand_in(found: re.Match[str]) -> str:
         payload = found.group(3)
         size = len(payload) * 3 // 4 - payload[-2:].count("=")
         return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB>"
 
-    return _IMAGE_DEFINITION.sub(stand_in, markdown)
+    out: list[str] = []
+    fence: str | None = None
+    for line in markdown.splitlines(keepends=True):
+        opener = _FENCE.match(line.rstrip("\r\n"))
+        if fence is None:
+            if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
+                fence = opener.group(1)
+            else:
+                line = _IMAGE_DEFINITION.sub(stand_in, line)
+        elif (
+            opener
+            and opener.group(1)[0] == fence[0]
+            and len(opener.group(1)) >= len(fence)
+            and not opener.group(2).strip()
+        ):
+            fence = None
+        out.append(line)
+    return "".join(out)
 
 
 # docx_view's listing: files returned, directory entries visited, depth.
