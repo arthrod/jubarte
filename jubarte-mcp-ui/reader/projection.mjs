@@ -35,12 +35,15 @@ export function bookmarkName(slug,used=new Set()){
 // An <a id="…"></a> is a bookmark the engine wrote: a link target that draws
 // nothing (#37).
 const ANCHOR=/<a\s+(?:id|name)="([^"]*)"\s*>\s*<\/a>/gi;
-const anchorIds=n=>[...n.value.matchAll(ANCHOR)].map(m=>m[1]).filter(Boolean);
-const anchorOnly=n=>n.type==='html'&&new RegExp(ANCHOR.source,'i').test(n.value)&&n.value.replace(ANCHOR,'').replace(/<!--[\s\S]*?-->/g,'').trim()==='';
+// CommonMark reads such a line as a paragraph of inline tags: it is still a
+// bookmark of its own, which the engine puts on the next paragraph (#38).
+const htmlOf=n=>n.type==='html'?n.value:n.type==='paragraph'&&n.children.every(c=>c.type==='html'||(c.type==='text'&&!c.value.trim()))?n.children.map(c=>c.value).join(''):null;
+const anchorIds=n=>[...(htmlOf(n)??'').matchAll(ANCHOR)].map(m=>m[1]).filter(Boolean);
+const anchorOnly=n=>{const v=htmlOf(n);return v!=null&&new RegExp(ANCHOR.source,'i').test(v)&&v.replace(ANCHOR,'').replace(/<!--[\s\S]*?-->/g,'').trim()===''};
 export function projectDialect(tree, critic, document){
  const markdown=critic.markdown;
  const changes=critic.changes||[],highlights=critic.highlights||[],comments=critic.comments||[];
- const warnings=[];const blocks=[];const definitions=new Map();const nameHeading=slugger();const usedNames=new Set([...markdown.matchAll(ANCHOR)].map(m=>m[1]));let aliasSink=[];let openAnchors=0;
+ const warnings=[];const blocks=[];const definitions=new Map();const nameHeading=slugger();const explicitNames=new Set([...markdown.matchAll(ANCHOR)].map(m=>m[1]));const usedNames=new Set(explicitNames);let aliasSink=[];let openAnchors=0;
  const sentinelPositions=new Set(critic.sentinelPositions||[]);
  const sourceOffset=p=>critic.sourceMap?.[p]??p;
  const range=(s,e)=>({start:s,end:e,sourceStart:sourceOffset(s),sourceEnd:sourceOffset(e)});
@@ -119,7 +122,7 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
   if(n.type==='listItem')result.checked=n.checked;
   if(n.type==='footnoteDefinition'){result.identifier=n.identifier;result.story='footnotes'}
   if(n.type==='table'){result.align=n.align;result.headerRowRepeats=true;result.wordStyle='TableGrid';result.children.forEach((row,ri)=>row.children.forEach((cell,ci)=>{cell.type=ri===0?'th':'td';cell.align=n.align?.[ci]||null}));}
-  if(n.type==='heading'){const slug=githubSlug(shown(result).trim());if(slug){const name=bookmarkName(nameHeading(slug),usedNames);usedNames.add(name);result.anchor=name}result.wordStyle='Heading'+n.depth}
+  if(n.type==='heading'){const slug=githubSlug(shown(result));if(slug){const name=bookmarkName(nameHeading(slug),usedNames);if(!explicitNames.has(name)){usedNames.add(name);result.anchor=name}}result.wordStyle='Heading'+n.depth}
   if(n.type==='paragraph')result.wordStyle='Normal';if(n.type==='blockquote')result.wordStyle='Quote';if(n.type==='listItem')result.wordStyle='ListParagraph';if(n.type==='code')result.wordStyle='SourceCode';
   if(aliasSink.length)result.aliases=aliasSink;aliasSink=outerSink;
   if(!result.children.length)result.children=[{text:''}];

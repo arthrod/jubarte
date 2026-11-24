@@ -25,7 +25,10 @@ const target = (body) => {
   const container = document.createElement("div");
   document.body.append(container);
   const view = mountPagination(container, parseJubarte(`---\nview: tracked\n---\n\n${body}\n`));
-  const href = container.querySelector("a[href^='#']")?.getAttribute("href");
+  // The document's own link, not a footnote mark or its way back.
+  const href = [...container.querySelectorAll("a[href^='#']")]
+    .map((a) => a.getAttribute("href"))
+    .find((h) => !h.startsWith("#paged-fn"));
   const el = href
     ? [...container.querySelectorAll("[id]")].find((e) => e.id === href.slice(1))
     : null;
@@ -60,7 +63,7 @@ describe("links reach the engine's bookmarks (#37)", () => {
   });
   it("an <a id> on its own line is a target and draws nothing", () => {
     const { el, text } = target('<a id="_Toc123"></a>\n\n# Target\n\n[go](#_Toc123)');
-    expect(el).toBeTruthy();
+    expect(el?.closest(".paged-block")?.textContent).toContain("Target");
     expect(text).not.toContain("<a");
     expect(text).not.toContain("</a>");
   });
@@ -74,5 +77,34 @@ describe("links reach the engine's bookmarks (#37)", () => {
     expect(target("# Plain Heading\n\n[go](#plain-heading)").el?.textContent).toContain(
       "Plain Heading",
     );
+  });
+});
+
+describe("bookmarks wherever read_view writes them (#38)", () => {
+  it("keeps the space before a heading's note mark", () => {
+    expect(
+      target("# Topic [^1]\n\n[go](#topic-)\n\n<!-- footnotes.p0 -->\n[^1]: Note").el?.textContent,
+    ).toContain("Topic");
+  });
+  it("keeps the space before a heading's deletion", () => {
+    expect(target("# Topic {--old--}{r1 @J}\n\n[go](#topic-)").el?.textContent).toContain("Topic");
+  });
+  it("an explicit bookmark wins over a heading of the same name", () => {
+    const { el } = target('# Intro\n\n<a id="intro"></a>\n\nActual target\n\n[go](#intro)');
+    expect(el?.closest(".paged-block")?.textContent).toContain("Actual target");
+  });
+  it("a bookmark in a table cell is a target", () => {
+    const { el, text } = target(
+      '<!-- t0 2x1, cells p0-p1 by row, header row repeats -->\n|Header|\n|-|\n|<a id="cell"></a>Cell target|\n\n[go](#cell)',
+    );
+    expect(el?.closest("td")?.textContent).toContain("Cell target");
+    expect(text).not.toContain("<a");
+  });
+  it("a bookmark in a footnote is a target", () => {
+    const { el, text } = target(
+      'Body[^1] [go](#note)\n\n<!-- footnotes.p0 -->\n[^1]: <a id="note"></a>Note target',
+    );
+    expect(el?.closest(".paged-footnote")?.textContent).toContain("Note target");
+    expect(text).not.toContain("<a");
   });
 });
