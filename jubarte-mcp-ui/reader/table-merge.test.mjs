@@ -145,19 +145,19 @@ const texts = (lines) => lines.map((l) => l.runs.map((r) => r.text).join(''));
 test('a cell line over by its trailing space alone stays whole, as Word hangs the space (b106)', async () => {
   const { constrainLines } = await import('./table-layout.js');
   // "(i|f" was cut: the composer's line ended "(if " 0.69px past the cell.
-  const out = constrainLines([line(['ab cd ', 0])], 55, 29, (ch) => 10);
+  const out = constrainLines([line(['ab cd ', 0])], 55, 29, () => 10);
   assert.deepEqual(texts(out), ['ab cd ']);
 });
 
 test('a cell line that truly overflows wraps at a space before it cuts a word (b106)', async () => {
   const { constrainLines } = await import('./table-layout.js');
-  const out = constrainLines([line(['ab ', 0], ['cdef gh', 30])], 50, 29, (ch) => 10);
+  const out = constrainLines([line(['ab ', 0], ['cdef gh', 30])], 50, 29, () => 10);
   assert.deepEqual(texts(out), ['ab ', 'cdef ', 'gh']);
   assert.deepEqual(out.map((l) => l.y), [0, 29, 58]);
   // Runs keep their identity and source positions across the cut.
   assert.deepEqual(out[1].runs.map((r) => [r.runId, r.x, r.pmRange.from, r.pmRange.to]), [['r1', 0, 4, 9]]);
   // A word longer than the cell is still cut, by grapheme.
-  assert.deepEqual(texts(constrainLines([line(['abcdefgh', 0])], 50, 29, (ch) => 10)), ['abcde', 'fgh']);
+  assert.deepEqual(texts(constrainLines([line(['abcdefgh', 0])], 50, 29, () => 10)), ['abcde', 'fgh']);
 });
 
 test('the hang is judged on the composer’s width, not a sum of glyphs that kerning makes wider (b106)', async () => {
