@@ -673,3 +673,50 @@ describe("a table row splits across pages, as Word's rows do by default (#70)", 
     done();
   });
 });
+
+describe("a keep-lines paragraph is not split across pages (#75)", () => {
+  const lines75 = (tag, n) => Array.from({ length: n }, (_, i) => `${tag}_${i}`).join("  \n");
+  const pages75 = (composed, tag) =>
+    composed.layout.pages.flatMap((p, i) =>
+      p.frames[0].fragments.some((f) =>
+        (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))),
+      )
+        ? [i]
+        : [],
+    );
+  it("without keep-lines the paragraph still splits", () => {
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\n${lines75("BEFORE", 22)}\n\n<!-- p1 -->\n${lines75("KEPT", 10)}\n`,
+    );
+    expect(pages75(composed, "KEPT_")).toHaveLength(2);
+    done();
+  });
+  it("a kept paragraph taller than a page still flows across pages", () => {
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\nBEFORE\n\n<!-- p1 KeepAll -->\n${lines75("KEPT", 40)}\n`,
+    );
+    const pages = pages75(composed, "KEPT_");
+    expect(pages[0]).toBe(0);
+    expect(pages.length).toBeGreaterThan(1);
+    done();
+  });
+  it("moves whole to the next page when it fits there", () => {
+    const lines = (tag, n) => Array.from({ length: n }, (_, i) => `${tag}_${i}`).join("  \n");
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\n${lines("BEFORE", 22)}\n\n<!-- p1 KeepAll -->\n${lines("KEPT", 10)}\n`,
+    );
+    const pagesOf = (tag) =>
+      new Set(
+        composed.layout.pages.flatMap((p, i) =>
+          p.frames[0].fragments.some((f) =>
+            (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))),
+          )
+            ? [i]
+            : [],
+        ),
+      );
+    expect([...pagesOf("KEPT_")]).toHaveLength(1);
+    expect([...pagesOf("KEPT_0")][0]).toBeGreaterThan(0);
+    done();
+  });
+});

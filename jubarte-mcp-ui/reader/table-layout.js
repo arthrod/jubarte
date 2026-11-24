@@ -193,6 +193,9 @@ export function composeWithTables(snapshot,runtime,input){
   // fit makes no page of its own and never leads the next one (#58).
   if(block.attrs?.spacer&&(y===0&&page.index>0&&!page.frames[0].fragments.length||notes.bodyLimit-y<lh-0.001))continue;
   ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
+  // Keep lines together (#75): a paragraph that fits a page starts on a fresh one rather than
+  // split. Its manual breaks made it several blocks; they count together.
+  if(block.type!=='table'&&block.attrs?.keepLines&&block.attrs.first&&y>0){let need=0;for(let k=bi;k<snapshot.blocks.length&&snapshot.blocks[k].attrs?.paragraph===block.attrs.paragraph&&!snapshot.blocks[k].attrs?.spacer;k++)need+=composeLines([snapshot.blocks[k]],width).length*lh;if(need<=height&&notes.bodyLimit-y<need)newPage();}
   if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;let ni=bi+1,gap=0;while(snapshot.blocks[ni]?.attrs?.spacer){gap+=lh;ni++;}const next=snapshot.blocks[ni];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){// The spacers between them count, but the test is the next real paragraph (#62).
     const need=lines.length*lh+gap+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
    while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
