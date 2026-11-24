@@ -259,6 +259,37 @@ def test_move_kinds_find_the_main_part_past_a_commented_relationship() -> None:
     assert server.move_kinds(out.getvalue()) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
 
 
+def test_move_kinds_read_attributes_as_xml_does() -> None:
+    # #52: a quoted ">" does not end the tag, and text that only looks like
+    # an id inside another attribute's value is no id.
+    body = MOVE.replace('<w:moveFrom w:id="7" w:author="A"', '<w:moveFrom w:author="A > B" w:id="7"').replace(
+        '<w:moveTo w:id="8" w:author="A"', '<w:moveTo w:author="A > B" w:id="8"'
+    )
+    assert body.count("A > B") == 2
+    assert server.move_kinds(package(body)) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+    decoy = MOVE.replace('<w:moveFrom w:id="7" w:author="A"', '<w:moveFrom w:author="x w:id=\'9\'" w:id="7"')
+    assert "w:id='9'" in decoy
+    assert server.move_kinds(package(decoy)) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+
+
+def test_move_kinds_decode_the_main_part_target() -> None:
+    # #52: Target="word/doc&amp;ument.xml" names the part word/doc&ument.xml.
+    import zipfile
+    from io import BytesIO
+
+    out = BytesIO()
+    with zipfile.ZipFile(BytesIO(package(MOVE))) as old, zipfile.ZipFile(out, "w") as new:
+        for item in old.infolist():
+            data = old.read(item)
+            name = item.filename
+            if name == "_rels/.rels":
+                data = data.replace(b'Target="word/document.xml"', b'Target="word/doc&amp;ument.xml"')
+            elif name == "word/document.xml":
+                name = "word/doc&ument.xml"
+            new.writestr(name, data)
+    assert server.move_kinds(out.getvalue()) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+
+
 def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

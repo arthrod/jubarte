@@ -130,10 +130,23 @@ _LIST_DEPTH = 6
 _LIST_SKIP = frozenset({".scratch", "node_modules", "target", "__pycache__"})
 # A story's moved runs, as jubarte-app's desk keys them for the reader.
 _STORIES = (("body", None), ("footnotes", "word/footnotes.xml"), ("endnotes", "word/endnotes.xml"))
-_MOVE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(moveTo|moveFrom)(?=[\s/>])([^>]*)>")
-_ID = re.compile(r"""(?:^|\s)(?:[A-Za-z_][\w.-]*:)?id\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+# A tag's attributes run to the first `>` outside quotes (#52).
+_ATTRS = r"""((?:[^>"']|"[^"]*"|'[^']*')*)"""
+_MOVE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(moveTo|moveFrom)(?=[\s/>])" + _ATTRS + ">")
+_RELATIONSHIP = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?Relationship(?=[\s/>])" + _ATTRS + ">")
+_ATTR = re.compile(r"""([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 _XML_REF = re.compile(r"&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));")
 _XML_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+
+
+def _attributes(source: str) -> dict[str, str]:
+    """A tag's attributes by local name, values decoded: read one after
+    another, so text inside a value is never taken for an attribute (#52)."""
+    found: dict[str, str] = {}
+    for m in _ATTR.finditer(source):
+        local = m.group(1).rsplit(":", 1)[-1]
+        found.setdefault(local, _xml_text(m.group(2) if m.group(2) is not None else m.group(3)))
+    return found
 
 
 def _xml_text(value: str) -> str:
@@ -175,12 +188,10 @@ def _main_part(package: zipfile.ZipFile) -> str:
     except KeyError:
         return "word/document.xml"
     # A relationship inside a comment names nothing (#51).
-    for rel in re.findall(r"<(?:[\w.-]+:)?Relationship\b[^>]*>", _without_comments(rels)):
-        kind = re.search(r"""\bType\s*=\s*["']([^"']+)""", rel)
-        if kind and kind.group(1).endswith("/officeDocument"):
-            target = re.search(r"""\bTarget\s*=\s*["']([^"']+)""", rel)
-            if target:
-                return target.group(1).lstrip("/")
+    for rel in _RELATIONSHIP.finditer(_without_comments(rels)):
+        attrs = _attributes(rel.group(1))
+        if attrs.get("Type", "").endswith("/officeDocument") and attrs.get("Target"):
+            return attrs["Target"].lstrip("/")
     return "word/document.xml"
 
 
@@ -228,10 +239,8 @@ def move_kinds(docx: bytes) -> dict[str, str]:
                 # A commented-out element is no move: drop comments first.
                 xml = _without_comments(package.read(info).decode("utf-8", "replace"))
                 for m in _MOVE.finditer(xml):
-                    ident = _ID.search(m.group(2))
-                    if ident:
-                        raw = ident.group(1) if ident.group(1) is not None else ident.group(2)
-                        value = _xml_text(raw)
+                    value = _attributes(m.group(2)).get("id")
+                    if value is not None:
                         kinds[f"{story}:rev:{value}"] = "moveins" if m.group(1) == "moveTo" else "movedel"
     except (zipfile.BadZipFile, OSError, ValueError):
         return {}
