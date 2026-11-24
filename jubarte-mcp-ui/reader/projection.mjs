@@ -140,16 +140,23 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  for(const mark of paragraphMarks){const before=[...paragraphs].reverse().find(b=>b.sourceRange.start<=mark.start);if(before)(before.paragraphMarks??=[]).push(mark)}
  if(paragraphs.at(-1)?.structuralChange){const last=paragraphs.at(-1),previous=paragraphs.at(-2);last.structuralChange.lastParagraphMarkProtected=true;if(previous){last.structuralChange.markTransferredTo=previous.sourceRange.sourceStart;(previous.paragraphMarks??=[]).push({...last.structuralChange,transferredFrom:last.sourceRange.sourceStart})}}
  // Agent directives bind to the next appropriate source block. All clauses remain in metadata.
+ // An empty paragraph's page break starts the next paragraph on a new page (#48).
+ let carriedBreak=false;
  for(const d of document.directives||[]){
-  if(d.type==='paragraph'&&d.empty)continue;
+  if(d.type==='paragraph'&&d.empty){if((d.properties||d.parsed||d).pageBreak)carriedBreak=true;continue;}
   const de=d.range?.end?.offset??d.range?.end??d.end??0;const dt=d.type||d.kind;const eligible=blocks.filter(b=>b.sourceRange.sourceStart>=de&&(dt==='table'?b.type==='table':dt==='page'?true:!['tr','td','th','table','li','footnote'].includes(b.type))).sort((a,b)=>a.sourceRange.sourceStart-b.sourceRange.sourceStart);
-  const target=eligible[0];if(target){(target.directives??=[]).push(d);if(d.id)target.agentId=d.id;if(d.type==='paragraph'||d.type==='table'){const p=d.properties||d.parsed||d;target.paragraphProperties=p;if(d.style)target.wordStyle=d.style;}}
+  const target=eligible[0];if(target&&carriedBreak&&d.type==='paragraph'){target.pageBreakBefore=true;carriedBreak=false}
+  // A paragraph directive with no text of its own binds to the next block, whose own directive then replaces it: keep its break.
+  if(target&&d.type==='paragraph'&&target.agentId&&target.agentId!==d.id&&target.paragraphProperties?.pageBreak)target.pageBreakBefore=true;
+  if(target){(target.directives??=[]).push(d);if(d.id)target.agentId=d.id;if(d.type==='paragraph'||d.type==='table'){const p=d.properties||d.parsed||d;target.paragraphProperties=p;if(d.style)target.wordStyle=d.style;}}
  }
  // Reconnect explicitly continued comment ranges to their story-qualified thread.
  for(const block of blocks){const refs=block.paragraphProperties?.openComments||[];const inherited=refs.map(ref=>comments.find(c=>(c.threadReference||c.referenceId)===ref.canonicalId)).filter(Boolean);if(inherited.length){const hasHighlight=n=>!!n.criticHighlight||(n.children||[]).some(hasHighlight);const explicit=hasHighlight(block);const visit=n=>{if(typeof n.text==='string'){if(explicit&&!n.criticHighlight)return;n.commentAnchor=true;n.comments=[...new Map([...(n.comments||[]),...inherited].map(c=>[c.referenceId||c.id,c])).values()]}else(n.children||[]).forEach(visit)};visit(block)}}
  // Table identity and merge intent remain on nodes; CSS honors non-overlapping merges.
  for(const table of blocks.filter(b=>b.type==='table')){
-  const d=table.directives?.find(d=>d.type==='table');if(!d)continue;if(d.columnWidthsIn&&d.columnWidthsIn.length===Math.max(0,...table.children.map(r=>r.children.length)))table.columnWidthsIn=d.columnWidthsIn;
+  const d=table.directives?.find(d=>d.type==='table');if(!d)continue;
+  // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).
+  table.headerRowRepeats=(d.properties?.headerRowRepeats??d.parsed?.headerRowRepeats??d.headerRowRepeats)===true;if(d.columnWidthsIn&&d.columnWidthsIn.length===Math.max(0,...table.children.map(r=>r.children.length)))table.columnWidthsIn=d.columnWidthsIn;
   // `merged tN.rowR.cellC` counts Word cells, as write.rs plan_table does: the empty
   // Markdown cells after a span are its covered columns, and a vertical merge's
   // continuation (a Word cell of its own) covers the same grid column below.

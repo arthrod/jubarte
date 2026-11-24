@@ -73,7 +73,7 @@ export function resolvePageGeometry(result = {}) {
       else if ((match = clause.match(/^margins?\s+(top|right|bottom|left)\s+(.+)$/i))) margin(match[1].toLowerCase(), match[2]);
       else if ((match = clause.match(/^margins?\s+(.+)$/i))) allMargins(match[1]);
       else if ((match = clause.match(/^(top|right|bottom|left)(?:\s+margin)?\s+(.+)$/i))) margin(match[1].toLowerCase(), match[2]);
-      else if (/^(header\/footer|header|footer)\s+/i.test(clause)) { /* Not body-page geometry. */ }
+      else if (/^(header\/footer|header|footer|starts)\s+/i.test(clause)) { /* Not body-page geometry. */ }
       else warn(`Unsupported page setting “${clause}”; preserved in source.`);
     }
   } else if (object(raw)) {
@@ -114,4 +114,24 @@ export function resolvePageGeometry(result = {}) {
   }
   const label = `${customName ?? (preset || `${Math.round(widthPx)} × ${Math.round(heightPx)}px`)} ${orientation}`;
   return {page: {widthPx, heightPx, ...(['Letter', 'A4'].includes(preset) ? {preset: preset.toLowerCase()} : {})}, margins, label, warnings};
+}
+
+/** Each section after the first (#47): where it starts, how (Word's w:type,
+ * `nextPage` unless the setup says otherwise) and its own page. The engine
+ * names a section's page only when it differs from the first section's, and
+ * writes it unquoted inside the section's flow mapping, so the clauses after
+ * the first comma arrive as keys of their own; they are read back in order. */
+export function resolveSections(result = {}) {
+  const sections = result.metadata?.sections;
+  if (!object(sections)) return [];
+  const documentRaw = result.metadata?.page?.raw ?? result.metadata?.raw?.page;
+  const startsOf = setup => (typeof setup === 'string' && setup.match(/(?:^|,)\s*starts\s+(nextPage|continuous|evenPage|oddPage|nextColumn)\b/i)?.[1]) || 'nextPage';
+  return Object.entries(sections).filter(([id]) => /^\d+$/.test(id)).sort((a, b) => Number(a[0]) - Number(b[0])).flatMap(([id, section]) => {
+    const start = section?.paragraphRanges?.[0]?.start;
+    if (!Number.isInteger(start)) return [];
+    const raw = object(section.raw) ? section.raw : {}, keys = Object.keys(raw), at = keys.indexOf('page');
+    if (at < 0) return [{id, start, starts: startsOf(documentRaw), geometry: resolvePageGeometry(result)}];
+    const setup = [String(raw.page), ...keys.slice(at + 1).filter(key => raw[key] === null && !/^p\d+-p\d+$/.test(key))].join(', ');
+    return [{id, start, starts: startsOf(setup), geometry: resolvePageGeometry({metadata: {page: {raw: setup}}})}];
+  });
 }

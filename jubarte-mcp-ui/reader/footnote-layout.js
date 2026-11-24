@@ -62,6 +62,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    const value = run.footnoteId ?? sourceRuns.get(run.runId ?? run.id)?.footnoteId ?? snapshot.runMap?.get(run.runId ?? run.id)?.footnoteId;
    if (value == null || value === '') continue;
    const id = String(value);
+   // An endnote's reference: its note follows the body, not the page (#46).
+   if (snapshot.endnoteIds?.has(id)) continue;
    if (!notes.has(id)) {
     if (!missing.has(id)) { missing.add(id); warn('missing-footnote-definition', `Footnote reference ${id} has no visible definition.`, id); }
     continue;
@@ -149,6 +151,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  }
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,
   get bodyLimit() { return height - footprint(allocations); },
+ // A section's pages bring their own content area (#47).
+ setGeometry(geometry) { width = geometry.width; height = geometry.height; },
   get hasPending() { return pending.length > 0; },
   get enabled() { return notes.size > 0 || sourceRuns.size > 0; }};
 }

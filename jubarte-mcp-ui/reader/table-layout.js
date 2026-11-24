@@ -44,18 +44,28 @@ export function fitTable(textMins,width,maxWidth){
 export function composeWithTables(snapshot,runtime,input){
  const started=performance.now(),diagnostics=[],tableFragments=[],footnoteFragments=[],footnoteBands=[];
  const lh=input.typography.defaultLineHeightPx;
- const width=input.page.widthPx-input.margins.leftPx-input.margins.rightPx;
- const height=input.page.heightPx-input.margins.topPx-input.margins.bottomPx;
+ // A section's pages bring their own size and margins (#47); these follow the page being filled.
+ let spec=input.page,margins=input.margins,label;
+ let width=spec.widthPx-margins.leftPx-margins.rightPx;
+ let height=spec.heightPx-margins.topPx-margins.bottomPx;
  if(!(width>0&&height>=lh&&lh>0))throw new Error('Page content area must fit at least one text line.');
  const warningKeys=new Set();
  const warn=(code,message,tableId)=>{const key=code+'|'+message+'|'+tableId;if(!warningKeys.has(key)){warningKeys.add(key);diagnostics.push({code,message,tableId});}};
  const allBlocks=flattenLayoutBlocks([...snapshot.blocks,...(snapshot.footnotes||[]).flatMap(n=>n.blocks||[])]);
  const measured=runtime.measureSnapshot({...snapshot,blocks:allBlocks});
  const fallback=Object.values(measured.measuredRuns).some(m=>m.prepared?.kind==='premirror-measurement-fallback');
- const pages=[],frameBounds={x:input.margins.leftPx,y:input.margins.topPx,width,height};
- let page,y=0,notes,finished=false;
+ const pages=[];let frameBounds={x:margins.leftPx,y:margins.topPx,width,height};
+ let page,y=0,notes,finished=false,pending=null;
+ function applyPending(){if(!pending)return;const g=pending.geometry;spec=g.page;margins=g.margins;label=g.label;width=spec.widthPx-margins.leftPx-margins.rightPx;height=spec.heightPx-margins.topPx-margins.bottomPx;frameBounds={x:margins.leftPx,y:margins.topPx,width,height};notes.setGeometry({width,height});pending=null;}
+ // Word's w:type: nextPage (the default) breaks, oddPage/evenPage may leave a blank
+ // page, and a continuous section of the same size flows on (its setup takes the next page).
+ function startSection(section){pending=section;const kind=String(section.starts).toLowerCase(),g=section.geometry.page;
+  if((kind==='continuous'||kind==='nextcolumn')&&Math.abs(g.widthPx-spec.widthPx)<0.5&&Math.abs(g.heightPx-spec.heightPx)<0.5)return;
+  if(y>0||page.frames[0].fragments.length){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='section_break';newPage();}
+  else{applyPending();Object.assign(page,{spec,margins,label});page.frames[0].bounds={...frameBounds};}
+  const parity=kind==='oddpage'?0:kind==='evenpage'?1:null;if(parity!=null&&page.index%2!==parity)newPage();}
  function finishPage(){if(!page||finished)return;const result=notes.finishPage(page.index);if(result.band)footnoteBands.push(result.band);for(const fragment of result.fragments){footnoteFragments.push(fragment);const byBlock=new Map();for(const line of fragment.lines){if(!byBlock.has(line.blockId))byBlock.set(line.blockId,[]);byBlock.get(line.blockId).push({...line,y:fragment.y+line.y});}for(const [blockId,lines] of byBlock)addFragment(blockId,lines,{footnote:true,footnoteId:fragment.footnoteId,continuedBefore:fragment.continuedBefore,continuedAfter:fragment.continuedAfter,orphan:fragment.orphan});}finished=true;}
- function newPage(){finishPage();page={index:pages.length,spec:input.page,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;notes.beginPage();}
+ function newPage(){finishPage();applyPending();page={index:pages.length,spec,margins,label,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;notes.beginPage();}
  function ensurePage(){if(y>=notes.bodyLimit-0.001)newPage();}
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
@@ -85,7 +95,7 @@ export function composeWithTables(snapshot,runtime,input){
   }}
   if(!columns)return {cells:[],rowHeights:[],rowTops:[0],columnWidths:[],total:0,headerHeight:0};
   const mins=Array.from({length:columns},()=>0);for(const c of cells){if(c.colspan!==1)continue;for(const block of c.blocks||[])for(const run of block.runs||[])for(const word of run.text.split(/\s+/))if(word)mins[c.columnIndex]=Math.max(mins[c.columnIndex],glyphWidth(word,run.font))}
-  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,input.margins.rightPx-12),fit=fitTable(mins,width,maxWidth),drawn=Math.max(tableWidth(weights,width,input.margins.rightPx),fit.width);
+  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),fit=fitTable(mins,width,maxWidth),drawn=Math.max(tableWidth(weights,width,margins.rightPx),fit.width);
   const columnWidths=fitMinimums(gridWidths(weights,columns,drawn),mins.map(t=>t>0?t+2*fit.pad+3:0),drawn);
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
   const rowHeights=rows.map(()=>lh);
@@ -98,7 +108,8 @@ export function composeWithTables(snapshot,runtime,input){
   if(cells.some(c=>c.rowIndex<headerCount&&c.rowIndex+c.rowspan>headerCount)){warn('header-rowspan-crosses-body','Header repetition is disabled because a header cell spans into the table body.',table.id);headerCount=0;}
   const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,total:rowTops.at(-1),headerHeight,headerCount};
  }
- const grids=new Map();for(const b of snapshot.blocks)if(b.type==='table')grids.set(b.id,grid(b));
+ // A table's grid is measured on the width of the section it falls in.
+ const grids={cache:new Map(),get(id){const b=tableBlocks.get(id);if(!b)return undefined;const key=id+'@'+width;if(!this.cache.has(key))this.cache.set(key,grid(b));return this.cache.get(key);}};const tableBlocks=new Map(snapshot.blocks.filter(b=>b.type==='table').map(b=>[b.id,b]));
  notes=createFootnoteAllocator({snapshot,composeLines,width,height,lineHeight:lh,warn});newPage();
  function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:0,y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
   for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y+lh<=end+0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
@@ -106,7 +117,7 @@ export function composeWithTables(snapshot,runtime,input){
    const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
   }const previous=tableFragments.at(-1);if(previous&&previous.tableId===fragment.tableId&&previous.pageIndex===fragment.pageIndex&&Math.abs(previous.y+previous.height-fragment.y)<0.001){const offset=previous.height;previous.cells.push(...fragment.cells.map(c=>({...c,y:c.y+offset})));previous.rows.push(...fragment.rows.map(r=>({...r,y:r.y+offset})));previous.height+=fragment.height;previous.repeated=previous.repeated&&fragment.repeated;}else tableFragments.push(fragment);y+=fragment.height;
  }
- for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
+ for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];if(block.attrs?.sectionStart)startSection(block.attrs.sectionStart);ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
   if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;const next=snapshot.blocks[bi+1];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){const need=lines.length*lh+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
    while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
     const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;
