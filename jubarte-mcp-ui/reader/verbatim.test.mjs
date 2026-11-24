@@ -98,3 +98,10 @@ test('indent counts UTF-8 bytes of Unicode white space, as the engine does', () 
 test('an autolink ends at any Unicode white space', () => {
   assert.equal(read('<https://a/\u0085{++x++}>')[1], 1);
 });
+
+// codex's final review: the tag grammar trims with JavaScript's white space,
+// which holds U+FEFF and lacks U+0085; Rust's is the reverse (#25).
+test('a fence keeps the backslash before a brace the engine reads as no tag', () => {
+  assert.deepEqual(fenced('\\{r1\ufeff}'), ['\\{r1\ufeff}', 0]);
+  assert.deepEqual(fenced('\\{r1 @A move X\u0085Y}'), ['\\{r1 @A move X\u0085Y}', 0]);
+});

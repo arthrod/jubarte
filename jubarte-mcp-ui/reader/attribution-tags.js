@@ -2,6 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+// Rust's `char::is_whitespace` (Unicode White_Space), which the engine's
+// `trim` and `split_whitespace` use: U+0085 is white space, U+FEFF is not,
+// the reverse of JavaScript's `trim` and `\s`.
+const WHITE = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const LEADING = new RegExp(`^[${WHITE}]+`), TRAILING = new RegExp(`[${WHITE}]+$`), WHITE_ANY = new RegExp(`[${WHITE}]`);
+
 /**
  * The engine's attribution grammar, read exactly as jubarte reads it, so
  * the card never takes document text for a tag nor shows a tag as text:
@@ -152,7 +158,7 @@ const isHandle = (text) => text === '??' || /^[\p{Alphabetic}\p{N}]+$/u.test(tex
 /** `r1+2 @AC` or `r1 @AC; r2 @JD 2026-…`: each tag, or null. */
 function revisionTags(text) {
   const tags = [];
-  for (const tag of text.trim().split('; ')) {
+  for (const tag of text.replace(LEADING, '').replace(TRAILING, '').split('; ')) {
     const words = tag.split(' ');
     const [id, at, date] = words;
     if (at === undefined || !at.startsWith('@') || words.length > 3) return null;
@@ -170,7 +176,7 @@ function oneTag(part) {
 
 /** The parts of a note joined by ` re `; the last split that parses wins. */
 function nestedParts(text, one, memo = new Map()) {
-  text = text.trim();
+  text = text.replace(LEADING, '').replace(TRAILING, '');
   if (memo.has(text)) return memo.get(text);
   let result = null;
   let from = text.length;
@@ -178,7 +184,7 @@ function nestedParts(text, one, memo = new Map()) {
     const at = text.slice(0, from).lastIndexOf(' re ');
     if (at < 0) break;
     from = at;
-    const head = one(text.slice(0, at).trim());
+    const head = one(text.slice(0, at).replace(LEADING, '').replace(TRAILING, ''));
     if (head) {
       const rest = nestedParts(text.slice(at + ' re '.length), one, memo);
       if (rest) {
@@ -219,10 +225,10 @@ function named(text) {
     if (!isDate(date)) continue;
     const name = text.slice(0, open);
     let author;
-    if (name.trim() === '') {
+    if (name.replace(LEADING, '').replace(TRAILING, '') === '') {
       if (name !== '') return null;
       author = null;
-    } else if (name.endsWith(' ')) author = unescaped(name.trim());
+    } else if (name.endsWith(' ')) author = unescaped(name.replace(LEADING, '').replace(TRAILING, ''));
     else continue;
     let depth = 0;
     let unbalanced = false;
@@ -240,7 +246,7 @@ function named(text) {
 
 /** The plain view's note: `r5 Ana (date)`, `r1+2 (date)`, `r7 Di Eng`, `r7`. */
 function plainRevision(text) {
-  text = text.trim();
+  text = text.replace(LEADING, '').replace(TRAILING, '');
   const space = text.indexOf(' ');
   const id = space < 0 ? text : text.slice(0, space);
   const rest = space < 0 ? '' : text.slice(space + 1);
@@ -254,7 +260,7 @@ function plainRevision(text) {
     date = name.date;
   } else {
     if (/[:()]/.test(rest) || rest.startsWith('@')) return null;
-    author = unescaped(rest.trim());
+    author = unescaped(rest.replace(LEADING, '').replace(TRAILING, ''));
   }
   return { kind: 'plain', author, ...(date ? { date } : {}), ids: idsOf(id) };
 }
@@ -289,7 +295,7 @@ function trailingBareGroup(text) {
 }
 
 function plainPart(part) {
-  const trimmed = part.trim();
+  const trimmed = part.replace(LEADING, '').replace(TRAILING, '');
   const space = trimmed.indexOf(' ');
   const rest = space < 0 ? '' : trimmed.slice(space + 1);
   const group = trailingBareGroup(rest);
@@ -309,11 +315,11 @@ function nestedPlainRevisions(text) {
 
 /** One part without ` move` or ` move NAME` when NAME is one token. */
 function partWithoutMove(part) {
-  part = part.trim();
+  part = part.replace(LEADING, '').replace(TRAILING, '');
   const at = part.lastIndexOf(' move ');
   if (at >= 0) {
-    const name = part.slice(at + ' move '.length).trim();
-    if (name && !/\s/.test(name)) return part.slice(0, at).trimEnd();
+    const name = part.slice(at + ' move '.length).replace(LEADING, '').replace(TRAILING, '');
+    if (name && !WHITE_ANY.test(name)) return part.slice(0, at).replace(TRAILING, '');
   }
   return part.endsWith(' move') ? part.slice(0, -' move'.length) : part;
 }
