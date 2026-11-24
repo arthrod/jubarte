@@ -47,3 +47,22 @@ test('a highlight keeps its Word colour', () => {
 test('an unknown tag stays literal text', () => {
   assert.ok(runs('a <blink>b</blink>').map((r) => r[0]).join('').includes('<blink>'));
 });
+
+const blocks = (md) => {
+  const out = [];
+  parseJubarte(`---\nview: tracked\n---\n\n${md}\n`).doc.descendants((n) => { if (n.isTextblock) out.push(n.textContent); });
+  return out;
+};
+
+test('an HTML comment the reader does not know is never drawn, as the engine writes no text for it (b106)', () => {
+  // markdown_to_docx: `a\n\n<!-- hello world -->\n\nb` holds paragraphs a and b;
+  // `a <!-- x y --> b` holds `a  b`.
+  assert.deepEqual(blocks('a\n\n<!-- hello world -->\n\nb'), ['a', 'b']);
+  assert.deepEqual(blocks('a <!-- x y --> b'), ['a  b']);
+  assert.deepEqual(blocks('a\n\n<!--\nmulti\nline -->\n\nb'), ['a', 'b']);
+  // b106: each picture's drawing rides in a comment after its definition.
+  assert.deepEqual(blocks('Text ![a][image1] end\n\n[image1]: <data:image/png;base64,AAAA>\n<!-- image1 drawing:eyJABC -->'), ['Text a end']);
+  assert.deepEqual(blocks('T\n\n<!-- text-box d10.0 -->\n# Step\n<!-- /text-box -->\n\nZ'), ['T', 'Step', 'Z']);
+  // Raw HTML that is not a comment stays literal.
+  assert.deepEqual(blocks('a <span>b</span>'), ['a <span>b</span>']);
+});

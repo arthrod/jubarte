@@ -64,6 +64,7 @@ export function projectDialect(tree, critic, document){
    if(n.type==='inlineCode'){const raw=markdown.slice(offset(n),end(n)),run=raw.match(/^`+/)?.[0].length||0;out.push(...leaves(n.value,offset(n)+run,raw.slice(run,raw.length-run),{...active,code:true}));continue}
    if(n.type==='break'){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
    if(n.type==='html'){
+    if(commentOnly(n))continue;
     const raw=n.value.trim();const m=raw.match(/^<(\/)?(u|sup|sub|b|i|s|code|mark)(?:\s+class="hl-([A-Za-z]+)")?\s*>$/i);if(m&&!(m[3]&&m[2].toLowerCase()!=='mark')){const tag=m[2].toLowerCase(),key={u:'underline',sup:'superscript',sub:'subscript',b:'bold',i:'italic',s:'strikethrough',code:'code',mark:'highlight'}[tag];if(m[1]){active[key]=stacks[key]?.pop()||false}else{(stacks[key]??=[]).push(active[key]||false);active[key]=tag==='mark'?(m[3]||'yellow').toLowerCase():true}continue}
     if(/^<br\s*\/?\s*>$/i.test(raw)){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
     out.push(...leaves(n.value,offset(n),n.value,{...active,htmlLiteral:true}));continue;
@@ -79,6 +80,9 @@ export function projectDialect(tree, critic, document){
   }
   return out.length?out:[{text:''}];
  }
+ // An HTML comment the directive pass left (a picture's drawing, a text box's
+ // bounds) writes no text in the engine, so it draws nothing here (b106).
+ const commentOnly=n=>n.type==='html'&&n.value.replace(/<!--[\s\S]*?-->/g,'').trim()==='';
  function make(n,extra={}){
   const type=n.type==='heading'?'h'+n.depth:n.type==='list'?(n.ordered?'ol':'ul'):mdTypes[n.type]||'p';
   const result={type,sourceRange:range(offset(n),end(n)),...extra,children:[]};
@@ -87,7 +91,7 @@ export function projectDialect(tree, critic, document){
    result.lang=n.lang||'';const raw=markdown.slice(offset(n),end(n));const firstLine=raw.indexOf('\n');const start=/^ {0,3}(`{3,}|~{3,})/.test(raw)?offset(n)+firstLine+1:offset(n);result.children=leaves(n.value,start,markdown.slice(start,end(n)),{codeBlock:true});
   }else if(n.type==='thematicBreak')result.children=[{text:''}];
   else if(n.type==='html'){result.type='p';result.children=inline([n]);}
-  else result.children=(n.children||[]).filter(x=>x.type!=='definition').map(x=>make(x));
+  else result.children=(n.children||[]).filter(x=>x.type!=='definition'&&!commentOnly(x)).map(x=>make(x));
   if(n.type==='list')result.start=n.start||1;
   if(n.type==='listItem')result.checked=n.checked;
   if(n.type==='footnoteDefinition'){result.identifier=n.identifier;result.story='footnotes'}
@@ -99,7 +103,7 @@ export function projectDialect(tree, critic, document){
   return result;
  }
  for(const n of tree.children)if(n.type==='definition')definitions.set(n.identifier,n);
- let value=tree.children.filter(n=>n.type!=='definition').map(n=>make(n));
+ let value=tree.children.filter(n=>n.type!=='definition'&&!commentOnly(n)).map(n=>make(n));
  function visibleLeaves(n){if(typeof n.text==='string')return words(n.text)?[n]:[];return(n.children||[]).flatMap(visibleLeaves)}
  function structural(block){const ls=visibleLeaves(block);if(!ls.length)return null;let candidates=ls[0].criticChanges||[];candidates=candidates.filter(c=>ls.every(l=>(l.criticChanges||[]).some(x=>x.id===c.id)));return candidates.length?{kind:candidates.at(-1).kind,changeIds:[candidates.at(-1).id],wholeBlock:true,includesParagraphMark:!['td','th'].includes(block.type)}:null}
  for(const block of blocks)if(!['table','tr'].includes(block.type)){const s=structural(block);if(s)block.structuralChange=s;}
