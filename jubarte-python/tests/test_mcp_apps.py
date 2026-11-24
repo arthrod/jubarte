@@ -73,7 +73,25 @@ def package(body: str, notes: dict[str, str] | None = None) -> bytes:
         ),
         "word/document.xml": f'<w:document xmlns:w="{W}"><w:body>{body}<w:sectPr/></w:body></w:document>',
     }
-    parts.update(notes or {})
+    # Each notes part is a story only through its relationship, as in Word.
+    rels = []
+    for i, (path, content) in enumerate((notes or {}).items()):
+        kind = "footnotes" if "<w:footnotes" in content else "endnotes"
+        target = path.removeprefix("word/")
+        rels.append(
+            f'<Relationship Id="rN{i}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{target}"/>'
+        )
+        parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace(
+            "</Types>",
+            f'<Override PartName="/{path}" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.{kind}+xml"/></Types>',
+        )
+        parts[path] = content
+    if rels:
+        parts["word/_rels/document.xml.rels"] = (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(rels)
+            + "</Relationships>"
+        )
     data = BytesIO()
     with ZipFile(data, "w") as zf:
         for path, content in parts.items():
@@ -284,6 +302,8 @@ def test_move_kinds_decode_the_main_part_target() -> None:
             name = item.filename
             if name == "_rels/.rels":
                 data = data.replace(b'Target="word/document.xml"', b'Target="word/doc&amp;ument.xml"')
+            elif name == "[Content_Types].xml":
+                data = data.replace(b'PartName="/word/document.xml"', b'PartName="/word/doc&amp;ument.xml"')
             elif name == "word/document.xml":
                 name = "word/doc&ument.xml"
             new.writestr(name, data)
@@ -292,8 +312,39 @@ def test_move_kinds_decode_the_main_part_target() -> None:
 
 def test_move_kinds_skip_processing_instructions() -> None:
     # #53: a processing instruction's data is no element.
-    body = '<?probe <w:moveTo w:id="7">?><w:p><w:ins w:id="7" w:author="A"><w:r><w:t>INSERTED</w:t></w:r></w:ins></w:p>'
+    body = (
+        '<?probe <w:moveTo w:id="7">?><w:p><w:ins w:id="7" w:author="A"><w:r><w:t>INSERTED</w:t></w:r></w:ins></w:p>'
+    )
     assert server.move_kinds(package(body)) == {}
+
+
+def test_move_kinds_ignore_an_element_of_another_namespace() -> None:
+    # #55: <x:moveTo> in an ignorable namespace is no WordprocessingML move.
+    body = '<w:p><w:ins w:id="7" w:author="A"><w:r><w:t>REAL</w:t></w:r></w:ins><x:moveTo x:id="7"/></w:p>'
+    import zipfile
+    from io import BytesIO
+
+    out = BytesIO()
+    with zipfile.ZipFile(BytesIO(package(body))) as old, zipfile.ZipFile(out, "w") as new:
+        for item in old.infolist():
+            data = old.read(item)
+            if item.filename == "word/document.xml":
+                data = data.replace(
+                    b"<w:document ",
+                    b'<w:document xmlns:x="urn:example" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x" ',
+                )
+                assert b"urn:example" in data
+            new.writestr(item, data)
+    assert server.move_kinds(out.getvalue()) == {}
+
+
+def test_move_kinds_read_notes_wherever_the_relationship_puts_them() -> None:
+    # #55: a footnotes part need not be word/footnotes.xml.
+    notes = {
+        "word/notes-custom.xml": f'<w:footnotes xmlns:w="{W}"><w:footnote w:id="1"><w:p><w:moveTo w:id="7" w:author="A"><w:r><w:t>NOTE</w:t></w:r></w:moveTo></w:p></w:footnote></w:footnotes>'
+    }
+    body = '<w:p><w:r><w:t>BODY</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>'
+    assert server.move_kinds(package(body, notes)) == {"notes-custom:rev:7": "moveins"}
 
 
 def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
@@ -458,9 +509,6 @@ def test_move_kinds_ignore_moves_inside_xml_comments() -> None:
     body = MOVE + '<!-- <w:moveTo w:id="7"/> -->'
     kinds = server.move_kinds(package(body))
     assert kinds == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
-    # One pass: many unclosed openers cost a linear scan, not a quadratic one.
-    assert server._without_comments("a<!--b" + "<!--" * 200_000) == "a"
-    assert server._without_comments("x<!--c-->y<!--d-->z") == "xyz"
 
 
 def _open_fds() -> int:
@@ -624,12 +672,11 @@ def test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path: Path) -> None:
 def test_hidden_sections_are_stripped_in_linear_time() -> None:
     """#25: 200,000 CDATA sections (2.6 MB) took minutes when each pass
     searched the rest of the part again for both openers."""
-    xml = "<w:t>" + "<![CDATA[x]]>" * 200_000 + "<!-- c -->y</w:t>"
+    body = "<w:p><w:r><w:t>" + "<![CDATA[x]]>" * 200_000 + "<!-- c -->y</w:t></w:r></w:p>" + MOVE
+    data = package(body)
     started = time.perf_counter()
-    assert server._without_comments(xml) == "<w:t>y</w:t>"
+    assert server.move_kinds(data) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
     assert time.perf_counter() - started < 2.0
-    assert server._without_comments("a<!-- <![CDATA[ -->b<![CDATA[ <!-- ]]>c") == "abc"
-    assert server._without_comments("a<![CDATA[open") == "a"
 
 
 def _png(side: int) -> bytes:

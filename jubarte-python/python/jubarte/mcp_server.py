@@ -20,12 +20,10 @@ import os
 import re
 import stat
 import sys
-import zipfile
 from collections.abc import Generator, Sequence
 from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib import resources
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 
@@ -128,41 +126,6 @@ _LIST_FILES = 200
 _LIST_VISITS = 5000
 _LIST_DEPTH = 6
 _LIST_SKIP = frozenset({".scratch", "node_modules", "target", "__pycache__"})
-# A story's moved runs, as jubarte-app's desk keys them for the reader.
-_STORIES = (("body", None), ("footnotes", "word/footnotes.xml"), ("endnotes", "word/endnotes.xml"))
-# A tag's attributes run to the first `>` outside quotes (#52).
-_ATTRS = r"""((?:[^>"']|"[^"]*"|'[^']*')*)"""
-_MOVE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(moveTo|moveFrom)(?=[\s/>])" + _ATTRS + ">")
-_RELATIONSHIP = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?Relationship(?=[\s/>])" + _ATTRS + ">")
-_ATTR = re.compile(r"""([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-_XML_REF = re.compile(r"&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));")
-_XML_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
-
-
-def _attributes(source: str) -> dict[str, str]:
-    """A tag's attributes by local name, values decoded: read one after
-    another, so text inside a value is never taken for an attribute (#52)."""
-    found: dict[str, str] = {}
-    for m in _ATTR.finditer(source):
-        local = m.group(1).rsplit(":", 1)[-1]
-        found.setdefault(local, _xml_text(m.group(2) if m.group(2) is not None else m.group(3)))
-    return found
-
-
-def _xml_text(value: str) -> str:
-    """An attribute's value as an XML reader sees it: the five named
-    entities and numeric character references decoded (#41)."""
-
-    def one(m: re.Match[str]) -> str:
-        if m.group(3):
-            return _XML_NAMED[m.group(3)]
-        code = int(m.group(1), 16) if m.group(1) else int(m.group(2))
-        return chr(code) if 0 < code <= 0x10FFFF else m.group(0)
-
-    return _XML_REF.sub(one, value)
-
-
-_PART_LIMIT = 64 * 1024 * 1024
 
 
 def resolve_action(action: str) -> str:
@@ -181,71 +144,37 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _main_part(package: zipfile.ZipFile) -> str:
-    """The officeDocument part named by the package relationships."""
-    try:
-        rels = package.read("_rels/.rels").decode("utf-8", "replace")
-    except KeyError:
-        return "word/document.xml"
-    # A relationship inside a comment names nothing (#51).
-    for rel in _RELATIONSHIP.finditer(_without_comments(rels)):
-        attrs = _attributes(rel.group(1))
-        if attrs.get("Type", "").endswith("/officeDocument") and attrs.get("Target"):
-            return attrs["Target"].lstrip("/")
-    return "word/document.xml"
-
-
-# Comments, CDATA and processing instructions: text that only looks like markup (#53).
-_HIDDEN = {"<!--": "-->", "<![CDATA[": "]]>", "<?": "?>"}
-_HIDDEN_OPEN = re.compile("|".join(re.escape(opener) for opener in _HIDDEN))
-
-
-def _without_comments(xml: str) -> str:
-    """`xml` without its comments and CDATA sections (text that only looks
-    like markup), in one pass: an unclosed opener drops the rest, as a
-    parser would refuse it."""
-    out: list[str] = []
-    at = 0
-    while True:
-        found = _HIDDEN_OPEN.search(xml, at)
-        if found is None:
-            break
-        start, opener = found.start(), found.group()
-        out.append(xml[at:start])
-        end = xml.find(_HIDDEN[opener], start + len(opener))
-        if end < 0:
-            return "".join(out)
-        at = end + len(_HIDDEN[opener])
-    out.append(xml[at:])
-    return "".join(out)
+def revision_kinds(changes: Sequence[Any]) -> dict[str, str]:
+    """`{story}:rev:{w:id}` to `moveins`/`movedel` for every moved run the
+    engine reports, in every story: the map jubarte-app's desk gives its
+    reader, which renders moves as plain ins/del without it. The engine
+    reads the package as XML does (comments, processing instructions,
+    namespaces, entities) and finds each story through its relationship
+    (#55), so this map is the engine's, not a scan of the text."""
+    kinds: dict[str, str] = {}
+    for change in changes:
+        if change.kind != "move" or change.move_side not in ("from", "to"):
+            continue
+        kind = "moveins" if change.move_side == "to" else "movedel"
+        for ident in _canonical_ids(change.id):
+            kinds[ident] = kind
+    return kinds
 
 
 def move_kinds(docx: bytes) -> dict[str, str]:
-    """`{story}:rev:{w:id}` to `moveins`/`movedel` for every w:moveTo and
-    w:moveFrom in the body, footnotes and endnotes: the map jubarte-app's
-    desk gives its reader, which renders moves as plain ins/del without it.
-    A scan of the raw XML, so no entity is ever expanded; a part larger than
-    64 MiB uncompressed is skipped."""
-    kinds: dict[str, str] = {}
-    try:
-        with zipfile.ZipFile(BytesIO(docx)) as package:
-            for story, name in _STORIES:
-                part = name or _main_part(package)
-                try:
-                    info = package.getinfo(part)
-                except KeyError:
-                    continue
-                if info.file_size > _PART_LIMIT:
-                    continue
-                # A commented-out element is no move: drop comments first.
-                xml = _without_comments(package.read(info).decode("utf-8", "replace"))
-                for m in _MOVE.finditer(xml):
-                    value = _attributes(m.group(2)).get("id")
-                    if value is not None:
-                        kinds[f"{story}:rev:{value}"] = "moveins" if m.group(1) == "moveTo" else "movedel"
-    except (zipfile.BadZipFile, OSError, ValueError):
-        return {}
-    return kinds
+    """`revision_kinds` of a package's changes."""
+    return revision_kinds(Document(docx).changes())
+
+
+def _canonical_ids(ident: str) -> list[str]:
+    """The reader's `{story}:rev:{w:id}` keys for an engine change id:
+    `r7` and `r7+8` in the body, `footnotes.r3` in a story, a long id
+    `notes-custom:rev:7` as it is."""
+    if ":rev:" in ident:
+        return [ident]
+    story = _story(ident)
+    short = ident.rsplit(".", 1)[-1] if "." in ident else ident
+    return [f"{story}:rev:{wid}" for wid in short.removeprefix("r").split("+")]
 
 
 def _story(ident: str) -> str:
@@ -779,6 +708,7 @@ def build_server(*, root: Path) -> MCPServer:
         track = {"tracked": None, "accepted": "accept", "original": "reject"}[view]
         markdown, warnings = engine(lambda: _native.read_view(data, track_changes=track, page_markers=False))
         markdown = _image_stand_ins(markdown)
+        changes = engine(doc.changes)
         preview = {
             "path": relative(p),
             "name": p.name,
@@ -786,8 +716,8 @@ def build_server(*, root: Path) -> MCPServer:
             "view": view,
             "markdown": markdown,
             "warnings": list(warnings),
-            "revision_kinds": move_kinds(data) if view == "tracked" else {},
-            "counts": change_counts(engine(doc.changes)),
+            "revision_kinds": revision_kinds(changes) if view == "tracked" else {},
+            "counts": change_counts(changes),
         }
         if len(json.dumps(preview, ensure_ascii=False).encode()) > _PREVIEW_LIMIT:
             raise ToolError(f"{p.name} is too large to preview; read it with docx_text")

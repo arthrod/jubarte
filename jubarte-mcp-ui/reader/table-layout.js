@@ -75,25 +75,32 @@ export function composeWithTables(snapshot,runtime,input){
  const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
  // The room left on a line, its trailing spaces hanging as in Word.
  function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
- // Right-to-left text without the engine's w:bidi (#51, #53): a paragraph reads in the
- // direction of its first strong letter (Unicode P2). Each run takes the direction of its
- // own first strong letter, a run with none that of its neighbours when they agree
- // (else the paragraph's), and the bidi algorithm's rule L2 orders the runs on the line,
- // so a phrase of the other direction keeps its order across formatting. The browser
- // orders the text inside each run.
- const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u;
- function strongDir(text){for(const ch of text||'')if(STRONG.test(ch))return RTL.test(ch)?1:0;return null;}
- function isRtl(block){for(const r of block.runs||[]){const d=strongDir(r.text);if(d!=null)return d===1;}return false;}
+ // Right-to-left text without the engine's w:bidi (#51, #53, #55; engine gap #54): a
+ // paragraph reads in the direction of its first strong letter (Unicode P2). Runs are cut
+ // where the class of their text changes (R, L, or a number, EN), and the bidi algorithm
+ // is applied at run level: W7 makes a number after an L an L; N1 gives neutral text the
+ // direction of agreeing neighbours (a number counts as R), else the paragraph's; I1/I2
+ // give the levels (a number at 2); L2 orders the runs. The browser orders the text inside
+ // each run.
+ const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u,DIGIT=/\p{Nd}/u;
+ function charClass(ch){if(STRONG.test(ch))return RTL.test(ch)?'R':'L';return DIGIT.test(ch)?'EN':null;}
+ function runClass(text){for(const ch of text||''){const c=charClass(ch);if(c)return c;}return null;}
+ function isRtl(block){for(const r of block.runs||[]){for(const ch of r.text||'')if(STRONG.test(ch))return RTL.test(ch);}return false;}
  function hasRtl(block){return (block.runs||[]).some(r=>RTL.test(r.text||''));}
- // A run holding letters of both directions, cut where the direction changes; the
- // neutral text between two pieces of one direction stays with them.
- function splitMixed(run){const text=run.text||'';let sawL=false,sawR=false;for(const ch of text)if(STRONG.test(ch)){if(RTL.test(ch))sawR=true;else sawL=true;}if(!(sawL&&sawR))return [run];
-  const pieces=[];let start=0,dir=null,lastStrongEnd=0;const chars=[...text];let offset=0;const at=[];for(const ch of chars){at.push(offset);offset+=ch.length;}at.push(offset);
-  chars.forEach((ch,i)=>{if(!STRONG.test(ch))return;const d=RTL.test(ch)?1:0;if(dir==null){dir=d;lastStrongEnd=i+1;return;}if(d!==dir){pieces.push([start,lastStrongEnd]);if(lastStrongEnd<i)pieces.push([lastStrongEnd,i]);start=i;dir=d;}lastStrongEnd=i+1;});pieces.push([start,chars.length]);
+ // A run holding text of more than one class, cut where the class changes; neutral text
+ // between two pieces of one class stays with them.
+ function splitMixed(run){const text=run.text||'',chars=[...text],classes=chars.map(charClass);if(new Set(classes.filter(Boolean)).size<2)return [run];
+  const at=[];let offset=0;for(const ch of chars){at.push(offset);offset+=ch.length;}at.push(offset);
+  const pieces=[];let start=0,cls=null,lastEnd=0;
+  classes.forEach((c,i)=>{if(!c)return;if(cls==null){cls=c;lastEnd=i+1;return;}if(c!==cls){pieces.push([start,lastEnd]);if(lastEnd<i)pieces.push([lastEnd,i]);start=i;cls=c;}lastEnd=i+1;});pieces.push([start,chars.length]);
   let x=run.x;return pieces.map(([a,b])=>{const piece=text.slice(at[a],at[b]),width=glyphWidth(piece,run.font);const out={...run,text:piece,x,width,pmRange:{from:run.pmRange.from+at[a],to:run.pmRange.from+at[b]}};x+=width;return out;});}
- function reorder(line,base){const runs=line.runs.flatMap(splitMixed);if(!runs.length)return line;const dirs=runs.map(r=>strongDir(r.text));
-  const resolved=dirs.map((d,i)=>{if(d!=null)return d;let before=base,after=base;for(let j=i-1;j>=0;j--)if(dirs[j]!=null){before=dirs[j];break;}for(let j=i+1;j<dirs.length;j++)if(dirs[j]!=null){after=dirs[j];break;}return before===after?before:base;});
-  const levels=resolved.map(d=>base===1?(d===1?1:2):(d===1?1:0)),order=runs.map((_,i)=>i);
+ function reorder(line,base){const runs=line.runs.flatMap(splitMixed);if(!runs.length)return line;const sos=base===1?'R':'L';
+  const classes=runs.map(r=>runClass(r.text));
+  // W7: a number whose previous strong run is L (or the paragraph, when LTR) is L.
+  let strong=sos;const typed=classes.map(c=>{if(c==='R'||c==='L'){strong=c;return c;}if(c==='EN')return strong==='L'?'L':'EN';return null;});
+  const asStrong=c=>c==='EN'?'R':c;
+  const resolved=typed.map((c,i)=>{if(c)return c;let before=sos,after=sos;for(let j=i-1;j>=0;j--)if(typed[j]){before=asStrong(typed[j]);break;}for(let j=i+1;j<typed.length;j++)if(typed[j]){after=asStrong(typed[j]);break;}return before===after?before:sos;});
+  const levels=resolved.map(c=>c==='EN'?2:base===1?(c==='R'?1:2):(c==='R'?1:0)),order=runs.map((_,i)=>i);
   for(let level=Math.max(...levels);level>=1;level--)for(let i=0;i<order.length;){if(levels[order[i]]<level){i++;continue;}let j=i;while(j<order.length&&levels[order[j]]>=level)j++;order.splice(i,j-i,...order.slice(i,j).reverse());i=j;}
   let x=Math.min(...runs.map(r=>r.x));const placed=new Array(runs.length);
   for(const i of order){const r=runs[i];placed[i]={...r,x,dir:levels[i]%2?'rtl':base===1?'ltr':undefined};x+=r.width||0;}

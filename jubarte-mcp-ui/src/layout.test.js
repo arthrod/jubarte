@@ -321,3 +321,22 @@ describe("mixed directions keep each phrase's order across formatting (#53)", ()
     done();
   });
 });
+
+describe("numbers keep their order inside right-to-left text (#55)", () => {
+  it("a number split by formatting reads left to right", () => {
+    const { composed, done } = compose(`${header()}<!-- p0 -->\nשלום **12**_34_ עולם\n`);
+    const runs = bodyRuns(composed, 0);
+    const at = (w) => runs.find((r) => r.text.includes(w)).x;
+    expect(at("12")).toBeLessThan(at("34"));
+    expect(at("34")).toBeLessThan(at("שלום"));
+    expect(at("עולם")).toBeLessThan(at("12"));
+    done();
+  });
+  it("a number after English in a right-to-left line stays with it", () => {
+    const { composed, done } = compose(`${header()}<!-- p0 -->\nשלום **Room** 12 עולם\n`);
+    const runs = bodyRuns(composed, 0);
+    const at = (w) => runs.find((r) => r.text.includes(w)).x;
+    expect(at("Room")).toBeLessThan(at("12"));
+    done();
+  });
+});
