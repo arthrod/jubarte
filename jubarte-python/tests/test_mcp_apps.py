@@ -356,6 +356,91 @@ def test_move_kinds_ignore_moves_inside_xml_comments() -> None:
     assert server._without_comments("x<!--c-->y<!--d-->z") == "xyz"
 
 
+def _open_fds() -> int:
+    return len(os.listdir("/dev/fd"))
+
+
+@pytest.mark.skipif(not server._FD_WALK or not os.path.isdir("/dev/fd"), reason="descriptor walk only")
+def test_view_listing_closes_every_folder_it_opens(tmp_path: Path) -> None:
+    """#23: os.scandir(fd) duplicates fd; the walk must close its own."""
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "a" / "x.docx").write_bytes(b"")
+    (tmp_path / "a" / "b" / "y.docx").write_bytes(b"")
+    server.list_documents(tmp_path.resolve())
+    before = _open_fds()
+    for _ in range(20):
+        files, _ = server.list_documents(tmp_path.resolve())
+    assert [f["path"] for f in files] == ["a/b/y.docx", "a/x.docx"]
+    assert _open_fds() == before
+
+
+def test_view_listing_survives_an_entry_that_vanishes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#23: one entry deleted mid-walk does not drop its folder."""
+    for name in ("a.docx", "gone.docx", "z.docx"):
+        (tmp_path / name).write_bytes(b"")
+    real_scandir = os.scandir
+
+    class Vanishing:
+        def __init__(self, entry: Any) -> None:
+            self.entry, self.name = entry, entry.name
+
+        def stat(self, *, follow_symlinks: bool = True) -> Any:
+            if self.name == "gone.docx":
+                raise FileNotFoundError(self.name)
+            return self.entry.stat(follow_symlinks=follow_symlinks)
+
+    class Listing:
+        def __init__(self, it: Any) -> None:
+            self.it = it
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self.it.close()
+
+        def __iter__(self) -> Any:
+            return (Vanishing(e) for e in self.it)
+
+    monkeypatch.setattr(os, "scandir", lambda target=".": Listing(real_scandir(target)))
+    files, truncated = server.list_documents(tmp_path.resolve())
+    assert [f["path"] for f in files] == ["a.docx", "z.docx"]
+    assert truncated is False
+
+
+def test_view_listing_keeps_what_it_read_before_the_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#23: the entries read before the visit budget ran out are listed."""
+    for i in range(5):
+        (tmp_path / f"d{i}.docx").write_bytes(b"")
+    monkeypatch.setattr(server, "_LIST_VISITS", 3)
+    files, truncated = server.list_documents(tmp_path.resolve())
+    assert truncated is True
+    assert len(files) == 3
+    assert [f["path"] for f in files] == sorted(f["path"] for f in files)
+
+
+def test_a_long_change_id_names_its_story() -> None:
+    """#23: `footnotes:rev:007` is a footnote change, not a body one."""
+
+    class Change:
+        def __init__(self, ident: str, name: str) -> None:
+            self.kind, self.id, self.move_name = "move", ident, name
+
+    changes = [
+        Change("r7", "move1"),
+        Change("footnotes:rev:007", "move1"),
+        Change("header.a:rev:4", "move1"),
+        Change("header.a:rev:5", "move1"),
+    ]
+    assert server.change_counts(changes)["moved"] == 3
+
+
+def test_move_kinds_ignore_moves_inside_cdata() -> None:
+    """#23: a w:moveTo written inside a CDATA section is text, not a move."""
+    body = MOVE + '<w:r><w:t><![CDATA[<w:moveTo w:id="7"/>]]></w:t></w:r>'
+    assert server.move_kinds(package(body)) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+
+
 # -- what does not change -------------------------------------------------
 
 
