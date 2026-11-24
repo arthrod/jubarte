@@ -164,7 +164,10 @@ export function constrainLines(lines,w,lh,glyphWidth){
   const space=ch=>ch===' '||ch==='\t';
   const out=[];
   for(const line of lines){
-    if(line.runs.every(r=>r.x+r.width<=w+0.01)){out.push(line);continue;}
+    // Judged on the composer's own widths: a sum of glyphs runs wider than a
+    // kerned run, so the space alone must be what crosses the edge.
+    const last=line.runs.at(-1),trail=last?.text.match(/[ \t]+$/)?.[0]||'',hang=trail?glyphWidth(trail,last.font):0;
+    if(line.runs.every((r,i)=>r.x+r.width-(i===line.runs.length-1?hang:0)<=w+0.01)){out.push(line);continue;}
     const chars=[];
     for(const run of line.runs){let offset=0;const span=run.pmRange.to-run.pmRange.from;for(const ch of graphemes(run.text)){chars.push({run,ch,cw:glyphWidth(ch,run.font),from:run.pmRange.from+Math.floor(offset*span/run.text.length),to:run.pmRange.from+Math.floor((offset+ch.length)*span/run.text.length)});offset+=ch.length;}}
     const pieces=[];

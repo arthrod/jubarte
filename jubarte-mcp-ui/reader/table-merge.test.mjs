@@ -159,3 +159,11 @@ test('a cell line that truly overflows wraps at a space before it cuts a word (b
   // A word longer than the cell is still cut, by grapheme.
   assert.deepEqual(texts(constrainLines([line(['abcdefgh', 0])], 50, 29, (ch) => 10)), ['abcde', 'fgh']);
 });
+
+test('the hang is judged on the composer’s width, not a sum of glyphs that kerning makes wider (b106)', async () => {
+  const { constrainLines } = await import('./table-layout.js');
+  // The composer measured "abcd " at 45px in a 42px cell; glyph by glyph,
+  // "abcd" sums to 44px. Without its 11px space the line is 34px: it fits.
+  const l = { runs: [{ runId: 'r0', text: 'abcd ', x: 0, width: 45, font: 'f', pmRange: { from: 1, to: 6 } }] };
+  assert.deepEqual(texts(constrainLines([l], 42, 29, () => 11)), ['abcd ']);
+});
