@@ -681,6 +681,10 @@ def build_server(*, root: Path) -> MCPServer:
             text = (
                 f"{len(files)} .docx files under the root{more}:\n" + "\n".join(lines)
                 if files
+                # A spent budget is not proof of absence (#64).
+                else "The search stopped before it found a .docx file (too many entries under the root); "
+                "name a file with path."
+                if truncated
                 else "No .docx files under the root."
             )
             return CallToolResult(

@@ -91,7 +91,10 @@ function showFiles(files, truncated) {
   if (!files.length) {
     const li = document.createElement("li");
     li.className = "file";
-    li.textContent = "No .docx files under this folder.";
+    // A listing cut short has not shown that none exist (#64).
+    li.textContent = truncated
+      ? "The search stopped before it found a .docx file. Ask for one by its path."
+      : "No .docx files under this folder.";
     grid.append(li);
     return;
   }

@@ -233,3 +233,18 @@ describe("the discussion panel (#44)", () => {
     expect(open.textContent).not.toMatch(/resolved/i);
   });
 });
+
+it("an empty listing cut short says the search stopped, not that none exist (#64)", async () => {
+  host.app.ontoolinput({ arguments: {} });
+  host.app.ontoolresult({ structuredContent: { files: [], truncated: true } });
+  await settle();
+  expect($("files-grid").textContent).not.toContain("No .docx files");
+  expect($("files-grid").textContent).toContain("stopped");
+});
+
+it("an empty complete listing says there are none (#64)", async () => {
+  host.app.ontoolinput({ arguments: {} });
+  host.app.ontoolresult({ structuredContent: { files: [], truncated: false } });
+  await settle();
+  expect($("files-grid").textContent).toContain("No .docx files under this folder.");
+});

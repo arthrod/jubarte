@@ -411,6 +411,20 @@ def test_view_without_a_path_lists_the_roots_documents(tmp_path: Path) -> None:
     assert "a.docx" in listed.content[0].text
 
 
+def test_view_listing_cut_short_before_any_document_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A spent budget is not proof of absence (#64)."""
+    for i in range(5):
+        (tmp_path / f"noise-{i}.txt").write_bytes(b"")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "visible.docx").write_bytes(make_document("VISIBLE"))
+    monkeypatch.setattr(server, "_LIST_VISITS", 3)
+    (listed,) = call(tmp_path, ("docx_view", {}))
+    assert listed.structured_content == {"files": [], "truncated": True}
+    text = listed.content[0].text
+    assert "No .docx files under the root." not in text
+    assert "stopped" in text and "path" in text
+
+
 def test_view_listing_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for i in range(5):
         (tmp_path / f"d{i}.docx").write_bytes(make_document("x"))
