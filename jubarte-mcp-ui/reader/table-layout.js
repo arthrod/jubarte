@@ -123,13 +123,14 @@ export function composeWithTables(snapshot,runtime,input){
  // (hanging). A note continued from another page, and the text after a manual line break (#66), has no first line here. List paragraphs
  // keep the list's own geometry (#63).
  function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const p=block.attrs?.sourceData?.paragraphProperties?.indents;if(!p)return none;
-  const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null||block.attrs?.first===false?0:px(p['first-line'])-px(p.hanging),shift=Math.max(0,Math.min(left,left+first));
-  return {shift,right:Math.max(0,px(p.right)),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}
+  const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null||block.attrs?.first===false?0:px(p['first-line'])-px(p.hanging),shift=Math.min(left,left+first);
+  // A negative start or right indent runs into the margin, as Word draws it (#83).
+  return {shift,right:px(p.right),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
-  for(const block of blocks){const ind=paragraphIndent(block),indent=Math.min(Math.max(0,(block.attrs?.indentPx||0)+ind.shift),Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
+  for(const block of blocks){const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
    const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:indentObstacles(ind,inner)});
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});

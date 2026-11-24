@@ -369,9 +369,14 @@ function fixWordBoundarySplits(
 function breakBlockIntoLineDrafts(
   block: BlockSnapshot,
   snapshot: MeasuredDocumentSnapshot,
-  contentWidth: number,
+  widthOfLine: number | ((lineIndex: number) => number),
 ): LineDraft[] {
   const lines: LineDraft[] = [];
+  // Jubarte fork: each line is broken at its own slot's width, so an obstacle that narrows
+  // only some lines (a first-line or hanging indent) wraps those lines and no others.
+  const widthAt = (index: number): number =>
+    typeof widthOfLine === "function" ? widthOfLine(index) : widthOfLine;
+  let contentWidth = widthAt(0);
   const measuredRuns = snapshot.measuredRuns;
 
   let currentParts: PlacedRun[] = [];
@@ -390,6 +395,7 @@ function breakBlockIntoLineDrafts(
     lineWidthUsed = 0;
     linePmFrom = Number.POSITIVE_INFINITY;
     linePmTo = 0;
+    contentWidth = widthAt(lines.length);
   };
 
   const appendToLine = (pr: PlacedRun, pmFrom: number, pmTo: number) => {
@@ -698,6 +704,9 @@ export function composeLayout(
 
   const blocks = snapshot.blocks;
 
+  // The width of each of a block's lines, from the slot at that line's band.
+  const lineWidths = (yInFrame: number) => (lineIndex: number): number =>
+    contentWidthForBlockStart(yInFrame + lineIndex * lineHeight);
   const contentWidthForBlockStart = (yInFrame: number): number => {
     const bandTop = frame.y + yInFrame;
     const bandBottom = bandTop + lineHeight;
@@ -706,8 +715,7 @@ export function composeLayout(
   };
 
   const estimateBlockHeight = (b: BlockSnapshot, yInFrame: number): number => {
-    const w = contentWidthForBlockStart(yInFrame);
-    const d = breakBlockIntoLineDrafts(b, snapshot, w);
+    const d = breakBlockIntoLineDrafts(b, snapshot, lineWidths(yInFrame));
     return d.length * lineHeight;
   };
 
@@ -734,7 +742,7 @@ export function composeLayout(
       }
     }
 
-    const drafts = breakBlockIntoLineDrafts(block, snapshot, contentWidthForBlockStart(currentY));
+    const drafts = breakBlockIntoLineDrafts(block, snapshot, lineWidths(currentY));
     if (drafts.length === 0) continue;
 
     let lineCursor = 0;

@@ -568,6 +568,24 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     expect(right).toBeLessThanOrEqual(contentWidth(composed.layout.pages[0]) - 192 + 1);
     done();
   });
+  it("negative indents run into the margin, as Word draws them (#83)", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 hanging 0in, left -0.5in -->\n${words("neg")}\n\n<!-- p1 hanging 0.5in, left 0in -->\n${words("hz")}\n\n<!-- p2 right -1in -->\n${words("wide")}\n`,
+    );
+    const negative = lines(composed, "neg"),
+      hanging = lines(composed, "hz");
+    expect(negative[0]).toBeCloseTo(-48, 0);
+    expect(negative[1]).toBeCloseTo(-48, 0);
+    expect(hanging[0]).toBeCloseTo(-48, 0);
+    expect(hanging[1]).toBe(0);
+    const right = Math.max(
+      ...composed.layout.pages[0].frames[0].fragments
+        .flatMap((f) => (f.lines || []).filter((l) => l.runs.some((r) => r.text?.includes("wide"))))
+        .flatMap((l) => l.runs.filter((r) => r.text?.trim()).map((r) => r.x + r.width)),
+    );
+    expect(right).toBeGreaterThan(contentWidth(composed.layout.pages[0]) + 24);
+    done();
+  });
 });
 
 describe("a table narrower than the text area keeps Word's width (#65)", () => {
