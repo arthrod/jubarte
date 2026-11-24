@@ -117,11 +117,21 @@ export function composeWithTables(snapshot,runtime,input){
   let x=Math.min(...runs.map(r=>r.x));const placed=new Array(runs.length);
   for(const i of order){const r=runs[i];placed[i]={...r,x,dir:levels[i]%2?'rtl':base===1?'ltr':undefined};x+=r.width||0;}
   return {...line,runs:placed};}
+ // Word's w:ind on a paragraph (the engine's left, right, first-line and hanging clauses):
+ // the paragraph moves by the smaller of its left and first-line starts, the right indent
+ // narrows it, and an obstacle carves the first line (first-line) or the lines after it
+ // (hanging). A note continued from another page has no first line here. List paragraphs
+ // keep the list's own geometry (#63).
+ function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const p=block.attrs?.sourceData?.paragraphProperties?.indents;if(!p)return none;
+  const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null?0:px(p['first-line'])-px(p.hanging),shift=Math.max(0,Math.min(left,left+first));
+  return {shift,right:Math.max(0,px(p.right)),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}
+ function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
+  if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
-  for(const block of blocks){const indent=Math.min(Math.max(0,block.attrs?.indentPx||0),Math.max(0,w-1)),inner=Math.max(1,w-indent);const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
+  for(const block of blocks){const ind=paragraphIndent(block),indent=Math.min(Math.max(0,(block.attrs?.indentPx||0)+ind.shift),Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
-   const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:[]});
+   const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:indentObstacles(ind,inner)});
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});
    lines=constrain(lines,inner);
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
@@ -173,7 +183,8 @@ export function composeWithTables(snapshot,runtime,input){
   // fit makes no page of its own and never leads the next one (#58).
   if(block.attrs?.spacer&&(y===0&&page.index>0&&!page.frames[0].fragments.length||notes.bodyLimit-y<lh-0.001))continue;
   ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
-  if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;const next=snapshot.blocks[bi+1];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){const need=lines.length*lh+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
+  if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;let ni=bi+1,gap=0;while(snapshot.blocks[ni]?.attrs?.spacer){gap+=lh;ni++;}const next=snapshot.blocks[ni];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){// The spacers between them count, but the test is the next real paragraph (#62).
+    const need=lines.length*lh+gap+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
    while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
     const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;
     if(!accepted){notes.restore(checkpoint);newPage();continue;}

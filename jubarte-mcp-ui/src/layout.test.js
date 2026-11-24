@@ -493,3 +493,52 @@ describe("Arabic-Indic digits are Arabic numbers, class AN (#60)", () => {
     done();
   });
 });
+
+describe("keep with next reaches past the spacer (#62)", () => {
+  it("a keep-next heading moves to the page of the paragraph after it", () => {
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: 6x3in landscape, margins 0.5in, header/footer 0.5in\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines\n---\n\n<!-- p0 -->\nBEFORE_ONE\n\n<!-- p1 -->\nBEFORE_TWO\n\n<!-- p2 -->\n# KEEP_HEADING\n\n<!-- p3 -->\nFOLLOWING_BODY\n`,
+    );
+    const pageOf = (text) =>
+      composed.layout.pages.findIndex((page) =>
+        page.frames[0].fragments.some((f) =>
+          (f.lines || []).some((l) => (l.runs || []).some((r) => r.text?.includes(text))),
+        ),
+      );
+    expect(pageOf("FOLLOWING_BODY")).toBeGreaterThan(0);
+    expect(pageOf("KEEP_HEADING")).toBe(pageOf("FOLLOWING_BODY"));
+    done();
+  });
+});
+
+describe("paragraph indents are Word's w:ind (#63)", () => {
+  const words = (tag) => Array.from({ length: 40 }, (_, i) => `${tag}${i}`).join(" ");
+  const lines = (composed, tag) =>
+    composed.layout.pages[0].frames[0].fragments.flatMap((f) =>
+      (f.lines || [])
+        .filter((l) => l.runs.some((r) => r.text?.includes(tag)))
+        .map((l) => Math.min(...l.runs.filter((r) => r.text?.trim()).map((r) => r.x))),
+    );
+  it("left, first-line and hanging indents place the first and following lines", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 -->\n${words("plain")}\n\n<!-- p1 first-line 0.5in, left 1in -->\n${words("ind")}\n\n<!-- p2 hanging 0.5in, left 1in -->\n${words("hang")}\n`,
+    );
+    const [plain, indented, hanging] = [
+      lines(composed, "plain"),
+      lines(composed, "ind"),
+      lines(composed, "hang"),
+    ];
+    expect(plain[0]).toBe(0);
+    expect(indented[0]).toBeCloseTo(144, 0);
+    expect(indented[1]).toBeCloseTo(96, 0);
+    expect(hanging[0]).toBeCloseTo(48, 0);
+    expect(hanging[1]).toBeCloseTo(96, 0);
+    done();
+  });
+  it("a right indent narrows the lines", () => {
+    const { composed, done } = compose(`${header()}<!-- p0 right 2in -->\n${words("narrow")}\n`);
+    const right = Math.max(...bodyRuns(composed, 0).map((r) => r.x + r.width));
+    expect(right).toBeLessThanOrEqual(contentWidth(composed.layout.pages[0]) - 192 + 1);
+    done();
+  });
+});
