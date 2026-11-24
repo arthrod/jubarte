@@ -549,6 +549,7 @@ package and font it contains.
 | Files | Comes from | Licence |
 | --- | --- | --- |
 | `reader/vendor/premirror/` | [Premirror](https://github.com/arthrod/premirror) at `29b78634d6496206c84015068eb7d66d9cdc312c`, Sam Willis's pagination engine, with local integration changes (`reader/vendor/premirror/UPSTREAM.txt`) | MIT |
+| `patches/@chenglou__pretext@0.0.5.patch` | A change to [@chenglou/pretext](https://github.com/chenglou/pretext) 0.0.5 (Copyright 2026 Pretext contributors), applied by pnpm when it installs the package: its measuring canvas does not kern (#94). The patched package is bundled in the view, which carries its licence text | MIT |
 | `reader/vendor/remark-critic-markup-jubarte/` | [remark-critic-markup](https://www.npmjs.com/package/remark-critic-markup) 1.0.1 by Ben, with jubarte's dialect | MIT |
 | `src/fonts/manrope-*.woff2` | [Manrope](https://github.com/sharanda/manrope), Copyright 2019 The Manrope Project Authors | OFL-1.1 (`licenses/LICENSE-manrope.txt`) |
 | `src/fonts/jetbrains-mono-*.woff2` | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), Copyright 2020 The JetBrains Mono Project Authors | OFL-1.1 (`licenses/LICENSE-jetbrains-mono.txt`) |

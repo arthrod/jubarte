@@ -12,4 +12,6 @@ Local integration changes:
 - Composer's word-boundary repair treats no-break characters (U+00A0, U+202F, U+2007, U+2011, U+2060, U+FEFF) as binding, so no line ends at one across a run boundary, and never empties a line.
 - Other runtime source retained from the pinned arthrod commit.
 
+Pretext is patched (jubarte-mcp-ui/patches/@chenglou__pretext@0.0.5.patch, applied by pnpm): its measuring canvas sets fontKerning = 'none', so text is measured as the page draws it (#94).
+
 Security maintenance (2026-10-14): composer and adapter pretext dependencies are pinned to patched 0.0.5; upstream source revision is unchanged. See https://github.com/chenglou/pretext/security/advisories/GHSA-5478-66c3-rhxr.

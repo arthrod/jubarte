@@ -1,0 +1,19 @@
+diff --git a/dist/measurement.js b/dist/measurement.js
+index 9af14bd617632eb097443bbbf2ea6669deb7953e..336e5e4dd35373fdc70f49930d45149a13243b2c 100644
+--- a/dist/measurement.js
++++ b/dist/measurement.js
+@@ -16,10 +16,14 @@ export function getMeasureContext() {
+         return measureContext;
+     if (typeof OffscreenCanvas !== 'undefined') {
+         measureContext = new OffscreenCanvas(1, 1).getContext('2d');
++        // jubarte: measure unkerned, as the page draws (Word kerns only with w:kern).
++        measureContext.fontKerning = 'none';
+         return measureContext;
+     }
+     if (typeof document !== 'undefined') {
+         measureContext = document.createElement('canvas').getContext('2d');
++        // jubarte: measure unkerned, as the page draws (Word kerns only with w:kern).
++        measureContext.fontKerning = 'none';
+         return measureContext;
+     }
+     throw new Error('Text measurement requires OffscreenCanvas or a DOM canvas context.');

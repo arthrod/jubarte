@@ -29,14 +29,20 @@ beforeAll(async () => {
             : 8;
   globalThis.OffscreenCanvas = class {
     getContext() {
-      return {
+      const context = {
         font: "",
+        // Browsers kern canvas text unless told otherwise.
+        fontKerning: "auto",
         measureText: (text) => ({ width: [...text].reduce((n, ch) => n + width(ch), 0) }),
       };
+      contexts.push(context);
+      return context;
     }
   };
   ({ mountPagination } = await import("../reader/pagination.js"));
 });
+
+const contexts = [];
 
 const compose = (markdown) => {
   const container = document.createElement("div");
@@ -177,4 +183,50 @@ it("a no-break space holds its words together across a formatting boundary (#90)
     [`${a} **abc**‑def`, "abc‑def"],
   ])
     expect(text(md), JSON.stringify(md.slice(74))).toEqual([`${a} `, glued]);
+});
+
+it("a justified paragraph meets both margins on every line but its last (#93)", () => {
+  const words = Array.from({ length: 60 }, (_, i) => (i % 3 ? "word" : "wide")).join(" ");
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 justify -->\n${words}\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .filter((l) => l.runs.some((r) => r.text?.trim()));
+  done();
+  const edges = lines.map((l) => {
+    const text = l.runs.filter((r) => r.text?.trim());
+    const last = text.at(-1);
+    const trail = last.text.match(/ +$/)?.[0].length || 0;
+    return {
+      left: Math.min(...text.map((r) => r.x)),
+      // Trailing spaces hang past the margin: the run's width holds them unstretched.
+      right: last.x + last.width - trail * 4,
+    };
+  });
+  expect(lines.length).toBeGreaterThan(2);
+  for (const edge of edges.slice(0, -1)) {
+    expect(edge.left).toBeCloseTo(0, 0);
+    expect(edge.right).toBeCloseTo(624, 0);
+  }
+  expect(edges.at(-1).right).toBeLessThan(600);
+});
+
+it("a justified line that ends at a manual break is not stretched (#93)", () => {
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 justify -->\nshort line here\\\nnext line\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .filter((l) => l.runs.some((r) => r.text?.trim()));
+  done();
+  expect(lines.length).toBe(2);
+  expect(lines[0].runs.every((r) => !r.wordSpacing)).toBe(true);
+});
+
+it("text is measured unkerned, as the page draws it (#94)", () => {
+  const { done } = compose(`---\nview: tracked\npage: Letter portrait\n---\n\nAVAWAY To Wa\n`);
+  done();
+  expect(contexts.length).toBeGreaterThan(0);
+  for (const context of contexts) expect(context.fontKerning).toBe("none");
 });

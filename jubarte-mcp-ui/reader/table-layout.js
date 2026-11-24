@@ -142,7 +142,11 @@ export function composeWithTables(snapshot,runtime,input){
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
-   for(const drawn of lines){const line=bidi?reorder(drawn,base):drawn;const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
+   // Word's w:jc both: the spaces of every line but the block's last widen until the line meets
+   // the right margin (#93). A manual break ends a block, so the line before it stays as set.
+   // Right-to-left lines keep their alignment.
+   const justified=(line,i)=>{if(align!=='justify'||bidi||i===lines.length-1)return line;const extra=alignShift(line,inner,false);const last=line.runs.findLastIndex(r=>r.text?.trim());const spaces=line.runs.map((r,k)=>k>last?0:((k===last?r.text.replace(/[ \u00a0]+$/,''):r.text).match(/[ \u00a0]/g)||[]).length);const total=spaces.reduce((a,b)=>a+b,0);if(!total||extra<=0)return line;const add=extra/total;let before=0;return {...line,runs:line.runs.map((r,k)=>{const moved={...r,x:r.x+add*before,wordSpacing:add,width:(r.width||0)+add*spaces[k]};before+=spaces[k];return moved;})};};
+   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});});
   }
   lineCache.set(key,result);return result;
  }

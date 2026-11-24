@@ -171,13 +171,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@chenglou/pretext@0.0.5': 00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc
+
 importers:
 
   .:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@modelcontextprotocol/core':
         specifier: 2.4.0
         version: 2.4.0
@@ -277,7 +280,7 @@ importers:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@premirror/core':
         specifier: workspace:*
         version: link:../core
@@ -288,7 +291,7 @@ importers:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@premirror/core':
         specifier: workspace:*
         version: link:../core
@@ -1374,7 +1377,7 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
 
-  '@chenglou/pretext@0.0.5': {}
+  '@chenglou/pretext@0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)': {}
 
   '@csstools/color-helpers@5.1.0': {}
 
