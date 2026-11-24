@@ -891,6 +891,22 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
     expect([...run.classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
     done();
   });
+  it("a named style's bold and italic are already inline: an unmarked run stays plain (#92)", () => {
+    for (const mark of ["bold", "italic"]) {
+      const md = `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  TestStyle: Calibri ${mark} 11pt\n---\n\n<!-- p0 TestStyle -->\n${mark === "bold" ? "**INHERITED**" : "_INHERITED_"} STYLED\n`;
+      const { container, done } = compose(md);
+      const run = [...container.querySelectorAll(".premirror-run")].find((r) =>
+        r.textContent.includes("STYLED"),
+      );
+      const inherited = [...container.querySelectorAll(".premirror-run")].find((r) =>
+        r.textContent.includes("INHERITED"),
+      );
+      expect(run.style.font, mark).not.toContain("italic");
+      expect(run.style.font, mark).toContain("400");
+      expect(inherited.style.font, mark).toContain(mark === "bold" ? "600" : "italic");
+      done();
+    }
+  });
   it("a plain Normal stays plain", () => {
     const { container, done } = compose(styled("Calibri 11pt"));
     const run = drawn(container);
