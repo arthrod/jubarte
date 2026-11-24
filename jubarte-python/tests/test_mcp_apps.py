@@ -596,3 +596,15 @@ def test_preview_sends_an_images_type_and_size_not_its_bytes(tmp_path: Path, mon
     kb = round(len(picture) / 1024)
     assert f"[image1]: <image/png, {kb} KB>" in markdown, markdown
     assert "Before ![logo][image1] after" in markdown
+
+
+def test_image_stand_ins_leave_code_blocks_as_written(tmp_path: Path) -> None:
+    # codex #31: a code block holding a picture definition's shape is text.
+    literal = "[image1]: <data:image/png;base64,AAAA>"
+    docx = _native.markdown_to_docx(f"```\n{literal}\n```\n\n~~~~\n{literal}\n~~~~\n")
+    (tmp_path / "c.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    (preview,) = call(tmp_path, ("docx_preview", {"path": "c.docx"}))
+    data = (tmp_path / "c.docx").read_bytes()
+    view = _native.read_view(data, page_markers=False)[0]
+    assert view.count(literal) == 2, view
+    assert preview.structured_content["markdown"] == view
