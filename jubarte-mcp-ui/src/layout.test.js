@@ -291,3 +291,33 @@ describe("list numbers in continuous sections and right-to-left lines (#51)", ()
     done();
   });
 });
+
+describe("mixed directions keep each phrase's order across formatting (#53)", () => {
+  const order = (composed, words) => {
+    const runs = bodyRuns(composed, 0);
+    return words.map((w) => runs.find((r) => r.text.includes(w)).x);
+  };
+  it("an English phrase inside a right-to-left line reads left to right", () => {
+    const { composed, container, done } = compose(
+      `${header()}<!-- p0 right -->\nمرحبا **hello** world\n`,
+    );
+    const [arabic, hello, world] = order(composed, ["مرحبا", "hello", "world"]);
+    expect(hello).toBeLessThan(world);
+    expect(arabic).toBeGreaterThan(world);
+    const dirs = [...container.querySelectorAll(".premirror-run")].map((s) => [
+      s.textContent.trim(),
+      s.getAttribute("dir"),
+    ]);
+    expect(dirs).toContainEqual(["مرحبا", "rtl"]);
+    expect(dirs).toContainEqual(["hello", "ltr"]);
+    done();
+  });
+  it("an Arabic phrase inside an English line reads right to left", () => {
+    const { composed, done } = compose(`${header()}<!-- p0 -->\nSay **مرحبا** بكم now\n`);
+    const [say, first, second, now] = order(composed, ["Say", "مرحبا", "بكم", "now"]);
+    expect(say).toBeLessThan(second);
+    expect(second).toBeLessThan(first);
+    expect(first).toBeLessThan(now);
+    done();
+  });
+});

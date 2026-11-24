@@ -290,6 +290,12 @@ def test_move_kinds_decode_the_main_part_target() -> None:
     assert server.move_kinds(out.getvalue()) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
 
 
+def test_move_kinds_skip_processing_instructions() -> None:
+    # #53: a processing instruction's data is no element.
+    body = '<?probe <w:moveTo w:id="7">?><w:p><w:ins w:id="7" w:author="A"><w:r><w:t>INSERTED</w:t></w:r></w:ins></w:p>'
+    assert server.move_kinds(package(body)) == {}
+
+
 def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

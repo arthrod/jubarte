@@ -75,12 +75,29 @@ export function composeWithTables(snapshot,runtime,input){
  const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
  // The room left on a line, its trailing spaces hanging as in Word.
  function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
- // A paragraph whose first strong letter is Hebrew, Arabic, Syriac or Thaana reads
- // right to left (Unicode P2); the engine writes no w:bidi, so each line's runs are
- // mirrored across the room they take, the browser ordering the text inside each (#51).
+ // Right-to-left text without the engine's w:bidi (#51, #53): a paragraph reads in the
+ // direction of its first strong letter (Unicode P2). Each run takes the direction of its
+ // own first strong letter, a run with none that of its neighbours when they agree
+ // (else the paragraph's), and the bidi algorithm's rule L2 orders the runs on the line,
+ // so a phrase of the other direction keeps its order across formatting. The browser
+ // orders the text inside each run.
  const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u;
- function isRtl(block){for(const r of block.runs||[])for(const ch of r.text||'')if(STRONG.test(ch))return RTL.test(ch);return false;}
- function mirror(line){const xs=line.runs.map(r=>r.x),lo=Math.min(...xs),hi=Math.max(...line.runs.map(r=>r.x+(r.width||0)));return {...line,runs:line.runs.map(r=>({...r,x:lo+hi-r.x-(r.width||0),rtl:true}))};}
+ function strongDir(text){for(const ch of text||'')if(STRONG.test(ch))return RTL.test(ch)?1:0;return null;}
+ function isRtl(block){for(const r of block.runs||[]){const d=strongDir(r.text);if(d!=null)return d===1;}return false;}
+ function hasRtl(block){return (block.runs||[]).some(r=>RTL.test(r.text||''));}
+ // A run holding letters of both directions, cut where the direction changes; the
+ // neutral text between two pieces of one direction stays with them.
+ function splitMixed(run){const text=run.text||'';let sawL=false,sawR=false;for(const ch of text)if(STRONG.test(ch)){if(RTL.test(ch))sawR=true;else sawL=true;}if(!(sawL&&sawR))return [run];
+  const pieces=[];let start=0,dir=null,lastStrongEnd=0;const chars=[...text];let offset=0;const at=[];for(const ch of chars){at.push(offset);offset+=ch.length;}at.push(offset);
+  chars.forEach((ch,i)=>{if(!STRONG.test(ch))return;const d=RTL.test(ch)?1:0;if(dir==null){dir=d;lastStrongEnd=i+1;return;}if(d!==dir){pieces.push([start,lastStrongEnd]);if(lastStrongEnd<i)pieces.push([lastStrongEnd,i]);start=i;dir=d;}lastStrongEnd=i+1;});pieces.push([start,chars.length]);
+  let x=run.x;return pieces.map(([a,b])=>{const piece=text.slice(at[a],at[b]),width=glyphWidth(piece,run.font);const out={...run,text:piece,x,width,pmRange:{from:run.pmRange.from+at[a],to:run.pmRange.from+at[b]}};x+=width;return out;});}
+ function reorder(line,base){const runs=line.runs.flatMap(splitMixed);if(!runs.length)return line;const dirs=runs.map(r=>strongDir(r.text));
+  const resolved=dirs.map((d,i)=>{if(d!=null)return d;let before=base,after=base;for(let j=i-1;j>=0;j--)if(dirs[j]!=null){before=dirs[j];break;}for(let j=i+1;j<dirs.length;j++)if(dirs[j]!=null){after=dirs[j];break;}return before===after?before:base;});
+  const levels=resolved.map(d=>base===1?(d===1?1:2):(d===1?1:0)),order=runs.map((_,i)=>i);
+  for(let level=Math.max(...levels);level>=1;level--)for(let i=0;i<order.length;){if(levels[order[i]]<level){i++;continue;}let j=i;while(j<order.length&&levels[order[j]]>=level)j++;order.splice(i,j-i,...order.slice(i,j).reverse());i=j;}
+  let x=Math.min(...runs.map(r=>r.x));const placed=new Array(runs.length);
+  for(const i of order){const r=runs[i];placed[i]={...r,x,dir:levels[i]%2?'rtl':base===1?'ltr':undefined};x+=r.width||0;}
+  return {...line,runs:placed};}
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
   for(const block of blocks){const indent=Math.min(Math.max(0,block.attrs?.indentPx||0),Math.max(0,w-1)),inner=Math.max(1,w-indent);const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
@@ -90,8 +107,8 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrain(lines,inner);
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
-   const rtl=isRtl(block);
-   for(const drawn of lines){const line=rtl&&drawn.runs.length?mirror(drawn):drawn;const shift=align==='right'||align==='center'?alignShift(line,inner,rtl)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
+   const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
+   for(const drawn of lines){const line=bidi?reorder(drawn,base):drawn;const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
   }
   lineCache.set(key,result);return result;
  }

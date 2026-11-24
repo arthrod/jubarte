@@ -195,7 +195,8 @@ def _main_part(package: zipfile.ZipFile) -> str:
     return "word/document.xml"
 
 
-_HIDDEN = {"<!--": "-->", "<![CDATA[": "]]>"}
+# Comments, CDATA and processing instructions: text that only looks like markup (#53).
+_HIDDEN = {"<!--": "-->", "<![CDATA[": "]]>", "<?": "?>"}
 _HIDDEN_OPEN = re.compile("|".join(re.escape(opener) for opener in _HIDDEN))
 
 
