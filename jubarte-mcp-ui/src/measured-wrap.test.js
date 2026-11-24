@@ -15,9 +15,18 @@ beforeAll(async () => {
     unobserve() {}
     disconnect() {}
   };
-  // Proportional widths at 16px: narrow, wide and space glyphs differ, as in Source Serif.
+  // Proportional widths at 16px: narrow, wide and space glyphs differ, as in Source Serif;
+  // a soft hyphen measures nothing, as a browser measures it.
   const width = (ch) =>
-    ch === " " ? 4 : ch === "w" || ch === "W" ? 12 : /[A-Z]/.test(ch) ? 11 : 8;
+    ch === "\u00ad"
+      ? 0
+      : ch === " "
+        ? 4
+        : ch === "w" || ch === "W"
+          ? 12
+          : /[A-Z]/.test(ch)
+            ? 11
+            : 8;
   globalThis.OffscreenCanvas = class {
     getContext() {
       return {
@@ -99,4 +108,51 @@ it("the page draws text unkerned, as it is measured and as Word draws it (#86)",
     .readFileSync("reader/style.css", "utf8");
   // Each run sets the font shorthand inline, which resets font-kerning: the rule must win over it.
   expect(css).toMatch(/\.premirror-page-viewport \*\{[^}]*font-kerning:none!important/);
+});
+
+it("a line broken at a soft hyphen draws a hyphen; one mid-line stays invisible (#89)", () => {
+  const SHY = "­";
+  const long = `${"a".repeat(70)}${SHY}${"b".repeat(20)}`;
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 -->\n${long}\n\n<!-- p1 -->\nab${SHY}cd\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .map((l) => l.runs.map((r) => r.text || "").join(""))
+    .filter((t) => t.trim());
+  done();
+  expect(lines[0]).toBe(`${"a".repeat(70)}-`);
+  expect(lines[1]).toBe("b".repeat(20));
+  expect(lines[2]).toBe(`ab${SHY}cd`);
+});
+
+it("a word too wide for the line breaks at its soft hyphen, not between letters (#89)", () => {
+  const SHY = "­";
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 -->\n${"a".repeat(70)}${SHY}${"b".repeat(40)}${SHY}${"c".repeat(60)}\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .map((l) => l.runs.map((r) => r.text || "").join(""))
+    .filter((t) => t.trim());
+  done();
+  expect(lines).toEqual([`${"a".repeat(70)}-`, `${"b".repeat(40)}-`, "c".repeat(60)]);
+});
+
+it("a soft hyphen whose hyphen would overflow yields to an earlier one, not a cut between letters (#89)", () => {
+  const SHY = "­";
+  // b40 + c38 fill the 624px line exactly; the hyphen after c38 would not fit.
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 -->\n${"a".repeat(70)}${SHY}${"b".repeat(40)}${SHY}${"c".repeat(38)}${SHY}${"d".repeat(10)}\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .map((l) => l.runs.map((r) => r.text || "").join(""))
+    .filter((t) => t.trim());
+  done();
+  expect(lines).toEqual([
+    `${"a".repeat(70)}-`,
+    `${"b".repeat(40)}-`,
+    `${"c".repeat(38)}${SHY}${"d".repeat(10)}`,
+  ]);
 });

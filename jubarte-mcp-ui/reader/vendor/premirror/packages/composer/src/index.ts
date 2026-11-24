@@ -446,12 +446,18 @@ function breakBlockIntoLineDrafts(
         const bestBeforeWhitespaceAdjust = best;
 
         // Prefer breaking at the most recent whitespace when we need a soft wrap.
+        // Jubarte fork: a soft hyphen is a break opportunity too, taken only when the
+        // hyphen Word draws there still fits the line (#89).
         if (best > offset && best < piece.length) {
           for (let i = best - 1; i > offset; i--) {
             const ch = piece[i];
             if (ch === " " || ch === "\t") {
               // Include the whitespace with the previous line so the next line
               // doesn't start with an undecorated/unstyled position.
+              best = i + 1;
+              break;
+            }
+            if (ch === "\u00ad" && lineWidthUsed + runWidthPx({ ...run, text: piece.slice(offset, i) + "-" }, measuredRuns) <= contentWidth) {
               best = i + 1;
               break;
             }
