@@ -34,9 +34,7 @@ try:
     from mcp.server.mcpserver.exceptions import ToolError
     from mcp.types import CallToolResult, TextContent, ToolAnnotations
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
-    raise ImportError(
-        "jubarte-mcp needs the MCP SDK: pip install 'jubarte-docx[mcp]'"
-    ) from exc
+    raise ImportError("jubarte-mcp needs the MCP SDK: pip install 'jubarte-docx[mcp]'") from exc
 
 from ._native import JubarteError, __version__
 from .document import Document, EditPlanError, capabilities
@@ -101,6 +99,8 @@ def _image_stand_ins(markdown: str) -> str:
         return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB>"
 
     return _IMAGE_DEFINITION.sub(stand_in, markdown)
+
+
 # docx_view's listing: files returned, directory entries visited, depth.
 _LIST_FILES = 200
 _LIST_VISITS = 5000
@@ -329,7 +329,9 @@ def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
                         {
                             "path": path,
                             "size": st.st_size,
-                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime(
+                                "%Y-%m-%dT%H:%M:%SZ"
+                            ),
                         }
                     )
             if spent:
@@ -396,7 +398,10 @@ def build_server(*, root: Path) -> MCPServer:
     def publish(files: list[tuple[Path, bytes | str]], overwrite: bool) -> None:
         try:
             authority.publish(
-                [(path.relative_to(root).as_posix(), data.encode("utf-8") if isinstance(data, str) else data) for path, data in files],
+                [
+                    (path.relative_to(root).as_posix(), data.encode("utf-8") if isinstance(data, str) else data)
+                    for path, data in files
+                ],
                 overwrite,
             )
         except (OSError, ValueError) as e:
@@ -533,9 +538,7 @@ def build_server(*, root: Path) -> MCPServer:
         doc = load(path)
         out = contained(out_dir)
         rendered = engine(lambda: doc.render(pdf=pdf, png_dpi=dpi))
-        wanted = [
-            (i, png) for i, png in enumerate(rendered.pngs, start=1) if pages is None or i in pages
-        ]
+        wanted = [(i, png) for i, png in enumerate(rendered.pngs, start=1) if pages is None or i in pages]
         targets = [out / f"page-{i:02d}.png" for i, _ in wanted]
         if rendered.pdf is not None:
             targets.append(out / "render.pdf")
@@ -682,7 +685,6 @@ def build_server(*, root: Path) -> MCPServer:
     def relative(p: Path) -> str:
         return p.relative_to(root).as_posix()
 
-
     @mcp.tool(annotations=_READ, meta=_VIEW_META)
     def docx_view(path: str | None = None) -> CallToolResult:
         """Show a .docx file as pages, with its tracked changes and comments, in hosts that draw MCP Apps.
@@ -695,7 +697,11 @@ def build_server(*, root: Path) -> MCPServer:
             files, truncated = list_documents(root)
             lines = [f["path"] for f in files]
             more = " (more files exist; name one with path)" if truncated else ""
-            text = f"{len(files)} .docx files under the root{more}:\n" + "\n".join(lines) if files else "No .docx files under the root."
+            text = (
+                f"{len(files)} .docx files under the root{more}:\n" + "\n".join(lines)
+                if files
+                else "No .docx files under the root."
+            )
             return CallToolResult(
                 content=[TextContent(type="text", text=text)],
                 structured_content={"files": files, "truncated": truncated},

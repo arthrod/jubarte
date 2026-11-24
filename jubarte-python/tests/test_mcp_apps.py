@@ -126,7 +126,16 @@ def test_the_card_ships_inside_the_package() -> None:
     assert html.startswith("<!doctype html>")
     assert len(html.encode()) < 3 * 1024 * 1024
     # Nothing in it is fetched: no absolute or protocol-relative asset URLs.
-    for needle in ('src="http', "src='http", 'href="http', "url(http", "url(//", 'src="//', "url('/fonts", "url(/fonts"):
+    for needle in (
+        'src="http',
+        "src='http",
+        'href="http',
+        "url(http",
+        "url(//",
+        'src="//',
+        "url('/fonts",
+        "url(/fonts",
+    ):
         assert needle not in html, needle
 
 
@@ -164,7 +173,16 @@ def test_preview_carries_the_readers_markdown_and_the_change_counts(tmp_path: Pa
     write_pair(tmp_path)
     compared, changes, preview = call(
         tmp_path,
-        ("docx_compare", {"original": "a.docx", "modified": "b.docx", "out": "r.docx", "author": "T", "date": "2026-01-01T00:00:00Z"}),
+        (
+            "docx_compare",
+            {
+                "original": "a.docx",
+                "modified": "b.docx",
+                "out": "r.docx",
+                "author": "T",
+                "date": "2026-01-01T00:00:00Z",
+            },
+        ),
         ("docx_changes", {"path": "r.docx"}),
         ("docx_preview", {"path": "r.docx"}),
     )
@@ -209,24 +227,26 @@ def test_move_kinds_read_every_story_and_ignore_range_marks() -> None:
     }
 
 
-def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "root"
     root.mkdir()
     (tmp_path / "out.docx").write_bytes(make_document("x"))
     (root / "in.docx").write_bytes(make_document("long " * 200))
-    outside, = call(root, ("docx_preview", {"path": "../out.docx"}))
+    (outside,) = call(root, ("docx_preview", {"path": "../out.docx"}))
     assert outside.is_error and "outside root" in outside.content[0].text
     monkeypatch.setattr(server, "_PREVIEW_LIMIT", 256)
-    big, = call(root, ("docx_preview", {"path": "in.docx"}))
+    (big,) = call(root, ("docx_preview", {"path": "in.docx"}))
     assert big.is_error and "too large" in big.content[0].text
 
 
 def test_preview_limit_counts_the_serialized_utf8_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "cjk.docx").write_bytes(make_document("契約" * 100))
-    ok, = call(tmp_path, ("docx_preview", {"path": "cjk.docx"}))
+    (ok,) = call(tmp_path, ("docx_preview", {"path": "cjk.docx"}))
     size = len(server.json.dumps(ok.structured_content, ensure_ascii=False).encode())
     monkeypatch.setattr(server, "_PREVIEW_LIMIT", size - 1)
-    refused, = call(tmp_path, ("docx_preview", {"path": "cjk.docx"}))
+    (refused,) = call(tmp_path, ("docx_preview", {"path": "cjk.docx"}))
     assert refused.is_error
 
 
@@ -243,7 +263,17 @@ def test_view_with_a_path_names_the_document_for_the_card(tmp_path: Path) -> Non
 
 
 def test_view_without_a_path_lists_the_roots_documents(tmp_path: Path) -> None:
-    for rel in ["b.docx", "a.docx", "deep/c.docx", "deep/notes.txt", ".hidden/x.docx", ".scratch/y.docx", "node_modules/z.docx", "target/t.docx", "~$lock.docx"]:
+    for rel in [
+        "b.docx",
+        "a.docx",
+        "deep/c.docx",
+        "deep/notes.txt",
+        ".hidden/x.docx",
+        ".scratch/y.docx",
+        "node_modules/z.docx",
+        "target/t.docx",
+        "~$lock.docx",
+    ]:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_bytes(make_document("x"))
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
@@ -252,7 +282,7 @@ def test_view_without_a_path_lists_the_roots_documents(tmp_path: Path) -> None:
     os.symlink(outside, tmp_path / "linked", target_is_directory=True)
     os.symlink(outside / "o.docx", tmp_path / "file-link.docx")
 
-    listed, = call(tmp_path, ("docx_view", {}))
+    (listed,) = call(tmp_path, ("docx_view", {}))
     assert not listed.is_error
     s = listed.structured_content
     assert [f["path"] for f in s["files"]] == ["a.docx", "b.docx", "deep/c.docx"]
@@ -265,16 +295,18 @@ def test_view_listing_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     for i in range(5):
         (tmp_path / f"d{i}.docx").write_bytes(make_document("x"))
     monkeypatch.setattr(server, "_LIST_FILES", 3)
-    listed, = call(tmp_path, ("docx_view", {}))
+    (listed,) = call(tmp_path, ("docx_view", {}))
     s = listed.structured_content
     assert len(s["files"]) == 3 and s["truncated"] is True
     monkeypatch.setattr(server, "_LIST_FILES", 200)
     monkeypatch.setattr(server, "_LIST_VISITS", 2)
-    listed, = call(tmp_path, ("docx_view", {}))
+    (listed,) = call(tmp_path, ("docx_view", {}))
     assert listed.structured_content["truncated"] is True
 
 
-def test_view_listing_does_not_follow_a_folder_swapped_for_a_link(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_view_listing_does_not_follow_a_folder_swapped_for_a_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#12: a folder replaced by a link between its lstat and its scan stays shut."""
     root = tmp_path / "root"
     (root / "sub").mkdir(parents=True)
@@ -343,7 +375,12 @@ def test_moves_in_two_stories_with_one_name_count_twice() -> None:
             self.kind, self.id, self.move_name = "move", ident, name
             self.story = ident.split(".")[0] if "." in ident else "body"
 
-    changes = [Change("r7", "move1"), Change("r8", "move1"), Change("footnotes.r7", "move1"), Change("footnotes.r8", "move1")]
+    changes = [
+        Change("r7", "move1"),
+        Change("r8", "move1"),
+        Change("footnotes.r7", "move1"),
+        Change("footnotes.r8", "move1"),
+    ]
     assert server.change_counts(changes)["moved"] == 2
 
 
