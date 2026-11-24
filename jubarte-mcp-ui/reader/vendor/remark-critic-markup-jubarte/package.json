@@ -1,0 +1,17 @@
+{
+  "name": "remark-critic-markup-jubarte",
+  "version": "1.0.1-jubarte.1",
+  "type": "module",
+  "description": "Local Jubarte compatibility fork of remark-critic-markup 1.0.1",
+  "main": "index.js",
+  "exports": "./index.js",
+  "license": "MIT",
+  "dependencies": {
+    "mdast-util-from-markdown": "^2.0.0"
+  },
+  "upstream": {
+    "name": "remark-critic-markup",
+    "version": "1.0.1",
+    "repository": "https://github.com/Benbinbin/remark-critic-markup"
+  }
+}

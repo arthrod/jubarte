@@ -1,0 +1,21 @@
+/* SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+   SPDX-License-Identifier: Apache-2.0 */
+@import './style.css';
+html { scroll-padding-top: 60px; }
+body { padding: 8px; overflow-x: hidden; }
+.embed-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 8px 0; font-size: 11px; }
+.embed-tools label { display: flex; gap: 6px; align-items: center; }
+.embed-tools select { font: inherit; padding: 5px; background: white; border: 1px solid var(--line); border-radius: 4px; }
+.embed-tools button { margin-left: auto; padding: 5px 8px; font-size: 11px; }
+.embed-notices { font-size: 11px; margin-bottom: 12px; }
+.embed-notices p { margin: 6px 0; }
+#pages-fit { position: relative; width: 100%; min-height: 100px; }
+#pages-mount { position: absolute; top: 0; left: 0; transform-origin: top left; }
+#embed-discussions { position: fixed; inset: 0 0 0 auto; width: min(320px, 100%); overflow: auto; z-index: 20; padding: 16px; border-left: 1px solid var(--line); background: var(--bg); }
+#embed-discussions article { margin-top: 12px; padding: 12px; border: 1px solid var(--line); background: white; font-size: 12px; overflow-wrap: anywhere; }
+#embed-discussions p { white-space: pre-wrap; }
+.premirror-run.criticInsertion { text-decoration: var(--ins-mark, underline); }
+.premirror-run.criticDeletion { text-decoration: var(--del-mark, line-through); }
+.premirror-run.moveins { color: var(--movto, green); background: var(--movto-bg, #00800018); text-decoration: var(--movto-mark, underline double); }
+.premirror-run.movedel { color: var(--movfrom, green); background: var(--movfrom-bg, #00800018); text-decoration: var(--movfrom-mark, line-through double); }
+@media print { .embed-tools, .embed-notices, #embed-discussions { display: none; } }

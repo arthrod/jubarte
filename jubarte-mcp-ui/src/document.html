@@ -1,0 +1,95 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Jubarte</title>
+</head>
+<body>
+  <!-- the drifting whale of the desk, faint behind the card -->
+  <svg class="watermark" viewBox="0 0 560 360" aria-hidden="true">
+    <path d="M 76 192 C 82 172 112 156 150 146 C 196 132 258 112 310 110 C 356 108 402 118 448 148 C 458 152 464 150 470 144 C 478 128 494 106 520 92 C 512 112 508 126 502 134 C 514 140 526 148 540 160 C 520 164 498 160 480 162 C 470 164 460 166 452 166 C 420 190 382 228 328 252 C 270 278 194 286 148 268 C 114 254 88 230 81 208 C 76 198 74 194 76 192 Z" fill="currentColor" />
+    <path d="M 208 228 C 246 240 286 268 322 298 C 334 308 338 320 330 326 C 296 326 254 306 226 280 C 206 260 200 240 208 228 Z" fill="currentColor" />
+  </svg>
+
+  <main class="card" id="card">
+    <!-- the app bar, as the desk draws it -->
+    <div class="appbar">
+      <span class="appbar-gutter" aria-hidden="true"></span>
+      <span class="appbar-title">JUBARTE</span>
+      <span class="appbar-end"><span class="appbar-ver" id="appbar-ver"></span></span>
+    </div>
+
+    <!-- waiting, busy, failed: the desk's empty preview -->
+    <section class="preview-empty busy" id="empty" aria-live="polite">
+      <svg class="empty-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" /><path d="M15 2v5h5" /><path d="M8.5 13h7M8.5 16.5h7M8.5 9.5H12" stroke-linecap="round" /></svg>
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="empty-title" id="empty-title">Opening the document…</span>
+      <span class="mono" id="empty-text"></span>
+    </section>
+
+    <!-- docx_view with no path: the root's documents -->
+    <section class="files" id="files" hidden>
+      <div class="files-head">
+        <span class="empty-title">Documents</span>
+        <span class="submeta" id="files-meta"></span>
+      </div>
+      <ul class="files-grid" id="files-grid"></ul>
+    </section>
+
+    <!-- the result, as the desk shows a redline -->
+    <section class="result" id="result" hidden>
+      <div class="result-head">
+        <div class="result-title">
+          <svg class="ok" viewBox="0 0 560 360" aria-hidden="true">
+            <path d="M 76 192 C 82 172 112 156 150 146 C 196 132 258 112 310 110 C 356 108 402 118 448 148 C 458 152 464 150 470 144 C 478 128 494 106 520 92 C 512 112 508 126 502 134 C 514 140 526 148 540 160 C 520 164 498 160 480 162 C 470 164 460 166 452 166 C 420 190 382 228 328 252 C 270 278 194 286 148 268 C 114 254 88 230 81 208 C 76 198 74 194 76 192 Z" fill="currentColor" />
+            <path d="M 208 228 C 246 240 286 268 322 298 C 334 308 338 320 330 326 C 296 326 254 306 226 280 C 206 260 200 240 208 228 Z" fill="currentColor" opacity=".55" />
+          </svg>
+          <div class="result-title-text">
+            <strong id="outname"></strong>
+            <span class="submeta" id="outmeta"></span>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip ins" id="chip-ins" hidden></span>
+          <span class="chip del" id="chip-del" hidden></span>
+          <span class="chip mov" id="chip-mov" hidden></span>
+          <span class="chip fmt" id="chip-fmt" hidden></span>
+        </div>
+      </div>
+
+      <div class="result-tools">
+        <div class="views" role="group" aria-label="How the document is shown">
+          <button type="button" class="view" data-mode="tracked" aria-pressed="true">Tracked</button>
+          <button type="button" class="view" data-mode="original" aria-pressed="false">Original</button>
+          <button type="button" class="view" data-mode="accepted" aria-pressed="false">Accepted</button>
+        </div>
+        <span class="tools-end">
+          <button type="button" class="tool" id="back" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 6-6 6 6 6" /><path d="M5 12h14" /></svg>Documents
+          </button>
+          <button type="button" class="tool" id="show-discussions" aria-expanded="false" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4z" /></svg><span id="discussions-label">Discussions</span>
+          </button>
+        </span>
+      </div>
+
+      <div id="pages-fit"><div id="pages-mount"></div></div>
+      <p class="truncnote" id="notices"></p>
+    </section>
+
+    <aside id="embed-discussions" hidden aria-label="Discussions">
+      <button type="button" class="tool" id="close-discussions">Close discussions</button>
+      <div id="threads"></div>
+    </aside>
+  </main>
+
+  <script type="module" src="./view.js"></script>
+</body>
+</html>

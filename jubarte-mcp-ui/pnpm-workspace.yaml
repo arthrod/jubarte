@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+packages:
+  - "reader/vendor/premirror/packages/*"
+allowBuilds:
+  esbuild: false
