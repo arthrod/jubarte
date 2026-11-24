@@ -272,6 +272,20 @@ export function prepareCritic(input, options = {}) {
     return { ...(preceding || { id: comment.id, kind: 'point', start: length, end: length }), sourceEnd, comment };
   }
 
+  /** A plain attribution tag at `at` (`{r12 @AC}`, `{r4+5 @A re r3 @B}`): agent view only. */
+  function attributionTagAt(at, until) {
+    if (!options.agentView || source[at] !== '{' || isEscaped(source, at)) return null;
+    if (FORMS.some((form) => source.startsWith(form.open, at))) return null;
+    const close = source.indexOf('}', at + 1);
+    if (close < 0 || close >= until) return null;
+    const body = source.slice(at + 1, close);
+    if (/[{\n]/.test(body)) return null;
+    // After ` re ` a nested change names the change it sits inside.
+    const own = body.split(/\s+re\s+/)[0];
+    const revision = parseAgentTag(own, { ...options, story: storyAt(at) });
+    return revision?.type === 'revision' ? { revision, end: close + 1 } : null;
+  }
+
   function render(from, until, allowed) {
     let at = from;
     let previous = null;
@@ -342,8 +356,15 @@ export function prepareCritic(input, options = {}) {
         previous = { id: group.id, kind: form.kind, start, end: length, sourceEnd: after, group };
       }
       anchors.push({ id: previous.id, kind: previous.kind, start, end: length, ...common });
-      boundary(after, closer);
-      at = after;
+      // The engine's attribution tags (`{++x++}{r12 @AC}`, engine 0.20.0+)
+      // are the change's metadata: attach them and leave them out of the text.
+      let end = after;
+      for (let tag; previous.group && (tag = attributionTagAt(end, until)); end = tag.end) {
+        attachRevision(previous, tag.revision, end, tag.end);
+        previous.sourceEnd = tag.end;
+      }
+      boundary(end, closer);
+      at = end;
     }
   }
 

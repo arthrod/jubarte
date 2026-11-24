@@ -1,0 +1,26 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>jubarte card — MCP Apps test host</title>
+    <style>
+      body { margin: 0; padding: 24px; font: 14px system-ui, sans-serif; background: #f4f4f2; color: #111; }
+      body.dark { background: #1b1b1d; color: #eee; }
+      .turn { max-width: 860px; margin: 0 auto; }
+      .call { font: 12px ui-monospace, monospace; opacity: 0.7; margin-bottom: 8px; }
+      #card { width: 100%; border: 1px solid #0002; border-radius: 10px; background: transparent; display: block; height: 150px; }
+    </style>
+  </head>
+  <body>
+    <div class="turn">
+      <div class="call" id="call"></div>
+      <iframe id="card" title="jubarte"></iframe>
+    </div>
+    <script type="module" src="./host.js"></script>
+  </body>
+</html>

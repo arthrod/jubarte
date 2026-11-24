@@ -353,7 +353,9 @@ Browser builds are exported from `jubarte-wasm/web` and
 
 `jubarte-mcp` exposes the engine as MCP tools (read, edit as tracked
 changes, render, compare, accept and reject) to coding agents. Every path
-stays under `--root`.
+stays under `--root`. Hosts with MCP Apps support (Claude, VS Code, ChatGPT,
+Antigravity) show documents and redlines as a card with paginated pages and
+Tracked/Original/Accepted views.
 
 | Host | Install |
 | --- | --- |

@@ -293,3 +293,43 @@ test('range/source maps remap after inserted literal escapes', () => {
   assert.equal(p.sourceMap.length, p.markdown.length + 1);
   assert.equal(p.source[p.sourceMap[p.changes[0].start]], 'n');
 });
+
+// Engine 0.20.0 writes a change's attribution as a plain tag after it,
+// `{++new++}{r12 @AC}`, and refuses the old `{>>r12 @AC<<}` spelling
+// (crates/jubarte-markdown/src/markdown/critic.rs).
+test('the plain attribution tag after a change is its metadata, not text', () => {
+  const p = prepareCritic('A {++new++}{r12 @AC} B', { agentView: true, authors: { AC: 'Ann Counsel' } });
+  assert.equal(p.markdown, 'A new B');
+  assert.equal(p.comments.length, 0);
+  assert.equal(p.changes[0].author, 'Ann Counsel');
+  assert.deepEqual(p.changes[0].revisionIds, ['12']);
+  assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+});
+
+test('plain tags: grouped ids, two authors, dates, stories and nesting', () => {
+  const grouped = prepareCritic('{~~a~>b~~}{r1+2 @AC}', { agentView: true });
+  assert.deepEqual(grouped.changes.map((c) => c.revisionIds), [['1', '2'], ['1', '2']]);
+  assert.equal(grouped.markdown, 'ab');
+
+  const two = prepareCritic('{~~a~>b~~}{r1 @AC}{r2 @JD}', { agentView: true, authors: { AC: 'Ann', JD: 'Jane' } });
+  assert.deepEqual(two.changes.map((x) => [x.kind, x.author, x.revisionIds]), [['deletion', 'Ann', ['1']], ['insertion', 'Jane', ['2']]]);
+  assert.equal(two.markdown, 'ab');
+
+  const dated = prepareCritic('{++x++}{r1 @AC 2026-10-01T09:00:00Z}', { agentView: true });
+  assert.equal(dated.changes[0].date, '2026-10-01T09:00:00Z');
+
+  const story = prepareCritic('{++head++}{header1.r3 @AC}', { agentView: true });
+  assert.deepEqual(story.changes[0].referenceIds, ['header1:rev:3']);
+
+  // A change inside another names the outer after ` re `; it is the inner's own tag.
+  const nested = prepareCritic('{--x--}{r4+5 @AC re r3 @JD}', { agentView: true });
+  assert.deepEqual(nested.changes[0].revisionIds, ['4', '5']);
+  assert.equal(nested.markdown, 'x');
+});
+
+test('braces that are not an attribution tag stay text', () => {
+  assert.equal(prepareCritic('{++x++}{not a tag}', { agentView: true }).markdown, 'x{not a tag}');
+  assert.equal(prepareCritic('{++x++} {r1 @AC}', { agentView: true }).markdown, 'x {r1 @AC}');
+  // Outside the agent view nothing is read as a tag.
+  assert.equal(prepareCritic('{++x++}{r1 @AC}').markdown, 'x{r1 @AC}');
+});
