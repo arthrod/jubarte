@@ -73,11 +73,17 @@ test('a highlight still marks inside a fence, as markdown_to_docx writes it', ()
 
 test('the scanner is linear on one long line', async () => {
   const { verbatimRanges, codeFences } = await import('./verbatim.js');
-  const s = 'word `x` [l](u) '.repeat(40000);
-  const start = performance.now();
-  verbatimRanges(s);
-  codeFences(s);
-  assert.ok(performance.now() - start < 500, `${performance.now() - start}ms`);
+  // Growth, not a wall-clock limit (a busy machine slows both runs alike):
+  // four times the input costs about four times as long, sixteen if quadratic.
+  const time = (k) => {
+    const s = 'word `x` [l](u) '.repeat(k);
+    let best = Infinity;
+    for (let r = 0; r < 3; r++) { const t = performance.now(); verbatimRanges(s); codeFences(s); best = Math.min(best, performance.now() - t); }
+    return best;
+  };
+  time(10000); // past the warm-up, where small inputs run slow
+  const small = time(20000), large = time(80000);
+  assert.ok(large < small * 8 + 20, `${small.toFixed(1)}ms then ${large.toFixed(1)}ms`);
 });
 
 // codex's re-review inputs, each with what markdown_to_docx writes (#25).
