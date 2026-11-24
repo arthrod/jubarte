@@ -459,6 +459,14 @@ test('comment IDs inherit the containing story when no prefix is supplied', () =
   assert.equal(paragraph.openComments[0].story, 'footnotes');
 });
 
+test('the engine quotes a page change (#20): the header reads as YAML with no repair', () => {
+  const source = '---\nview: tracked\npage: "A4 portrait, margins 1in; was: Letter portrait, margins 1in; fmt r227 @ASR"\nauthors:\n  ASR: Ann\n---\n<!-- p0 -->\n{++new++}{r1 @ASR}\n';
+  const result = parse(source);
+  assert.equal(result.agentView, true);
+  assert.equal(result.frontmatter.data.page, 'A4 portrait, margins 1in; was: Letter portrait, margins 1in; fmt r227 @ASR');
+  assert.ok(!result.warnings.some((w) => w.code === 'yaml-repaired' || w.code === 'yaml-error'));
+});
+
 test('an engine header line with a second `: ` is read as text, not a reason to leave the view (b078, b102)', () => {
   // jubarte 0.20.0 writes a page change as `page: A; was: B; fmt r227 @ASR`,
   // which YAML refuses ("mapping values are not allowed here"). One such

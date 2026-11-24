@@ -1642,7 +1642,8 @@ fn part_two(out: &mut String, f: &Facts) {
         {
             page.push_str(&format!("; fmt {tags}"));
         }
-        kv(out, &format!("page: {page}"), None);
+        // `; was: …` holds `: `, which a plain YAML scalar may not (#20).
+        kv(out, &format!("page: {}", scalar(&page, false)), None);
     }
     out.push_str("styles:\n");
     let default = f.default_style.unwrap_or("Normal");
