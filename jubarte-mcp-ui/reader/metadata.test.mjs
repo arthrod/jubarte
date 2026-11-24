@@ -491,3 +491,9 @@ test('an ID-line tag with no author (`@??`, the engine’s is_handle) is a known
   const result = parse(source);
   assert.ok(!codes(result).includes('unknown-revision-tag'), JSON.stringify(result.warnings));
 });
+
+test('a table line names the rows Word keeps on one page (#71)', () => {
+  const directive = parseDirective('<!-- t0 3x1, cells p0-p2 by row, cant-split t0.row1 t0.row2 -->');
+  assert.deepEqual(directive.properties.cantSplitRows, [1, 2]);
+  assert.deepEqual(directive.properties.unknown, []);
+});

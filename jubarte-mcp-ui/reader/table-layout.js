@@ -188,7 +188,7 @@ export function composeWithTables(snapshot,runtime,input){
   let headerCount=0;while(headerCount<rows.length&&(rows[headerCount].header||(rows[headerCount].cells.length&&rows[headerCount].cells.every(c=>c.header))))headerCount++;
   // A header/body-crossing rowspan cannot be repeated independently.
   if(cells.some(c=>c.rowIndex<headerCount&&c.rowIndex+c.rowspan>headerCount)){warn('header-rowspan-crosses-body','Header repetition is disabled because a header cell spans into the table body.',table.id);headerCount=0;}
-  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,offsetX,total:rowTops.at(-1),headerHeight,headerCount};
+  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,offsetX,total:rowTops.at(-1),headerHeight,headerCount,cantSplit:rows.map(r=>!!r.cantSplit)};
  }
  // A table's grid is measured on the width of the section it falls in.
  const grids={cache:new Map(),get(id){const b=tableBlocks.get(id);if(!b)return undefined;const key=id+'@'+width;if(!this.cache.has(key))this.cache.set(key,grid(b));return this.cache.get(key);}};const tableBlocks=new Map(snapshot.blocks.filter(b=>b.type==='table').map(b=>[b.id,b]));
@@ -253,9 +253,12 @@ export function composeWithTables(snapshot,runtime,input){
    // A row splits at a line, as Word's rows do (#70); a cut inside the header rows falls back to
    // their last whole row.
    let selected=boundaries.length&&end<g.headerHeight-0.001?boundaries.at(-1):end;
-   // A row splits across pages, as Word's rows do unless w:cantSplit, which the
-   // engine view does not write (#70, #71). A repeated header row still moves whole.
-   if(!boundaries.length&&y>repeatedHeight+0.001&&start<g.headerHeight-0.001&&rowRemainder<=height){
+   // A row splits across pages, as Word's rows do (#70), unless w:cantSplit keeps it on one page
+   // (#71): then the cut falls back to the last whole row, or the row moves whole to the next
+   // page when it fits there. A repeated header row also moves whole.
+   const cut=g.rowTops.findIndex(v=>v>selected+0.001)-1,kept=cut>=0&&g.cantSplit?.[cut]&&g.rowTops[cut]<selected-0.001&&g.rowHeights[cut]<=height-repeatedHeight;
+   if(kept&&boundaries.length)selected=boundaries.at(-1);
+   if(!boundaries.length&&y>repeatedHeight+0.001&&(kept||start<g.headerHeight-0.001)&&rowRemainder<=height){
     notes.restore(checkpoint);nextTablePage();continue;
    }
    if(selected<end-0.001){notes.restore(checkpoint);let pos=start,offset=0;while(pos<selected-0.001){if(!notes.accept(sliceLines(pos,pos+lh),y+offset+lh,Math.max(0,y+offset-repeatedHeight)))throw new Error('Footnote row rollback lost a previously accepted line.');pos+=lh;offset+=lh;}}

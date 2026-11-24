@@ -692,6 +692,53 @@ describe("a table row splits across pages, as Word's rows do by default (#70)", 
   });
 });
 
+describe("a row Word keeps on one page moves whole (#71)", () => {
+  const doc71 = (lines, clause) => {
+    const cell = Array.from({ length: lines }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
+    return `---\nview: tracked\npage: A4 portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p1-p3, page: 6x4in landscape, margins 1in, header/footer 0.5in}\n---\n\n<!-- p0 section-break -->\nFIRST\n\n<!-- t0 2x1, cells p1-p2 by row, width auto${clause} -->\n|ROW1|\n|-|\n|${cell}|\n\n<!-- p3 empty -->\n`;
+  };
+  const pagesOf = (composed, tag) =>
+    composed.layout.pages.flatMap((p, i) =>
+      p.frames[0].fragments.some((f) =>
+        (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))),
+      )
+        ? [i]
+        : [],
+    );
+  it("a cant-split row that fits a page starts on the next one", () => {
+    const { composed, done } = compose(doc71(6, ", cant-split t0.row1"));
+    expect(pagesOf(composed, "ROW1")).toEqual([1]);
+    expect(pagesOf(composed, "ROW2_LINE_")).toEqual([2]);
+    done();
+  });
+  it("a table's first row, kept on one page, leaves the text above it and moves whole", () => {
+    const cell = Array.from({ length: 5 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
+    const source = (clause) =>
+      `---\nview: tracked\npage: 6x4in landscape, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- t0 1x1, cells p1-p1 by row, width auto${clause} -->\n|${cell}|\n|-|\n\n<!-- p2 empty -->\n`;
+    const split = compose(source(""));
+    expect(pagesOf(split.composed, "ROW2_LINE_")).toEqual([0, 1]);
+    split.done();
+    const { composed, done } = compose(source(", cant-split t0.row0"));
+    expect(pagesOf(composed, "FIRST")).toEqual([0]);
+    expect(pagesOf(composed, "ROW2_LINE_")).toEqual([1]);
+    done();
+  });
+  it("a cant-split row taller than a page still flows across pages", () => {
+    const { composed, done } = compose(doc71(30, ", cant-split t0.row1"));
+    const all = composed.layout.pages
+      .flatMap((p) =>
+        p.frames[0].fragments.flatMap((f) =>
+          (f.lines || []).flatMap((l) => l.runs.map((r) => r.text)),
+        ),
+      )
+      .join(" ");
+    for (let i = 0; i < 30; i++)
+      expect(all.match(new RegExp(`ROW2_LINE_${i}\\b`, "g"))).toHaveLength(1);
+    expect(pagesOf(composed, "ROW2_LINE_").length).toBeGreaterThan(1);
+    done();
+  });
+});
+
 describe("a keep-lines paragraph is not split across pages (#75)", () => {
   const lines75 = (tag, n) => Array.from({ length: n }, (_, i) => `${tag}_${i}`).join("  \n");
   const pages75 = (composed, tag) =>

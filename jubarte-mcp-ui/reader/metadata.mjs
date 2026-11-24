@@ -165,6 +165,10 @@ function parseClause(raw, context) {
     return {...scopedBase, type: 'widths', inches: match[1].trim().split(/\s+/).map((w) => Number(w.slice(0, -2)))};
   }
   if (/^header\s*row\s+repeats$/i.test(value)) return {...scopedBase, type: 'header-row', repeats: true};
+  // `cant-split t0.row1 t0.row3`: the rows Word keeps on one page (w:cantSplit, #71).
+  if ((match = value.match(/^cant-split\s+((?:t\d+\.row\d+\s*)+)$/))) {
+    return {...scopedBase, type: 'cant-split', rows: match[1].trim().split(/\s+/).map((id) => Number(id.split('.row')[1]))};
+  }
   if ((match = value.match(/^merged\s+(?:cells\s+)?(.+)$/s))) {
     const merges = parseMerges(match[1]);
     if (merges) return {...scopedBase, type: 'merged', merges};
@@ -199,6 +203,7 @@ function normalizeDirective(directive) {
       case 'cell-size': (properties.cellSizes ??= []).push({from: clause.from, to: clause.to, points: clause.points}); break;
       case 'widths': properties.columnWidthsIn = clause.inches; break;
       case 'header-row': properties.headerRowRepeats = true; break;
+      case 'cant-split': properties.cantSplitRows = [...(properties.cantSplitRows || []), ...clause.rows]; break;
       case 'merged': properties.merges = [...(properties.merges || []), ...clause.merges]; break;
       case 'unknown': properties.unknown.push(clause.raw); break;
     }

@@ -142,13 +142,14 @@ comments.
 
 Table: `<!-- tN [center|right] RxC, cells pA-pB by row, pN center, pN Style, header row repeats,
 style S, merged tN.rowR.cellC across N down N, gaps tN.rowR before N after N,
-break-ins TAGS in pN, rev …, fmt … -->` (`cells tN.row0 pA-pB tN.row1 …` when
+cant-split tN.rowR tN.rowS, break-ins TAGS in pN, rev …, fmt … -->` (`cells tN.row0 pA-pB tN.row1 …` when
 a cell holds other than one paragraph).
 `pN center|right|left|justify` is a cell paragraph aligned against its column's
 `:-`/`:-:`/`-:` (most of the column decides); `pN Style` (`pA-pB Style` for
 consecutive ones) is a cell paragraph in a style other than the default (a
 style id that is a clause word or holds a space, `,`, `"` or `\` prints
 quoted, `"My Style"`, on table and paragraph id lines alike);
+`cant-split tN.rowR …` lists the rows Word keeps on one page (`w:cantSplit`);
 `tN center` places the table. Notes: `<!-- footnotes.p0 -->`, `<!-- endnotes.p0 Endnote -->` (paragraph styles other than Word's own, one per paragraph). Pages: `<!-- page 2 of 5 -->`.
 
 A paragraph's only `fmt` tag is its `w:pPrChange`, unless the paragraph states no property of its own and a run is bold, italic, struck, underlined, or a super/subscript. That tag is then the run's `w:rPrChange`, with the previous properties empty, so Reject All drops the formatting.

@@ -206,6 +206,8 @@ pub struct TableFormats {
     pub cell_borders: Vec<(super::view_notes::CellsAt, super::borders::Sides)>,
     /// A row's own table borders (`w:tblPrEx/w:tblBorders`), by row.
     pub row_borders: HashMap<usize, super::borders::Sides>,
+    /// The rows Word keeps on one page (`w:cantSplit`), by row.
+    pub cant_split: std::collections::HashSet<usize>,
 }
 
 /// Hundredths of a character (`2ch` is 200, `1.5ch` is 150, `-1ch` is -100)
@@ -1682,9 +1684,11 @@ pub(super) fn story(
                     *at = *before;
                 }
                 row_change = *change;
+                let mut kept = false;
                 let (format, own) = tables
                     .last_mut()
                     .map(|(formats, row, cell)| {
+                        kept = formats.cant_split.contains(row);
                         if let Some(sides) = formats.row_borders.get(row) {
                             let _ = write!(
                                 out,
@@ -1708,7 +1712,13 @@ pub(super) fn story(
                     .as_ref()
                     .and_then(|(kind, mark)| mark.id.map(|id| (*kind, id)));
                 let gapped = *before > 0 || *after > 0;
-                if *header || change.is_some() || own.is_some() || format.is_some() || gapped {
+                if *header
+                    || kept
+                    || change.is_some()
+                    || own.is_some()
+                    || format.is_some()
+                    || gapped
+                {
                     // What the row has, which its formatting change keeps.
                     let mut base = String::new();
                     // The grid columns a gap leaves out, at the row's start
@@ -1727,6 +1737,9 @@ pub(super) fn story(
                     }
                     if *after > 0 {
                         let _ = write!(base, "<w:wAfter w:w=\"{after_width}\" w:type=\"dxa\"/>");
+                    }
+                    if kept {
+                        base.push_str("<w:cantSplit/>");
                     }
                     if *header {
                         base.push_str("<w:tblHeader/>");

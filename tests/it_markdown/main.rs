@@ -53,6 +53,7 @@ mod md_substitution_adjacency;
 mod md_substitution_dates;
 mod md_table_borders;
 mod md_table_geometry;
+mod md_table_rows;
 mod md_tracked_page_break;
 mod move_roundtrip;
 mod nested_substitution;
