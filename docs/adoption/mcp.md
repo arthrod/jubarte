@@ -106,9 +106,13 @@ arguments from a model.
 - Every engine call goes through `Document`, which checks the package before
   parsing it.
 - The server speaks stdio only. It opens no network port.
-- `docx_view` lists only `.docx` files under the root, never follows a
-  directory link, and stops after 200 files, 5,000 directory entries or six
-  levels.
+- `docx_view` lists only `.docx` files under the root and stops after 200
+  files, 5,000 directory entries (counted as they are read) or six levels.
+  It opens the root once without following a link and reopens each folder
+  from it one component at a time with `O_NOFOLLOW`, so a folder swapped
+  for a link while the list is built is not entered. On Windows, which
+  cannot open folders that way, each folder's real path is checked against
+  the root just before it is read.
 
 ## Claude Code
 

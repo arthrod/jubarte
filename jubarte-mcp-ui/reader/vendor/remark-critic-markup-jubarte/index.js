@@ -108,6 +108,13 @@ function identifier(raw, type, defaultStory) {
   return { story, ids, referenceIds: ids.map((id) => `${story}:${type === 'revision' ? 'rev' : 'comment'}:${id}`) };
 }
 
+/** One tag part without a trailing ` move` or ` move NAME` (one token). */
+function withoutMove(part) {
+  const text = part.trim();
+  const match = text.match(/^(.*\S) move(?: (\S+))?$/);
+  return match ? match[1] : text;
+}
+
 /** Parse one agent-view note. This function does not itself enable view mode. */
 export function parseAgentTag(note, options = {}) {
   const text = String(note).trim();
@@ -272,7 +279,14 @@ export function prepareCritic(input, options = {}) {
     return { ...(preceding || { id: comment.id, kind: 'point', start: length, end: length }), sourceEnd, comment };
   }
 
-  /** A plain attribution tag at `at` (`{r12 @AC}`, `{r4+5 @A re r3 @B}`): agent view only. */
+  /**
+   * The engine's attribution brace at `at` (agent view only), read as
+   * crates/jubarte-markdown critic.rs `recognized_note` reads it: one flat
+   * brace; ` re ` separates the change's own tags from the change it sits
+   * in, and every segment must be a tag; `; ` joins a substitution's two
+   * authors; each part may end in ` move` or ` move NAME`. Returns the
+   * change's own tags, or null when the brace is document text.
+   */
   function attributionTagAt(at, until) {
     if (!options.agentView || source[at] !== '{' || isEscaped(source, at)) return null;
     if (FORMS.some((form) => source.startsWith(form.open, at))) return null;
@@ -280,10 +294,12 @@ export function prepareCritic(input, options = {}) {
     if (close < 0 || close >= until) return null;
     const body = source.slice(at + 1, close);
     if (/[{\n]/.test(body)) return null;
-    // After ` re ` a nested change names the change it sits inside.
-    const own = body.split(/\s+re\s+/)[0];
-    const revision = parseAgentTag(own, { ...options, story: storyAt(at) });
-    return revision?.type === 'revision' ? { revision, end: close + 1 } : null;
+    const story = storyAt(at);
+    const segments = body.split(' re ').map((segment) => segment.split('; ').map(withoutMove));
+    if (segments.length > 1 && segments.some((parts) => parts.length !== 1)) return null;
+    const tags = segments.map((parts) => parts.map((part) => parseAgentTag(part, { ...options, story })));
+    if (tags.some((parts) => parts.some((tag) => tag?.type !== 'revision'))) return null;
+    return { revisions: tags[0], end: close + 1 };
   }
 
   function render(from, until, allowed) {
@@ -359,9 +375,11 @@ export function prepareCritic(input, options = {}) {
       // The engine's attribution tags (`{++x++}{r12 @AC}`, engine 0.20.0+)
       // are the change's metadata: attach them and leave them out of the text.
       let end = after;
-      for (let tag; previous.group && (tag = attributionTagAt(end, until)); end = tag.end) {
-        attachRevision(previous, tag.revision, end, tag.end);
+      const tag = previous.group ? attributionTagAt(end, until) : null;
+      if (tag) {
+        for (const revision of tag.revisions) attachRevision(previous, revision, end, tag.end);
         previous.sourceEnd = tag.end;
+        end = tag.end;
       }
       boundary(end, closer);
       at = end;

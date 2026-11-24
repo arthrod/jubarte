@@ -202,10 +202,22 @@ describe("the document card in a sandboxed host", () => {
       return [...document.fonts].filter((f) => f.status === "loaded").map((f) => f.family.replaceAll('"', ""));
     });
     for (const family of ["Manrope", "Source Serif 4", "JetBrains Mono"]) assert.ok(fonts.includes(family), `${family} loaded: ${fonts}`);
-    // A fetch from inside the view is refused.
-    const fetched = await view.evaluate(() => fetch("https://example.com/").then(() => "fetched", () => "refused"));
-    assert.equal(fetched, "refused");
-    assert.deepEqual(errors.filter((e) => !/example\.com/.test(e)), []);
+    // A fetch from inside the view is refused by the CSP itself: the target
+    // is the sandbox's own page, same origin and reachable, so only the
+    // policy can stop it, and the browser must report the violation.
+    const target = h.sandboxUrl;
+    const outcome = await view.evaluate(async (url) => {
+      const violation = new Promise((resolve) => {
+        document.addEventListener("securitypolicyviolation", (e) => resolve({ directive: e.effectiveDirective, blocked: e.blockedURI }), { once: true });
+        setTimeout(() => resolve(null), 3000);
+      });
+      const fetched = await fetch(url).then(() => "fetched", () => "refused");
+      return { fetched, violation: await violation };
+    }, target);
+    assert.equal(outcome.fetched, "refused");
+    assert.equal(outcome.violation?.directive, "connect-src", JSON.stringify(outcome));
+    assert.ok(target.startsWith(outcome.violation.blocked), JSON.stringify(outcome));
+    assert.deepEqual(errors.filter((e) => !e.includes(target)), []);
     await page.close();
   });
 });

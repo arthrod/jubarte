@@ -311,7 +311,8 @@ test('plain tags: grouped ids, two authors, dates, stories and nesting', () => {
   assert.deepEqual(grouped.changes.map((c) => c.revisionIds), [['1', '2'], ['1', '2']]);
   assert.equal(grouped.markdown, 'ab');
 
-  const two = prepareCritic('{~~a~>b~~}{r1 @AC}{r2 @JD}', { agentView: true, authors: { AC: 'Ann', JD: 'Jane' } });
+  // A substitution's two authors share one brace, joined by `; ` (view_notes::revision_tags).
+  const two = prepareCritic('{~~a~>b~~}{r1 @AC; r2 @JD}', { agentView: true, authors: { AC: 'Ann', JD: 'Jane' } });
   assert.deepEqual(two.changes.map((x) => [x.kind, x.author, x.revisionIds]), [['deletion', 'Ann', ['1']], ['insertion', 'Jane', ['2']]]);
   assert.equal(two.markdown, 'ab');
 
@@ -332,4 +333,30 @@ test('braces that are not an attribution tag stay text', () => {
   assert.equal(prepareCritic('{++x++} {r1 @AC}', { agentView: true }).markdown, 'x {r1 @AC}');
   // Outside the agent view nothing is read as a tag.
   assert.equal(prepareCritic('{++x++}{r1 @AC}').markdown, 'x{r1 @AC}');
+});
+
+// The engine's grammar (critic.rs recognized_note): one brace per change;
+// every ` re ` segment must be a tag; a part may end in ` move [name]`.
+test('an attribution brace is metadata only when every part of it is a tag (#16)', () => {
+  assert.equal(prepareCritic('{++x++}{r1 @A re payment is due}', { agentView: true }).markdown, 'x{r1 @A re payment is due}');
+  const after = prepareCritic('{++x++}{r2 @A}{r1 @A re payment is due}', { agentView: true });
+  assert.equal(after.markdown, 'x{r1 @A re payment is due}');
+  assert.deepEqual(after.changes[0].revisionIds, ['2']);
+  // One brace per change: a second brace is the document's text.
+  assert.equal(prepareCritic('{++x++}{r1 @A}{r2 @B}', { agentView: true }).markdown, 'x{r2 @B}');
+});
+
+test('move tags and two-author tags attach to their change (#17)', () => {
+  const moved = prepareCritic('{--Moved clause.--}{r7 @A move move1}', { agentView: true, authors: { A: 'Ann' } });
+  assert.equal(moved.markdown, 'Moved clause.');
+  assert.deepEqual(moved.changes[0].revisionIds, ['7']);
+  assert.equal(moved.changes[0].author, 'Ann');
+  const bare = prepareCritic('{++a++}{r1 @A move}', { agentView: true });
+  assert.equal(bare.markdown, 'a');
+  assert.deepEqual(bare.changes[0].revisionIds, ['1']);
+  const nested = prepareCritic('{++a++}{r4 @A move m2 re r3 @B}', { agentView: true });
+  assert.deepEqual(nested.changes[0].revisionIds, ['4']);
+  assert.equal(nested.markdown, 'a');
+  // ` move` followed by two words is not a move clause.
+  assert.equal(prepareCritic('{++a++}{r1 @A move two words}', { agentView: true }).markdown, 'a{r1 @A move two words}');
 });
