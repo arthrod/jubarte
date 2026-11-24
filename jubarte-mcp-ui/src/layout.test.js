@@ -446,3 +446,32 @@ describe("a complete footnote never continues onto another page (#58)", () => {
     done();
   });
 });
+
+describe("list markers are Word's, from the engine (#59)", () => {
+  const md = [
+    "---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\n---\n",
+    '<!-- p0 ListParagraph, num "1." -->\n1. Binary Fission',
+    '<!-- p1 ListParagraph, num "2." -->\n2. Mitosis\n\n   <!-- p2 ListParagraph, num "a." -->\n   1. Define:',
+    "<!-- p3 ListParagraph left 1in -->\nGap",
+    '<!-- p4 ListParagraph, num "b.", level 1 -->\n2. Label and Explain:',
+    '<!-- p5 ListParagraph, num "3." -->\n3. Meiosis',
+  ].join("\n\n");
+  it("draws the num label, not the markdown position", () => {
+    const { container, done } = compose(md);
+    const markers = [...container.querySelectorAll(".paged-marker")].map((m) => m.textContent);
+    expect(markers).toEqual(["1.", "2.", "a.", "b.", "3."]);
+    done();
+  });
+  it("indents a paragraph by its level clause, the drafter's nesting", () => {
+    const { container, done } = compose(md);
+    const left = (text) => {
+      const block = [...container.querySelectorAll(".paged-block")].find((b) =>
+        b.textContent.includes(text),
+      );
+      return block.querySelector(".paged-marker").style.left;
+    };
+    expect(left("Label and Explain")).toBe(left("Define:"));
+    expect(left("Label and Explain")).not.toBe(left("Mitosis"));
+    done();
+  });
+});
