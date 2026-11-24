@@ -56,6 +56,9 @@ export function resolvePageGeometry(result = {}) {
       let match;
       if (/^(Letter|A4|Legal)(?:\s|$)/i.test(clause)) size(clause);
       else if (/^(portrait|landscape)$/i.test(clause)) orient(clause);
+      // `margins top 0.5in, right 0.5in, …`: the engine names the first side
+      // after the word, the others in their own clauses.
+      else if ((match = clause.match(/^margins?\s+(top|right|bottom|left)\s+(.+)$/i))) margin(match[1].toLowerCase(), match[2]);
       else if ((match = clause.match(/^margins?\s+(.+)$/i))) allMargins(match[1]);
       else if ((match = clause.match(/^(top|right|bottom|left)(?:\s+margin)?\s+(.+)$/i))) margin(match[1].toLowerCase(), match[2]);
       else if (/^(header\/footer|header|footer)\s+/i.test(clause)) { /* Not body-page geometry. */ }

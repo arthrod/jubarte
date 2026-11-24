@@ -88,3 +88,12 @@ test('eight substantial reader examples parse and cover the four paper layouts',
   }
   assert.deepEqual(layouts, ['Letter portrait','Letter portrait','Letter portrait','A4 portrait','A4 landscape','Legal portrait','Letter portrait','A4 landscape']);
 });
+
+test('the engine names each side after `margins` (b106)', () => {
+  const g = read('Letter landscape, margins top 0.5in, right 0.5in, bottom 0.3in, left 0.5in, header/footer 0.5in');
+  assert.deepEqual(g.warnings, []);
+  assert.equal(g.margins.topPx, 48);
+  assert.equal(g.margins.rightPx, 48);
+  assert.equal(Math.round(g.margins.bottomPx * 10) / 10, 28.8);
+  assert.equal(g.margins.leftPx, 48);
+});
