@@ -333,8 +333,10 @@ function applyHostContext(ctx) {
   if (!ctx) return;
   if (ctx.theme === "dark" || ctx.theme === "light")
     document.documentElement.style.colorScheme = ctx.theme;
-  const height = ctx.containerDimensions?.height;
-  document.body.classList.toggle("fixed", typeof height === "number");
+  // A host-context update carries only what changed (#73): the height is
+  // decided only when the update names the container's dimensions.
+  if (ctx.containerDimensions)
+    document.body.classList.toggle("fixed", typeof ctx.containerDimensions.height === "number");
   fit();
 }
 
@@ -373,5 +375,10 @@ window.addEventListener("resize", fit);
 new ResizeObserver(fit).observe($("pages-fit"));
 $("appbar-ver").textContent = VERSION ? `v${VERSION}` : "";
 
-await app.connect();
-applyHostContext(app.getHostContext());
+// A host that refuses ui/initialize leaves nothing to wait for (#74).
+try {
+  await app.connect();
+  applyHostContext(app.getHostContext());
+} catch (error) {
+  fail("Could not connect to the host", error);
+}

@@ -248,3 +248,16 @@ it("an empty complete listing says there are none (#64)", async () => {
   await settle();
   expect($("files-grid").textContent).toContain("No .docx files under this folder.");
 });
+
+it("a theme-only host update keeps the card's fixed height (#73)", () => {
+  host.app.onhostcontextchanged({
+    theme: "light",
+    containerDimensions: { width: 320, height: 400 },
+  });
+  expect(document.body.classList.contains("fixed")).toBe(true);
+  host.app.onhostcontextchanged({ theme: "dark" });
+  expect(document.body.classList.contains("fixed")).toBe(true);
+  expect(document.documentElement.style.colorScheme).toBe("dark");
+  host.app.onhostcontextchanged({ containerDimensions: { width: 320 } });
+  expect(document.body.classList.contains("fixed")).toBe(false);
+});
