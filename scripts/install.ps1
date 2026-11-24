@@ -21,5 +21,5 @@ if (-not $FontsOnly) {
 $dest = if ($env:JUBARTE_FONT_DIR) { $env:JUBARTE_FONT_DIR } else { Join-Path $env:APPDATA "jubarte\fonts" }
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item (Join-Path $repo "assets\fonts\extra\*.ttf") $dest
-Copy-Item (Join-Path $repo "LICENSES\OFL-1.1.txt"), (Join-Path $repo "LICENSES\Apache-2.0.txt") $dest
+Copy-Item (Join-Path $repo "assets\fonts\extra\LICENSE-*"), (Join-Path $repo "assets\fonts\extra\THIRD_PARTY_NOTICES.md") $dest
 Write-Output "fonts installed in $dest"

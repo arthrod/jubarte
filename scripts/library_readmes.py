@@ -78,9 +78,7 @@ RAW = REPO.replace("https://github.com/", "https://raw.githubusercontent.com/", 
 RTD = "https://jubarte.readthedocs.io"
 
 SPDX = (
-    # REUSE-IgnoreStart
     "<!--\nSPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n\nSPDX-License-Identifier: Apache-2.0\n-->\n"
-    # REUSE-IgnoreEnd
 )
 
 

@@ -92,5 +92,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[Apache-2.0](LICENSE). [NOTICE](NOTICE) carries the attributions of the
-projects this code derives from.
+[Apache-2.0](LICENSE). Some of its files are adapted from Docxodus and Microsoft's PPCC25-ALM sample under
+the MIT License; `THIRD_PARTY_NOTICES.md`, which ships with the crate,
+names them and carries their notices.

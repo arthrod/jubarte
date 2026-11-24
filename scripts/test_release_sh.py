@@ -1500,7 +1500,7 @@ class Checklist(unittest.TestCase):
         self.kw("not re-run")  # identity replaces a Word rerun on the released binary
 
     def test_item_15_licensing_and_stale_docs(self) -> None:
-        self.kw("REUSE")
+        self.kw("THIRD_PARTY_NOTICES")
         self.kw("adoption")
 
     # The gaps the 0.13.0 checklist close: the website's pages, release.yml,
@@ -2922,13 +2922,11 @@ class EngineRepoBinding(unittest.TestCase):
 class AdoptionAndHeaders(unittest.TestCase):
     """#1754 (checklist 4#2 and 5#1): a docs/adoption row this release ships
     is not still labelled main, and every tracked file that can carry a
-    comment carries its SPDX header — `reuse lint` cannot see a missing one,
-    because REUSE.toml's `path = "**"` covers every file."""
+    comment carries its SPDX header."""
 
-    # REUSE-IgnoreStart (headers these tests write, not this file's)
+    # headers these tests write, not this file's
     HEADER = "# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n#\n# SPDX-License-Identifier: Apache-2.0\n"
     LATE = "//! docs\n" + "// filler\n" * 600 + "// SPDX-License-Identifier: Apache-2.0\n"
-    # REUSE-IgnoreEnd
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="adoption-")).resolve()
@@ -2998,8 +2996,9 @@ class AdoptionAndHeaders(unittest.TestCase):
                                  "jubarte-wasm/Cargo.toml", "setup.cfg", "stubs/x.pyi", "tox.ini"]))
 
     def test_generated_files_and_fixtures_are_not_asked_for_one(self) -> None:
-        # wasm-bindgen writes npm/'s glue and docs/api snapshots it; REUSE.toml
-        # carries tests/fixtures/' provenance (anymd's copied scripts among them)
+        # wasm-bindgen writes npm/'s glue and docs/api snapshots it; a fixture
+        # is test material (anymd's copied scripts among them), and
+        # tests/THIRD_PARTY_NOTICES.md names those from other projects
         self.write("jubarte-wasm/npm/web/jubarte_wasm.js", "export {}\n")
         self.write("jubarte-wasm/npm/node/jubarte_wasm_bg.wasm.d.ts", "export {}\n")
         self.write("docs/api/jubarte-wasm-node-v0.13.0.d.ts", "export {}\n")

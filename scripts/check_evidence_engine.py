@@ -9,7 +9,8 @@
 `python3 scripts/check_evidence_engine.py 0.14.0` reads the commit both of
 release_info/'s results JSONs name (`tools.jubarte.commit`, the commit the
 scored candidate was built from) and compares the CLI engine's inputs there
-with REV's (default HEAD): assets/, schemas/, keys/ and Cargo.lock byte for
+with REV's (default HEAD): assets/ (the fonts' licence and notice texts
+aside: nothing builds from them), schemas/, keys/ and Cargo.lock byte for
 byte; the Rust sources under src/ with their comments dropped and their
 whitespace runs collapsed, so a change to comments alone (0.12.0's doc
 comment) is no engine change, while a layout change (`{ 1 }` to `{1}`, a
@@ -62,8 +63,12 @@ LISTING = frozenset(
 # the Rust sources read as text: the root crate's and each workspace crate's
 RUST_SOURCE = re.compile(r"(?:src|crates/[^/]+/src)/.*\.rs\Z")
 CRATE_MANIFEST = re.compile(r"crates/[^/]+/Cargo\.toml\Z")
-# files a crate packages for crates.io that no build reads
-CRATE_LISTING = re.compile(r"crates/[^/]+/(?:README(?:\.fragment)?\.md|LICENSE|NOTICE|LICENSES/.*)\Z")
+# files a crate packages for crates.io that no build reads, and the licence
+# and notice texts beside the fonts, which nothing embeds or reads
+NOT_BUILT = re.compile(
+    r"(?:crates/[^/]+/(?:README(?:\.fragment)?\.md|LICENSE|NOTICE|THIRD_PARTY_NOTICES\.md)"
+    r"|(?:crates/[^/]+/)?assets/(?:[^/]+/)*(?:LICENSE-[A-Za-z0-9_-]+|THIRD_PARTY_NOTICES\.md))\Z"
+)
 RAW_STRING = re.compile(r'[bc]?r(#*)"')
 CHAR = re.compile(r"'(?:\\(?:u\{[0-9A-Fa-f_]+\}|x[0-9A-Fa-f]{2}|.)|[^\\'\n])'")
 
@@ -247,8 +252,9 @@ def main() -> int:
         if CRATE_MANIFEST.match(path):
             if manifest(toml_at(commit, path)) == manifest(toml_at(args.rev, path)):
                 continue
-        # what a crate packages beside its sources (README, licence texts)
-        if CRATE_LISTING.match(path):
+        # what a crate packages beside its sources (README, licence and
+        # notice texts), and the licence texts beside the fonts
+        if NOT_BUILT.match(path):
             continue
         changed.append(path)
     if manifest(toml_at(commit, "Cargo.toml")) != manifest(toml_at(args.rev, "Cargo.toml")):

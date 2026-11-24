@@ -16,7 +16,7 @@ description = "The compare product of the jubarte engine: two Word documents in,
 readme = "README.md"
 keywords = ["docx", "redline", "track-changes", "compare", "word"]
 categories = ["text-processing", "parser-implementations"]
-include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE", "/THIRD_PARTY_NOTICES.md"]
 [lib]
 name = "jubarte_redlines"
 

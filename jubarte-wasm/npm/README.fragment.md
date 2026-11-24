@@ -235,5 +235,6 @@ The exact engine commit each build was produced from is recorded in
 ## License
 
 [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) ©
-Jandira Technologies, LLC. The package's `NOTICE` file carries the
-attributions of the projects the engine derives from.
+Jandira Technologies, LLC. Parts of the engine are adapted from other
+projects, and the renderer embeds fonts under their own licence: the
+package's `THIRD_PARTY_NOTICES.md` names them and carries their notices.

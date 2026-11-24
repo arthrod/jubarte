@@ -17,14 +17,14 @@ A rule that depends on memory is forgotten. These run in CI:
 | Check | Refuses |
 |---|---|
 | `tests/repo_hygiene.rs` | A new top-level file or folder that is not on its list; a tracked file over 1 MB outside the listed folders; tracked files that outgrow the size budget of the whole tree (72 MiB) or of their top-level folder; a tracked executable, WebAssembly module, log or empty file; a home-directory path or the retired project name in a tracked file; a `LICENSE` copy that differs from the root one; a file outside the listed few that still names the former licence |
-| CI's `wasm` job | An npm package that does not build, fails its smoke test or its CLI tests, names a builder's home directory, or would be packed without a target, `LICENSE` or `NOTICE` |
+| CI's `wasm` job | An npm package that does not build, fails its smoke test or its CLI tests, names a builder's home directory, or would be packed without a target, `LICENSE`, `NOTICE` or `THIRD_PARTY_NOTICES.md` |
 | `tests/corpus_present.rs` | Running the tests without the corpus submodule or without the downloaded test documents, with the command that fetches each |
 | `scripts/fetch_fixtures.py` | A downloaded test document whose SHA-256 is not the one `tests/corpus/hf_fixtures.sha256` records |
 | `dco.yml` (`scripts/check_dco.py`) | A commit in a pull request to `main` that its author did not sign off |
 | `scripts/check_links.py` | A relative link in tracked Markdown that names no tracked file |
 | `scripts/gen_docs.sh --check` | A generated guide or README edited by hand, or left stale |
-| `scripts/sync_license_files.py --check` | A package folder whose `LICENSE` or `NOTICE` is missing or differs from the root file; an upstream notice missing from `NOTICE` |
-| `reuse lint` | A file with no licence and copyright record |
+| `scripts/sync_license_files.py --check` | A package folder whose `LICENSE` or `NOTICE` is missing or differs from the root file; a stale package `THIRD_PARTY_NOTICES.md`; a file whose SPDX header names another licence or holder that no `THIRD_PARTY_NOTICES.md` up its path lists; a notice that lists nothing real, or leaves out a holder or the MIT License's text |
+| `scripts/release.sh` step 5 (`headerless_files`) | A tracked file that can carry a comment (outside generated glue and `tests/fixtures/`) with no `SPDX-License-Identifier` in its first 4 KiB |
 | `cargo deny check` | A dependency with an advisory, or a licence that is not on the list |
 | gitleaks, CodeQL | A committed secret; a known vulnerable pattern |
 | OpenSSF Scorecard (`scorecard.yml`, weekly) | Nothing: it publishes the score the README badge shows and keeps the findings as a run artifact |
@@ -46,9 +46,10 @@ description.
 - **Every document has a reader.** A page under `docs/` is for users or for
   maintainers, and [docs/README.md](../README.md) lists it. A page nobody
   lists is deleted.
-- **Every fixture has a source.** A new test document is recorded in
-  `REUSE.toml` with where it came from and its licence. A third-party
-  document, or one whose rights are unclear, goes to the
+- **Every fixture has a source.** A test document Jandira did not make
+  has a row in `tests/THIRD_PARTY_NOTICES.md` with where it came from and
+  its licence. A new third-party document, or one whose rights are
+  unclear, goes to the
   `jubarte-test-corpus` repository (the submodule `tests/corpus/bench`),
   never into this one. Documents whose origin is not confirmed are in a
   public Hugging Face dataset instead; `tests/corpus/hf_fixtures.sha256`

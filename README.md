@@ -1088,7 +1088,8 @@ CI currently includes:
 - MSRV testing on Rust 1.94 (the all-feature test suite, on Linux)
 - `cargo publish --dry-run`
 - `cargo-deny`
-- REUSE/SPDX checks
+- SPDX headers, and a third-party notice beside every file adapted from
+  another project
 - Python binding tests
 
 The project also maintains package/schema validation and real-Microsoft-Word
@@ -1231,9 +1232,13 @@ Jubarte is licensed under the [Apache License, Version 2.0](LICENSE)
 (`Apache-2.0`) from version 0.19.0. Versions 0.18.0 and earlier were
 released under `AGPL-3.0-only` and stay under it.
 
-[NOTICE](NOTICE) carries the attributions of the projects jubarte's code
-derives from, and [LICENSES.md](LICENSES.md) lists the licences of the
-bundled fonts and test documents.
+Parts of the engine are adapted from other projects under the MIT
+License, and the renderer embeds fonts under the SIL Open Font License.
+A `THIRD_PARTY_NOTICES.md` names them and carries their notices: one in
+each crate that adapts upstream code, one in each package that ships the
+compiled engine (the Python wheel, the npm library and the release
+archives), one beside the installable fonts and one for the test
+documents.
 
 ## Links
 

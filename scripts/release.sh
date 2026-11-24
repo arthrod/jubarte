@@ -92,7 +92,8 @@
 #   4. summaries — the five summaries + the docs statement land in their
 #      channels
 #   5. gates — fmt, clippy -D warnings, test --all-features, convert-sweep
-#      unit tests, REUSE lint (sequential cargo per AGENTS.md)
+#      unit tests, licence copies and third-party notices (sequential cargo
+#      per AGENTS.md)
 #   6. api docs drift — the private docs build with warnings denied (and
 #      open in the browser with --open-docs); a machine-readable snapshot
 #      lands in docs/api/ (rustdoc JSON + flat api.txt + the wasm .d.ts
@@ -210,7 +211,7 @@ before|you|bench hygiene while scoring: one scoring job at a time; Word only thr
 3|auto|The measured NUMBERS sentence of --changelog-summary and of the app's CHANGELOG section states the evidence's own figures at two decimals — sample size, both means, the comparator, the failures and their noun when the phrase names one (the last sample noun before a word like "of", "instead" or "whose"), every "no failed" claim in the sentence ("no failed X are omitted" says they are counted, not that none failed; another sentence's is not read: keep such claims out of the summary); a median or interval it states is not checked (keep them out, or check them by hand); it reaches the GitHub notes, the app's About window and jubarte.pro, so a mismatch ships a wrong claim three times|python3 scripts/check_release_info.py @V@ --summary "<changelog summary>" --changelog jubarte-app/CHANGELOG.md
 4|auto|The five summaries + the docs statement land in their channels; step 4 lists the docs files changed since the previous tag beside the statement|scripts/release.sh step 4 (it greps each landing)
 4|auto|docs/adoption pages: no row this release ships is still labelled main — step 4 dies naming each, to be flipped to released (the README's labels name no moving version)|scripts/release.sh step 4 (adoption_main_rows)
-5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, REUSE lint; and, even under --skip-gates, every tracked file that can carry a comment (outside wasm-bindgen's npm/ glue, its docs/api snapshots and tests/fixtures/) carries SPDX-License-Identifier in its first 4 KiB, which reuse lint cannot see under REUSE.toml's **|uv tool run --from reuse[charset-normalizer] reuse lint; scripts/release.sh step 5 (headerless_files)
+5|auto|Gates: fmt, clippy -D warnings, tests, public docs -D warnings, sweep units, script tests, pytest, licence copies and THIRD_PARTY_NOTICES coverage; and, even under --skip-gates, every tracked file that can carry a comment (outside wasm-bindgen's npm/ glue, its docs/api snapshots and tests/fixtures/) carries SPDX-License-Identifier in its first 4 KiB|scripts/sync_license_files.py --check; scripts/release.sh step 5 (headerless_files)
 5|auto|Security scan: cargo-deny advisories across the five workspace manifests and gitleaks over the whole reachable history plus every publishable file — it runs even under --skip-gates|bash scripts/security-check.sh (unconditionally, just above the gates block)
 6|auto|API drift: the private rustdoc builds with warnings denied and its drift from the previous release's snapshot is logged; the sign-off is step 0's cargo-semver-checks gate (--open-docs also opens the rendered docs)|scripts/release.sh step 6; scripts/api_snapshot.py --drift <previous tag> v@V@
 7|auto|Dry-runs: cargo, npm x2, maturin sdist (folder wiped first) carrying the pypi comment; every registry ships the README cut for v@V@|scripts/release.sh step 7
@@ -746,10 +747,10 @@ adoption_main_rows() {
   [ "$rc" -le 1 ]
 }
 # Each tracked file that can carry a comment and lacks SPDX-License-Identifier
-# in its first 4 KiB. `reuse lint` cannot see one, since REUSE.toml's
-# `path = "**"` covers every file (the 0.13.0 audit found six by hand,
-# #1754). wasm-bindgen writes npm/'s glue and the docs/api snapshots of it;
-# REUSE.toml carries tests/fixtures/' provenance.
+# in its first 4 KiB (the 0.13.0 audit found six by hand, #1754).
+# wasm-bindgen writes npm/'s glue and the docs/api snapshots of it; a
+# fixture is test material, and tests/THIRD_PARTY_NOTICES.md names those
+# that come from other projects.
 headerless_files() {
   local f top
   git ls-files -z -- '*.rs' '*.py' '*.sh' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.zsh' '*.awk' \
@@ -1288,7 +1289,7 @@ bash scripts/security-check.sh
 headerless=$(headerless_files) || die "cannot list the tracked files (git ls-files)"
 if [ -n "$headerless" ]; then
   printf '%s\n' "$headerless" | sed 's/^/        /' >&2
-  die "these files carry no SPDX-License-Identifier in their first 4 KiB, which reuse lint cannot see (REUSE.toml's ** covers them) — add the header (AGENTS.md, Licensing and provenance)"
+  die "these files carry no SPDX-License-Identifier in their first 4 KiB — add the header (AGENTS.md, Licensing and provenance)"
 fi
 if [ "$SKIP_GATES" = 0 ]; then
   say "5. Gates (sequential cargo, per AGENTS.md)"
@@ -1326,10 +1327,12 @@ if [ "$SKIP_GATES" = 0 ]; then
   (cd jubarte-python \
     && uv run --with maturin maturin develop --release >/dev/null \
     && uv run --with pytest pytest -q)
-  uv tool run --from 'reuse[charset-normalizer]' reuse lint >/dev/null
-  # every package folder carries the root LICENSE and NOTICE
-  python3 scripts/sync_license_files.py --check >/dev/null
-  step "fmt / clippy / tests / docs / sweep-units / pytest / REUSE all green"
+  # every package folder carries the root LICENSE and NOTICE, and the
+  # THIRD_PARTY_NOTICES.md beside each file adapted from another project
+  # lists it
+  "${py312[@]}" scripts/test_sync_license_files.py
+  "${py312[@]}" scripts/sync_license_files.py --check >/dev/null
+  step "fmt / clippy / tests / docs / sweep-units / pytest / licences all green"
 else
   say "5. Gates — SKIPPED (--skip-gates)"
 fi
@@ -1537,7 +1540,7 @@ else
         grep -qF "\"$t/$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $t/$n"
       done
     done
-    for n in ENGINE_COMMIT.txt LICENSE NOTICE LICENSE-OFL-1.1.txt; do
+    for n in ENGINE_COMMIT.txt LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
       grep -qF "\"$n\"" <<<"$packed" || die "the jubarte-wasm package would not ship $n"
     done
     # The built files are not tracked. The build re-resolves

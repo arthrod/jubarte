@@ -21,7 +21,6 @@ sys.path.insert(0, str(HERE))
 
 import library_readmes as lr
 
-# REUSE-IgnoreStart
 ROOT_README = """<!--
 SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 
@@ -61,7 +60,6 @@ Run the gates.
 
 [Apache-2.0](LICENSE)
 """
-# REUSE-IgnoreEnd
 
 
 class Cutting(unittest.TestCase):
@@ -140,9 +138,7 @@ class Render(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="library_readmes_"))
         (self.tmp / "pkg").mkdir()
         (self.tmp / "pkg/README.fragment.md").write_text(
-            # REUSE-IgnoreStart
             "<!--\nSPDX-License-Identifier: Apache-2.0\n-->\n\n## Usage\n\n[ex](examples/a.py)\n",
-            # REUSE-IgnoreEnd
             encoding="utf-8",
         )
 
@@ -252,7 +248,6 @@ class InstallNames(unittest.TestCase):
         self.assertEqual(found, [])
 
 
-# REUSE-IgnoreStart
 LIB_RS = """//! # demo
 //!
 //! ```rust
@@ -279,7 +274,6 @@ pub use dep_e::{
 };
 pub use wml::Thing;
 """
-# REUSE-IgnoreEnd
 
 
 class Crates(unittest.TestCase):

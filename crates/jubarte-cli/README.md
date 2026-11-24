@@ -110,8 +110,9 @@ fn main() {
 
 ## License
 
-[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-cli/LICENSE). [NOTICE](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-cli/NOTICE) carries the attributions of the
-projects this code derives from.
+[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-cli/LICENSE). Some of its files are adapted from zipsign under
+the MIT License; `THIRD_PARTY_NOTICES.md`, which ships with the crate,
+names them and carries their notices.
 
 ## Links
 

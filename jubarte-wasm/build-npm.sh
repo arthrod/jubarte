@@ -122,8 +122,9 @@ for target in "${TARGETS[@]}"; do
 done
 cp ../LICENSE npm/LICENSE
 cp ../NOTICE npm/NOTICE
-# The full and pdf builds embed the renderer's fonts.
-cp ../LICENSES/OFL-1.1.txt npm/LICENSE-OFL-1.1.txt
+# npm/THIRD_PARTY_NOTICES.md is tracked: scripts/sync_license_files.py writes
+# it with the engine's notices and the licence texts of the fonts the full
+# and pdf builds embed.
 python3 ../scripts/check_npm_paths.py npm
 if [ "$PARTIAL" = 1 ]; then
   rm -f npm/ENGINE_COMMIT.txt

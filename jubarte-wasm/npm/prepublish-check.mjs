@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 const here = new URL("./", import.meta.url);
 const targets = ["node", "web", "node-slim", "web-slim", "node-redlines", "web-redlines", "node-pdf", "web-pdf"];
 const built = ["jubarte_wasm.js", "jubarte_wasm.d.ts", "jubarte_wasm_bg.wasm", "jubarte_wasm_bg.wasm.d.ts"];
-const single = ["ENGINE_COMMIT.txt", "NOTICE", "LICENSE-OFL-1.1.txt"];
+const single = ["ENGINE_COMMIT.txt", "NOTICE", "THIRD_PARTY_NOTICES.md"];
 
 const listed = new Set(JSON.parse(readFileSync(new URL("package.json", here), "utf8")).files ?? []);
 const problems = [];

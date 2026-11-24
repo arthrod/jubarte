@@ -115,9 +115,10 @@ crate beside the fonts.
 
 ## License
 
-The code is [Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-render/LICENSE); the bundled fonts keep the licenses
-named above. [NOTICE](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-render/NOTICE) carries the attributions of the projects this
-code derives from.
+The code is [Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-render/LICENSE), except two files adapted from
+markdown2pdf under the MIT License; the bundled fonts keep the licenses
+named above. `THIRD_PARTY_NOTICES.md`, which ships with the crate,
+names them and carries their notices.
 
 ## Links
 

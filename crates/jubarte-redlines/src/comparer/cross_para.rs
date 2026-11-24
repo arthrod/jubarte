@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2025-2026 John Scrudato IV
 //
-// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Docxodus-MIT
+// SPDX-License-Identifier: Apache-2.0 AND MIT
 
 //! Word's flat word-and-pilcrow stream over a run of changed paragraphs.
 //!
@@ -15,7 +15,7 @@
 //! Port of Docxodus's `IrCrossParagraphSegmenter.SegmentRegion`, of the two
 //! region collectors in `IrEditScriptBuilder` that feed it, and of the
 //! content-anchored `IrTokenDiffer` that re-diffs each output cell (MIT; see
-//! `LICENSES/LicenseRef-Docxodus-MIT.txt`). A region is re-streamed only when
+//! this crate's `THIRD_PARTY_NOTICES.md`). A region is re-streamed only when
 //! the segmenter changes its paragraph structure; otherwise the LCS sequences
 //! stand.
 //!

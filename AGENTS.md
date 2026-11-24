@@ -306,28 +306,44 @@ one they are format-checked only, and the release says so.
 
 ## Licensing and provenance
 
-The repository's only project license is Apache-2.0 (`LICENSE`) since
-0.19.0, and Jandira Technologies, LLC owns its contributions. `NOTICE`
-carries the upstream attributions; `scripts/sync_license_files.py` copies
-`LICENSE` and `NOTICE` into every package folder, so edit the root files
-only. File-level licensing is
-tracked with REUSE/SPDX: commentable project files carry SPDX headers, while
-`REUSE.toml` covers binary fixtures and records the preserved upstream MIT
-attribution texts under `LICENSES/`.
+The repository has one licence file, `LICENSE` (Apache-2.0 since 0.19.0),
+and Jandira Technologies, LLC owns its contributions. `NOTICE` is Jandira's
+notice alone. A registry packs only a package's own folder, so
+`scripts/sync_license_files.py` copies `LICENSE` and `NOTICE` into every
+package folder: edit the root files only.
 
-- Run `uv tool run --from 'reuse[charset-normalizer]' reuse lint` before
-  changing licensing or adding non-trivial assets.
+What comes from another project is noted beside it, in a
+`THIRD_PARTY_NOTICES.md`: at the root of each crate that adapts upstream
+code (it ships with the crate), in `assets/fonts/extra/` for the fonts the
+install scripts copy, and in `tests/` for the test material. The tests'
+notice sits in `tests/`, not beside the fixtures, because the tests read
+every file in those folders as a fixture. A notice's `Files` table names
+what it covers, relative to its folder. The Python and npm packages carry
+the whole engine, compiled, so the script writes their
+`THIRD_PARTY_NOTICES.md` from the crates' notices and the licence texts of
+the fonts the renderer embeds: at the npm library's root, and in the
+`jubarte` package folder of the Python one, which the wheel installs whole
+(maturin cannot list it in `project.license-files` beside the automatic
+`LICENSE` and `NOTICE`). The release archives ship the same file.
+
+- Commentable project files carry SPDX headers; release step 5 refuses a
+  tracked one without `SPDX-License-Identifier` in its first 4 KiB.
 - Do not overwrite an upstream copyright notice or license identifier. Add the
-  accurate provenance instead and update `REUSE.toml` when a file cannot carry
-  a comment header.
+  accurate provenance instead.
 - A source file that ports upstream code (a file whose first lines say
   "Port of" a Docxodus or Open-Xml-PowerTools class, or "Adapted from"
   another project) names the upstream copyright holders beside Jandira's
-  and carries a compound expression, `Apache-2.0 AND LicenseRef-<upstream>-MIT`.
-  `NOTICE` must quote that upstream's notice; `scripts/sync_license_files.py
-  --check` verifies it.
-- `LICENSES/` is attribution/provenance only, not an alternative licensing
-  choice for this repository.
+  and carries a compound expression, `Apache-2.0 AND MIT` for an MIT
+  upstream. The nearest `THIRD_PARTY_NOTICES.md` up its path lists it and
+  quotes the upstream's notice in full.
+- A file from another project that cannot carry a header (a font, a test
+  document) gets a row in the nearest notice: where it came from, its
+  copyright and its licence, with the licence text beside it when the
+  licence requires the text to travel with the file.
+- `scripts/sync_license_files.py --check` (CI and release step 5) fails on a
+  stale copy or package notice, on a file whose header names another licence
+  or holder that no notice lists, on a listed path that matches nothing, and
+  on a notice that leaves out a holder or the MIT License's text.
 
 ## Cursor Cloud specific instructions
 
