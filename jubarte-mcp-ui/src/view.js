@@ -12,7 +12,7 @@ import { parseJubarte } from "../reader/jubarte.mjs";
 import { mountPagination } from "../reader/pagination.js";
 import { discussions } from "../reader/comments.mjs";
 import { loadFonts } from "./fonts.js";
-import { baseName, linkAction, pickDocument, pickFiles } from "./pick.js";
+import { baseName, errorText, linkAction, pickDocument, pickFiles, readerNotices } from "./pick.js";
 import "../reader/style.css";
 import "../reader/embed.css";
 import "./desk/styles.css";
@@ -70,7 +70,8 @@ function showFiles(files, truncated) {
   $("empty").hidden = true;
   $("result").hidden = true;
   $("files").hidden = false;
-  $("files-meta").textContent = `${files.length} ${files.length === 1 ? "document" : "documents"}${truncated ? " · first results only" : ""}`;
+  $("files-meta").textContent =
+    `${files.length} ${files.length === 1 ? "document" : "documents"}${truncated ? " · first results only" : ""}`;
   const grid = $("files-grid");
   grid.replaceChildren();
   if (!files.length) {
@@ -165,8 +166,16 @@ async function compose(current) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const warnings = [...(preview.warnings ?? []), ...result.warnings.map((w) => (typeof w === "string" ? w : w.message)), ...composed.warnings].filter(Boolean);
-  $("notices").replaceChildren(...[...new Set(warnings)].map((w) => Object.assign(document.createElement("span"), { textContent: `${w} ` })));
+  const warnings = [
+    ...(preview.warnings ?? []),
+    ...readerNotices(result.warnings),
+    ...composed.warnings,
+  ].filter(Boolean);
+  $("notices").replaceChildren(
+    ...[...new Set(warnings)].map((w) =>
+      Object.assign(document.createElement("span"), { textContent: `${w} ` }),
+    ),
+  );
 }
 
 function render() {
@@ -203,7 +212,10 @@ async function open(path, { fromList = false } = {}) {
   clearPages();
   showEmpty("Opening the document…", baseName(path), { busy: true });
   if (!app.getHostCapabilities()?.serverTools) {
-    fail("This host does not let the card read documents", "The tool's text result above has the document.");
+    fail(
+      "This host does not let the card read documents",
+      "The tool's text result above has the document.",
+    );
     return;
   }
   let res;
@@ -215,8 +227,7 @@ async function open(path, { fromList = false } = {}) {
   }
   if (current !== generation) return;
   if (res?.isError || !res?.structuredContent?.markdown) {
-    const text = res?.content?.find?.((c) => c.type === "text")?.text;
-    fail("The document could not be read", text || "The server returned no preview.");
+    fail("The document could not be read", errorText(res) || "The server returned no preview.");
     return;
   }
   preview = res.structuredContent;
@@ -232,8 +243,7 @@ app.ontoolinput = (params) => {
 
 app.ontoolresult = (callResult) => {
   if (callResult?.isError) {
-    const text = callResult.content?.find?.((c) => c.type === "text")?.text;
-    fail("The tool call failed", text);
+    fail("The tool call failed", errorText(callResult));
     return;
   }
   const files = pickFiles(callResult);
@@ -252,7 +262,8 @@ app.onhostcontextchanged = (ctx) => applyHostContext(ctx);
 
 function applyHostContext(ctx) {
   if (!ctx) return;
-  if (ctx.theme === "dark" || ctx.theme === "light") document.documentElement.style.colorScheme = ctx.theme;
+  if (ctx.theme === "dark" || ctx.theme === "light")
+    document.documentElement.style.colorScheme = ctx.theme;
   const height = ctx.containerDimensions?.height;
   document.body.classList.toggle("fixed", typeof height === "number");
   fit();
@@ -263,7 +274,8 @@ function applyHostContext(ctx) {
 for (const button of document.querySelectorAll(".view")) {
   button.onclick = () => {
     mode = button.dataset.mode;
-    for (const b of document.querySelectorAll(".view")) b.setAttribute("aria-pressed", String(b === button));
+    for (const b of document.querySelectorAll(".view"))
+      b.setAttribute("aria-pressed", String(b === button));
     if (result) compose(++generation);
   };
 }
@@ -283,7 +295,8 @@ document.addEventListener("click", (event) => {
   if (!a) return;
   event.preventDefault();
   const action = linkAction(a.getAttribute("href"));
-  if (action.kind === "anchor") document.getElementById(action.id)?.scrollIntoView({ block: "center" });
+  if (action.kind === "anchor")
+    document.getElementById(action.id)?.scrollIntoView({ block: "center" });
   else if (action.kind === "external") app.openLink({ url: action.url }).catch(() => {});
 });
 

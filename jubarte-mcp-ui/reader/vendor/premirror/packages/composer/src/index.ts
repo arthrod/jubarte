@@ -131,8 +131,19 @@ function pmPosAtRunOffset(run: StyledRun, charFrom: number, charTo: number): { f
   return { from, to };
 }
 
-function isWordChar(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+// Jubarte: letters, digits and combining marks of every script that puts
+// spaces between words; the upstream /[A-Za-z0-9]/ let a line end inside
+// "São". Scripts that may break between any two characters (Han, kana,
+// Thai and its neighbours) stay breakable. A UTF-16 surrogate half counts as
+// part of a word, so a pair is never cut.
+const LETTER = /[\p{L}\p{N}\p{M}]/u;
+const BREAKS_ANYWHERE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+export function isWordChar(ch: string | undefined): boolean {
+  if (ch === undefined || ch === "") return false;
+  const unit = ch.charCodeAt(0);
+  if (unit >= 0xd800 && unit <= 0xdfff) return true;
+  return LETTER.test(ch) && !BREAKS_ANYWHERE.test(ch);
 }
 
 // -----------------------------------------------------------------------------

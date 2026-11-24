@@ -10,6 +10,37 @@ import {createFootnoteAllocator,flattenLayoutBlocks} from './footnote-layout.js'
  * to the fragment, line coordinates local to the cell. Repeated header copies
  * are explicitly marked and never included in the canonical PM mapping.
  */
+/** The grid's column widths in px: in proportion to the source grid's widths
+ * (Word's tblGrid, from the table line's `widths`), or even. A zero-width
+ * column keeps 2px so its cell stays drawable. */
+export function gridWidths(weights,columns,width){
+ const usable=Array.isArray(weights)&&weights.length===columns&&weights.every(n=>Number.isFinite(n)&&n>=0)&&weights.some(n=>n>0);
+ let out;
+ if(usable){const floor=Math.min(2,width/columns),zero=weights.filter(w=>w===0).length,total=weights.reduce((a,b)=>a+b,0),room=width-floor*zero;out=weights.map(w=>w===0?floor:room*w/total)}
+ else out=Array.from({length:columns},()=>width/columns);
+ out[columns-1]+=width-out.reduce((a,b)=>a+b,0);return out}
+/** Widths no narrower than each column's longest word (`mins`), as Word's
+ * autofit keeps them: a short column takes room from the others in
+ * proportion to their slack; when the words cannot all fit, the columns
+ * share the frame by their minimums. */
+export function fitMinimums(widths,mins,total){
+ const need=widths.reduce((n,w,i)=>n+Math.max(0,mins[i]-w),0);if(need<=0)return widths;
+ const minTotal=mins.reduce((a,b)=>a+b,0);if(minTotal>=total)return mins.map(m=>total*m/minTotal);
+ const slack=widths.map((w,i)=>Math.max(0,w-mins[i])),free=slack.reduce((a,b)=>a+b,0);
+ return widths.map((w,i)=>w<mins[i]?mins[i]:w-need*slack[i]/free)}
+/** A table's drawn width: the frame's, or the source grid's own width
+ * (inches) when that is wider, reaching into the right margin as Word draws
+ * it, short of the page edge by a 12px gutter. */
+export function tableWidth(widthsIn,frame,rightMargin){
+ const natural=Array.isArray(widthsIn)&&widthsIn.every(Number.isFinite)?widthsIn.reduce((a,b)=>a+b,0)*96:0;
+ return natural>frame?Math.min(natural,frame+Math.max(0,rightMargin-12)):frame}
+/** Padding and width for a table whose columns' longest words (`textMins`,
+ * px) must fit: as Word's autofit, the table first grows from the frame
+ * (`width`) toward `maxWidth`, then its cell padding tightens from 8px to
+ * 2px; past that, words break. An empty column costs nothing. */
+export function fitTable(textMins,width,maxWidth){
+ for(let pad=8;pad>=2;pad--){const need=textMins.reduce((n,t)=>n+(t>0?t+2*pad+3:0),0);if(need<=width)return {pad,width};if(need<=maxWidth)return {pad,width:need}}
+ return {pad:2,width:Math.max(width,maxWidth)}}
 export function composeWithTables(snapshot,runtime,input){
  const started=performance.now(),diagnostics=[],tableFragments=[],footnoteFragments=[],footnoteBands=[];
  const lh=input.typography.defaultLineHeightPx;
@@ -57,22 +88,23 @@ export function composeWithTables(snapshot,runtime,input){
    for(let r=ri;r<ri+rowspan;r++){occupied[r]||=[];for(let c=ci;c<ci+colspan;c++)occupied[r][c]=cell;}cursor=ci+colspan;columns=Math.max(columns,cursor);
   }}
   if(!columns)return {cells:[],rowHeights:[],rowTops:[0],columnWidths:[],total:0,headerHeight:0};
-  const weights=table.columnWidths||table.attrs?.columnWidths;const usable=Array.isArray(weights)&&weights.length===columns&&weights.every(n=>Number.isFinite(n)&&n>0);const min=Math.min(48,width/columns),extra=width-min*columns,totalWeight=usable?weights.reduce((a,b)=>a+b,0):columns;
-  const columnWidths=Array.from({length:columns},(_,i)=>min+extra*(usable?weights[i]:1)/totalWeight);columnWidths[columns-1]+=width-columnWidths.reduce((a,b)=>a+b,0);
+  const mins=Array.from({length:columns},()=>0);for(const c of cells){if(c.colspan!==1)continue;for(const block of c.blocks||[])for(const run of block.runs||[])for(const word of run.text.split(/\s+/))if(word)mins[c.columnIndex]=Math.max(mins[c.columnIndex],glyphWidth(word,run.font))}
+  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,input.margins.rightPx-12),fit=fitTable(mins,width,maxWidth),drawn=Math.max(tableWidth(weights,width,input.margins.rightPx),fit.width);
+  const columnWidths=fitMinimums(gridWidths(weights,columns,drawn),mins.map(t=>t>0?t+2*fit.pad+3:0),drawn);
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
   const rowHeights=rows.map(()=>lh);
-  for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(8,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);c.lines=composeLines(c.blocks,c.innerWidth);const align=c.sourceData?.align||c.align;if(align==='center'||align==='right')c.lines=c.lines.map(l=>{const used=l.runs.reduce((n,r)=>Math.max(n,r.x+r.width),0),shift=Math.max(0,c.innerWidth-used)*(align==='center'?0.5:1);return {...l,runs:l.runs.map(r=>({...r,x:r.x+shift}))};});if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
+  for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(fit.pad,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);c.lines=composeLines(c.blocks,c.innerWidth);const align=c.sourceData?.align||c.align;if(align==='center'||align==='right')c.lines=c.lines.map(l=>{const used=l.runs.reduce((n,r)=>Math.max(n,r.x+r.width),0),shift=Math.max(0,c.innerWidth-used)*(align==='center'?0.5:1);return {...l,runs:l.runs.map(r=>({...r,x:r.x+shift}))};});if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
   for(const c of cells.filter(c=>c.rowspan>1)){const current=rowHeights.slice(c.rowIndex,c.rowIndex+c.rowspan).reduce((a,b)=>a+b,0);if(current<c.naturalHeight)rowHeights[c.rowIndex+c.rowspan-1]+=Math.ceil((c.naturalHeight-current)/lh)*lh;}
   const rowTops=[0];for(const h of rowHeights)rowTops.push(rowTops.at(-1)+h);
   for(const c of cells){c.y=rowTops[c.rowIndex];c.height=rowTops[c.rowIndex+c.rowspan]-c.y;}
   let headerCount=0;while(headerCount<rows.length&&(rows[headerCount].header||(rows[headerCount].cells.length&&rows[headerCount].cells.every(c=>c.header))))headerCount++;
   // A header/body-crossing rowspan cannot be repeated independently.
   if(cells.some(c=>c.rowIndex<headerCount&&c.rowIndex+c.rowspan>headerCount)){warn('header-rowspan-crosses-body','Header repetition is disabled because a header cell spans into the table body.',table.id);headerCount=0;}
-  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,total:rowTops.at(-1),headerHeight,headerCount};
+  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,total:rowTops.at(-1),headerHeight,headerCount};
  }
  const grids=new Map();for(const b of snapshot.blocks)if(b.type==='table')grids.set(b.id,grid(b));
  notes=createFootnoteAllocator({snapshot,composeLines,width,height,lineHeight:lh,warn});newPage();
- function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:0,y,width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
+ function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:0,y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
   for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y+lh<=end+0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
    const cell={cellId:c.id,sourceCellIds:c.sourceCellIds,rowIndex:Math.max(c.rowIndex,fragment.rowStart),originalRowIndex:c.rowIndex,columnIndex:c.columnIndex,colspan:c.colspan,rowspan:fragment.rows.filter(r=>r.rowIndex>=c.rowIndex&&r.rowIndex<c.rowIndex+c.rowspan).length,originalRowspan:c.rowspan,pmRange:c.pmRange,x:c.x,y:top-start,width:c.width,height:bottom-top,lines,header:c.header,repeated,continuedBefore:top>c.y,continuedAfter:bottom<c.y+c.height,paddingX:c.paddingX};fragment.cells.push(cell);
    const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});

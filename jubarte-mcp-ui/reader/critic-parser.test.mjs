@@ -143,13 +143,17 @@ test('agent tags are gated: ordinary notes outside agent view stay comments', ()
   assert.equal(p.comments[0].author, 'Modified User');
 });
 
-test('current and historical revision ID spellings share semantics', () => {
-  for (const prefix of ['r12', '#r12', '#12']) {
-    const p = prepareCritic(`{++new++}{>>${prefix} @AC<<}`, { agentView: true, authors: { AC: 'Ann Counsel' } });
-    assert.equal(p.comments.length, 0);
-    assert.equal(p.changes[0].author, 'Ann Counsel');
-    assert.deepEqual(p.changes[0].revisionIds, ['12']);
-    assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+test('a revision note in a comment is read by the engine grammar: #r12 and #12 are comments', () => {
+  const p = prepareCritic('{++new++}{>>r12 @AC<<}', { agentView: true, authors: { AC: 'Ann Counsel' } });
+  assert.equal(p.comments.length, 0);
+  assert.equal(p.changes[0].author, 'Ann Counsel');
+  assert.deepEqual(p.changes[0].revisionIds, ['12']);
+  assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+  // view_notes.rs refuses an id starting with '#': the engine keeps these as comments.
+  for (const prefix of ['#r12', '#12']) {
+    const q = prepareCritic(`{++new++}{>>${prefix} @AC<<}`, { agentView: true });
+    assert.equal(q.comments.length, 1, prefix);
+    assert.deepEqual(q.changes[0].revisionIds, [], prefix);
   }
 });
 
@@ -342,8 +346,9 @@ test('an attribution brace is metadata only when every part of it is a tag (#16)
   const after = prepareCritic('{++x++}{r2 @A}{r1 @A re payment is due}', { agentView: true });
   assert.equal(after.markdown, 'x{r1 @A re payment is due}');
   assert.deepEqual(after.changes[0].revisionIds, ['2']);
-  // One brace per change: a second brace is the document's text.
-  assert.equal(prepareCritic('{++x++}{r1 @A}{r2 @B}', { agentView: true }).markdown, 'x{r2 @B}');
+  // A brace right after a tag is metadata too (critic.rs `follows`: the
+  // closer or an AttributionEnd), as `jubarte convert` reads it.
+  assert.equal(prepareCritic('{++x++}{r1 @A}{r2 @B}', { agentView: true }).markdown, 'x');
 });
 
 test('move tags and two-author tags attach to their change (#17)', () => {

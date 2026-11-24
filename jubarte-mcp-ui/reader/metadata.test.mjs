@@ -458,3 +458,28 @@ test('comment IDs inherit the containing story when no prefix is supplied', () =
   assert.equal(paragraph.comments[0].story, 'footnotes');
   assert.equal(paragraph.openComments[0].story, 'footnotes');
 });
+
+test('an engine header line with a second `: ` is read as text, not a reason to leave the view (b078, b102)', () => {
+  // jubarte 0.20.0 writes a page change as `page: A; was: B; fmt r227 @ASR`,
+  // which YAML refuses ("mapping values are not allowed here"). One such
+  // line must not turn the whole agent view into literal text.
+  const source = '---\nview: tracked\npage: A4 portrait, margins 1in; was: Letter portrait, margins 1in; fmt r227 @ASR  # from layout\nauthors:\n  ASR: Ann\n---\n<!-- p0 -->\n{++new++}{r1 @ASR}\n';
+  const result = parse(source);
+  assert.equal(result.agentView, true);
+  assert.equal(result.frontmatter.valid, true);
+  assert.equal(result.frontmatter.data.page, 'A4 portrait, margins 1in; was: Letter portrait, margins 1in; fmt r227 @ASR');
+  assert.equal(result.frontmatter.data.authors.ASR, 'Ann');
+  assert.equal(result.directives[0].id, 'p0');
+  assert.equal(result.body.indexOf('{++new++}'), source.indexOf('{++new++}'));
+  assert.ok(result.warnings.some((w) => w.code === 'yaml-repaired'));
+  assert.ok(!result.warnings.some((w) => w.code === 'yaml-error'));
+  // The repair reads values only: a broken `view:` still leaves the source literal.
+  const broken = parse('---\nview: tracked: yes\n---\n<!-- p0 -->');
+  assert.equal(broken.agentView, false);
+});
+
+test('an ID-line tag with no author (`@??`, the engine’s is_handle) is a known tag (019, 070)', () => {
+  const source = '---\nview: tracked\n---\n<!-- t0 3x3, cells p8-p16 by row, fmt r1 @R; r2 @?? -->\n';
+  const result = parse(source);
+  assert.ok(!codes(result).includes('unknown-revision-tag'), JSON.stringify(result.warnings));
+});

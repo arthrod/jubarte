@@ -11,6 +11,7 @@
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { attributionTag, isDate, readNote } from '../../attribution-tags.js';
 
 const FORMS = [
   { open: '{++', close: '++}', kind: 'insertion', bit: 1 },
@@ -21,7 +22,6 @@ const FORMS = [
 ];
 const ALL = 31;
 const CHANGES = 7;
-const ISO_DATE = /^\d{4}-\d\d-\d\d(?:T\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?$/;
 
 /** True when an odd number of immediately preceding backslashes escapes at. */
 export function isEscaped(source, at) {
@@ -96,35 +96,35 @@ function authorDetails(handle, options) {
   return { author: handle || options.planAuthor || 'Modified User', ...(handle ? { authorHandle: handle } : {}) };
 }
 
+/** A revision tag of tags.js in this reader's shape: ids, story, reference ids, author. */
+function revisionOf(tag, options) {
+  const story = tag.ids[0]?.story || options.story || 'body';
+  const ids = tag.ids.map((id) => id.wid);
+  const who = tag.kind === 'handle'
+    ? authorDetails(tag.handle === '??' ? null : tag.handle, options)
+    : { author: tag.author || options.planAuthor || 'Modified User' };
+  return {
+    type: 'revision', story, ids,
+    referenceIds: tag.ids.map((id) => `${id.story || story}:rev:${id.wid}`),
+    ...who, ...(tag.date ? { date: tag.date } : {}),
+  };
+}
+
 function identifier(raw, type, defaultStory) {
-  // Current r12/c5 form; #r12 and historical #12 are accepted aliases.
-  const pattern = type === 'revision'
-    ? /^(?:(?<story>[A-Za-z][\w-]*)\.)?(?:#r|r|#)(?<ids>\d+(?:\+\d+)*)$/
-    : /^(?:(?<story>[A-Za-z][\w-]*)\.)?#?c(?<ids>\d+)$/;
-  const match = raw.match(pattern);
+  // c5, story.c5, and the historical #c5 alias.
+  const match = raw.match(/^(?:(?<story>[A-Za-z][\w-]*)\.)?#?c(?<ids>\d+)$/);
   if (!match) return null;
   const story = match.groups.story || defaultStory || 'body';
   const ids = match.groups.ids.split('+');
-  return { story, ids, referenceIds: ids.map((id) => `${story}:${type === 'revision' ? 'rev' : 'comment'}:${id}`) };
-}
-
-/** One tag part without a trailing ` move` or ` move NAME` (one token). */
-function withoutMove(part) {
-  const text = part.trim();
-  const match = text.match(/^(.*\S) move(?: (\S+))?$/);
-  return match ? match[1] : text;
+  return { story, ids, referenceIds: ids.map((id) => `${story}:${type}:${id}`) };
 }
 
 /** Parse one agent-view note. This function does not itself enable view mode. */
 export function parseAgentTag(note, options = {}) {
   const text = String(note).trim();
-  const revision = text.match(/^(\S+)\s+@([^\s:]+)(?:\s+(\S+))?$/);
-  if (revision) {
-    const ref = identifier(revision[1], 'revision', options.story);
-    if (ref && (!revision[3] || ISO_DATE.test(revision[3]))) {
-      return { type: 'revision', ...ref, ...authorDetails(revision[2], options), ...(revision[3] ? { date: revision[3] } : {}) };
-    }
-  }
+  // A revision note in a comment's place (`{>>r12 @AC<<}`): the engine's grammar, one change.
+  const revision = readNote(text);
+  if (revision?.length === 1) return revisionOf(revision[0], options);
 
   // Split at the colon AFTER the optional timestamp, not an ISO time's colon.
   const comment = text.match(/^(\S+)\s+@([^\s:]+)((?:\s+(?:re\s+\S+|resolved|\d{4}-\d\d-\d\d(?:T\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?))*)\s*:\s*([\s\S]*)$/);
@@ -135,7 +135,7 @@ export function parseAgentTag(note, options = {}) {
   const reply = qualifier.match(/(?:^|\s)re\s+(\S+)/);
   const replyRef = reply ? identifier(reply[1], 'comment', ref.story) : null;
   if (reply && !replyRef) return null;
-  const date = qualifier.split(/\s+/).find((word) => ISO_DATE.test(word));
+  const date = qualifier.split(/\s+/).find((word) => isDate(word));
   return {
     type: 'comment', ...ref, ...authorDetails(comment[2], options),
     text: comment[4], resolved: /(?:^|\s)resolved(?:\s|$)/.test(qualifier),
@@ -165,6 +165,11 @@ export function prepareCritic(input, options = {}) {
   let length = 0;
   let lastCharacter = '';
   let sequence = 0;
+  // The change a following `{…}` brace may tag, and the output since it: a
+  // tag is metadata right after a change's closer or a previous tag, with
+  // only emphasis or code markers between (critic.rs, `follows`).
+  let tagAnchor = null;
+  let tagGap = '';
   const nextId = (kind) => `critic-${kind}-${++sequence}`;
   const findCloser = closerIndex(source);
   const storyAt = (offset) => options.storyAt?.(offset) || options.story || 'body';
@@ -181,6 +186,7 @@ export function prepareCritic(input, options = {}) {
     for (let offset = from; offset < until; offset++) sourceMap.push(offset);
     length += until - from;
     lastCharacter = source[until - 1];
+    if (tagAnchor) tagGap += source.slice(from, until);
   }
 
   function boundary(nextSourceOffset, delimiterSourceOffset) {
@@ -279,27 +285,49 @@ export function prepareCritic(input, options = {}) {
     return { ...(preceding || { id: comment.id, kind: 'point', start: length, end: length }), sourceEnd, comment };
   }
 
-  /**
-   * The engine's attribution brace at `at` (agent view only), read as
-   * crates/jubarte-markdown critic.rs `recognized_note` reads it: one flat
-   * brace; ` re ` separates the change's own tags from the change it sits
-   * in, and every segment must be a tag; `; ` joins a substitution's two
-   * authors; each part may end in ` move` or ` move NAME`. Returns the
-   * change's own tags, or null when the brace is document text.
-   */
+  /** The engine's attribution brace at `at` (agent view only), or null: tags.js. */
   function attributionTagAt(at, until) {
-    if (!options.agentView || source[at] !== '{' || isEscaped(source, at)) return null;
-    if (FORMS.some((form) => source.startsWith(form.open, at))) return null;
-    const close = source.indexOf('}', at + 1);
-    if (close < 0 || close >= until) return null;
-    const body = source.slice(at + 1, close);
-    if (/[{\n]/.test(body)) return null;
-    const story = storyAt(at);
-    const segments = body.split(' re ').map((segment) => segment.split('; ').map(withoutMove));
-    if (segments.length > 1 && segments.some((parts) => parts.length !== 1)) return null;
-    const tags = segments.map((parts) => parts.map((part) => parseAgentTag(part, { ...options, story })));
-    if (tags.some((parts) => parts.some((tag) => tag?.type !== 'revision'))) return null;
-    return { revisions: tags[0], end: close + 1 };
+    if (!options.agentView || FORMS.some((form) => source.startsWith(form.open, at))) return null;
+    const tag = attributionTag(source, at, until);
+    if (!tag) return null;
+    return { revisions: tag.tags.map((one) => revisionOf(one, { ...options, story: storyAt(at) })), end: tag.end };
+  }
+
+  /** Attaches a brace's tags to the change before it; the brace leaves the text. */
+  function tagChange(anchor, tag, at) {
+    for (const revision of tag.revisions) attachRevision(anchor, revision, at, tag.end);
+    anchor.sourceEnd = tag.end;
+    tagAnchor = anchor;
+    tagGap = '';
+  }
+
+  /**
+   * `¶{tag}`: an inserted paragraph mark (critic.rs ParagraphInsertion). The
+   * break after it is the inserted text: the first blank line, or nothing at
+   * the story's end. Rejecting it joins the two paragraphs.
+   */
+  function paragraphMark(at, tag) {
+    const pilcrow = at;
+    const after = tag.end;
+    const blank = source.slice(after).match(/^\n[ \t]*\n/);
+    const breakEnd = after + (blank ? blank[0].length : 0);
+    const common = { sourceStart: pilcrow, sourceEnd: breakEnd, story: storyAt(pilcrow) };
+    const start = length;
+    const group = { id: nextId('group'), kind: 'insertion', start, ...common, changes: [], tags: [], commentIds: [], revisionIds: [], referenceIds: [] };
+    const change = { id: nextId('insertion'), kind: 'insertion', paragraphMark: true, start, end: start, groupId: group.id, ...common, contentSourceStart: after, contentSourceEnd: breakEnd, ...defaultAuthor(), revisionIds: [], referenceIds: [] };
+    const saved = tagAnchor;
+    tagAnchor = null;
+    append(after, breakEnd);
+    tagAnchor = saved;
+    change.end = length;
+    group.end = length;
+    group.changes.push(change);
+    changes.push(change);
+    groups.push(group);
+    anchors.push({ id: group.id, kind: 'insertion', start, end: length, ...common });
+    const anchor = { id: group.id, kind: 'insertion', start, end: length, sourceEnd: breakEnd, group };
+    for (const revision of tag.revisions) attachRevision(anchor, revision, pilcrow, after);
+    return { anchor, end: breakEnd };
   }
 
   function render(from, until, allowed) {
@@ -320,14 +348,36 @@ export function prepareCritic(input, options = {}) {
       const closer = form ? findCloser(form.close, bodyStart, until) : -1;
       const split = form?.kind === 'substitution' && closer >= 0 ? findCloser('~>', bodyStart, closer) : -1;
       if (!form || closer < 0 || (form.kind === 'substitution' && split < 0)) {
+        if (options.agentView && source.startsWith('¶{', at) && !isEscaped(source, at)) {
+          const tag = attributionTagAt(at + 1, until);
+          if (tag) {
+            const mark = paragraphMark(at, tag);
+            previous = mark.anchor;
+            tagAnchor = mark.anchor;
+            tagGap = '';
+            at = mark.end;
+            continue;
+          }
+        }
+        if (source[at] === '{' && tagAnchor && /^[*_`\u2e0e]*$/.test(tagGap)) {
+          const tag = attributionTagAt(at, until);
+          if (tag) {
+            tagChange(tagAnchor, tag, at);
+            boundary(tag.end, at);
+            at = tag.end;
+            continue;
+          }
+        }
         append(at, at + 1);
         previous = null;
+        if (!/[*_`]/.test(source[at])) tagAnchor = null;
         at++;
         continue;
       }
       const after = closer + 3;
       if (form.kind === 'comment') {
         previous = addComment(source.slice(bodyStart, closer), at, after, previous?.sourceEnd === at ? previous : null);
+        tagAnchor = null;
         at = after;
         continue;
       }
@@ -374,15 +424,10 @@ export function prepareCritic(input, options = {}) {
       anchors.push({ id: previous.id, kind: previous.kind, start, end: length, ...common });
       // The engine's attribution tags (`{++x++}{r12 @AC}`, engine 0.20.0+)
       // are the change's metadata: attach them and leave them out of the text.
-      let end = after;
-      const tag = previous.group ? attributionTagAt(end, until) : null;
-      if (tag) {
-        for (const revision of tag.revisions) attachRevision(previous, revision, end, tag.end);
-        previous.sourceEnd = tag.end;
-        end = tag.end;
-      }
-      boundary(end, closer);
-      at = end;
+      tagAnchor = previous.group ? previous : null;
+      tagGap = '';
+      boundary(after, closer);
+      at = after;
     }
   }
 
