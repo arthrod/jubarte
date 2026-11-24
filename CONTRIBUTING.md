@@ -73,7 +73,13 @@ cargo run --locked --bin jubarte -- --help
 invocation above when recording validation. Run Cargo commands sequentially;
 do not override `CARGO_TARGET_DIR`. Tests and the production build need no
 Microsoft Word installation. Word oracle comparisons are separate integration
-checks. Rustfmt defines formatting; Clippy warnings must be fixed without
+checks. The criterion benches in `benches/` (`cargo bench`) build against
+CodSpeed's criterion compatibility layer; the CodSpeed workflow
+([.github/workflows/codspeed.yml](.github/workflows/codspeed.yml)) measures
+them on every pull request and reports changes against `main`. To run them
+the way CI does, install `cargo-codspeed` and the `codspeed` CLI, then
+`cargo codspeed build -m simulation` and
+`codspeed run -m simulation -- cargo codspeed run`. Rustfmt defines formatting; Clippy warnings must be fixed without
 suppressing them. See [.github/workflows/ci.yml](.github/workflows/ci.yml) for
 cross-platform, bindings, MSRV and coverage checks.
 

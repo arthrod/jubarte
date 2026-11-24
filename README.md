@@ -18,6 +18,7 @@ or PNG — from Rust, Python, Node/browser, or the CLI.
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15267/badge)](https://www.bestpractices.dev/projects/15267)
 [![CI](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jandira-tech/jubarte/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jandira-tech/jubarte/branch/main/graph/badge.svg)](https://codecov.io/gh/jandira-tech/jubarte)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/jandira-tech/jubarte?utm_source=badge)
 [![crates.io](https://img.shields.io/crates/v/jubarte.svg)](https://crates.io/crates/jubarte)
 [![docs.rs](https://docs.rs/jubarte/badge.svg)](https://docs.rs/jubarte)
 [![PyPI](https://img.shields.io/pypi/v/jubarte-docx.svg)](https://pypi.org/project/jubarte-docx/)
