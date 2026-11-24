@@ -51,6 +51,11 @@ function showEmpty(title, text = "", { busy = false, failed = false } = {}) {
   $("empty-back").hidden = !(failed && listing);
   $("result").hidden = true;
   $("files").hidden = true;
+  // The drawer sits outside #result: an empty state retires the previous document's
+  // discussions with its pages (#88).
+  $("embed-discussions").hidden = true;
+  $("threads").replaceChildren();
+  $("show-discussions").setAttribute("aria-expanded", "false");
 }
 
 function clearPages() {

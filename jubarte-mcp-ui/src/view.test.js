@@ -212,6 +212,24 @@ describe("accessibility state follows what is shown (#43)", () => {
     expect($("embed-discussions").hidden).toBe(true);
     expect($("show-discussions").getAttribute("aria-expanded")).toBe("false");
   });
+  it("a new call, or one with nothing to show, retires the open discussions (#88)", async () => {
+    host.app.ontoolinput({ arguments: { path: "d.docx" } });
+    host.app.ontoolresult({ structuredContent: { path: "d.docx" } });
+    host.pending
+      .at(-1)
+      .resolve({ structuredContent: { ...tracked.structuredContent, path: "d.docx" } });
+    await settle();
+    $("show-discussions").click();
+    expect($("embed-discussions").hidden).toBe(false);
+    host.app.ontoolinput({ arguments: { path: "e.docx" } });
+    expect($("embed-discussions").hidden).toBe(true);
+    expect($("threads").textContent).toBe("");
+    expect($("show-discussions").getAttribute("aria-expanded")).toBe("false");
+    host.app.ontoolinput({ arguments: {} });
+    host.app.ontoolresult({ structuredContent: {} });
+    expect($("embed-discussions").hidden).toBe(true);
+    expect($("threads").textContent).toBe("");
+  });
 });
 
 describe("the discussion panel (#44)", () => {
