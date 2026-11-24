@@ -40,6 +40,8 @@ function showEmpty(title, text = "", { busy = false, failed = false } = {}) {
   $("empty").classList.toggle("failed", failed);
   $("empty-title").textContent = title;
   $("empty-text").textContent = text;
+  // A failed document opened from the list keeps the way back to it (#36).
+  $("empty-back").hidden = !(failed && listing);
   $("result").hidden = true;
   $("files").hidden = true;
 }
@@ -287,7 +289,7 @@ $("close-discussions").onclick = () => {
   $("show-discussions").setAttribute("aria-expanded", "false");
   $("show-discussions").focus();
 };
-$("back").onclick = () => {
+$("back").onclick = $("empty-back").onclick = () => {
   if (listing) showFiles(listing.files, listing.truncated);
 };
 

@@ -96,7 +96,7 @@ export function projectDialect(tree, critic, document){
   if(n.type==='listItem')result.checked=n.checked;
   if(n.type==='footnoteDefinition'){result.identifier=n.identifier;result.story='footnotes'}
   if(n.type==='table'){result.align=n.align;result.headerRowRepeats=true;result.wordStyle='TableGrid';result.children.forEach((row,ri)=>row.children.forEach((cell,ci)=>{cell.type=ri===0?'th':'td';cell.align=n.align?.[ci]||null}));}
-  if(n.type==='heading'){const content=plain(result).toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu,'').trim().replace(/\s+/g,'-');const seen=headingCounts.get(content)||0;headingCounts.set(content,seen+1);result.anchor=content+(seen?'-'+seen:'');result.wordStyle='Heading'+n.depth}
+  if(n.type==='heading'){const content=plain(result).toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu,'').trim().replace(/\s+/g,'-');const seen=headingCounts.get(content)||0;headingCounts.set(content,seen+1);result.anchor=content+(seen?'-'+seen:'');result.wordStyle='Heading'+n.depth}
   if(n.type==='paragraph')result.wordStyle='Normal';if(n.type==='blockquote')result.wordStyle='Quote';if(n.type==='listItem')result.wordStyle='ListParagraph';if(n.type==='code')result.wordStyle='SourceCode';
   if(!result.children.length)result.children=[{text:''}];
   if(['p','h1','h2','h3','h4','h5','h6','code_block','li','td','th','table','tr','footnote'].includes(result.type))blocks.push(result);

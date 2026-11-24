@@ -89,3 +89,30 @@ it("the preview that is still current is shown", async () => {
   expect($("result").hidden).toBe(false);
   expect($("outname").textContent).toBe("old.docx");
 });
+
+it("a failed preview opened from the list keeps a way back to it (#36)", async () => {
+  host.app.ontoolinput({ arguments: {} });
+  host.app.ontoolresult({
+    structuredContent: {
+      files: [{ path: "broken.docx" }, { path: "fine.docx" }],
+      truncated: false,
+    },
+  });
+  $("files-grid").querySelector("button").click();
+  host.pending[0].resolve({ isError: true, content: [{ type: "text", text: "invalid zip" }] });
+  await settle();
+  expect($("empty-title").textContent).toBe("The document could not be read");
+  const back = $("empty-back");
+  expect(back?.hidden).toBe(false);
+  back.click();
+  expect($("files").hidden).toBe(false);
+  expect($("files-grid").textContent).toContain("fine.docx");
+});
+
+it("a failure outside the list offers no way back", async () => {
+  host.app.ontoolinput({ arguments: { path: "x.docx" } });
+  host.app.ontoolresult({ structuredContent: { path: "x.docx" } });
+  host.pending[0].resolve({ isError: true, content: [{ type: "text", text: "nope" }] });
+  await settle();
+  expect($("empty-back")?.hidden ?? true).toBe(true);
+});
