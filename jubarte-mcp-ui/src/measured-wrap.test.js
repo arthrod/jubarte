@@ -72,3 +72,31 @@ it("first-line, hanging and negative indents wrap each line at its own width (#8
       expect({ tag, ...line }).toEqual({ tag, ...line, left: line.start, fits: true, full: true });
   done();
 });
+
+it("right and centred lines align their letters, the trailing space hangs (#85)", () => {
+  const words = Array.from({ length: 40 }, () => "WWWW").join(" ");
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 right -->\nRIGHT ${words}\n\n<!-- p1 center -->\nMIDDLE ${words}\n`,
+  );
+  const edges = (tag) =>
+    composed.layout.pages[0].frames[0].fragments
+      .filter((f) => (f.lines || []).some((l) => l.runs.some((r) => r.text?.includes(tag))))
+      .flatMap((f) => f.lines)
+      .map((l) => {
+        const text = l.runs.filter((r) => r.text?.trim());
+        const last = text.at(-1);
+        const trail = last.text.length - last.text.trimEnd().length;
+        return [Math.min(...text.map((r) => r.x)), last.x + last.width - trail * 4];
+      });
+  for (const [, right] of edges("RIGHT")) expect(right).toBeCloseTo(624, 1);
+  for (const [left, right] of edges("MIDDLE")) expect((left + right) / 2).toBeCloseTo(312, 1);
+  done();
+});
+
+it("the page draws text unkerned, as it is measured and as Word draws it (#86)", () => {
+  const css = globalThis.process
+    .getBuiltinModule("node:fs")
+    .readFileSync("reader/style.css", "utf8");
+  // Each run sets the font shorthand inline, which resets font-kerning: the rule must win over it.
+  expect(css).toMatch(/\.premirror-page-viewport \*\{[^}]*font-kerning:none!important/);
+});

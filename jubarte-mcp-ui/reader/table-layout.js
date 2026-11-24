@@ -74,7 +74,9 @@ export function composeWithTables(snapshot,runtime,input){
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
  // The room left on a line, its trailing spaces hanging as in Word.
- function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
+ // Word hangs a line's trailing spaces outside the alignment: they are measured, not
+ // estimated from their share of the run's characters (#85).
+ function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const trail=rtl?'':r.text.match(/[ \t]+$/)?.[0]||'';return r.x+(r.width||0)-(trail?glyphWidth(trail,r.font):0)}));return right?Math.max(0,inner-right):0;}
  // Right-to-left text without the engine's w:bidi (#51, #53, #55; engine gap #54): a
  // paragraph reads in the direction of its first strong letter (Unicode P2). Runs are cut
  // where the class of their text changes (R, L, or a number, EN or AN), and the bidi algorithm
