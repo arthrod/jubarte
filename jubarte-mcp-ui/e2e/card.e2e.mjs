@@ -115,14 +115,17 @@ describe("the document card in a sandboxed host", () => {
     const accepted = readWords(out, "accept");
     assert.notDeepEqual(rejected, accepted);
     await view.locator('.view[data-mode="original"]').click();
-    await view.waitForFunction(() => document.querySelector('.view[data-mode="original"]').getAttribute("aria-pressed") === "true");
-    await view.locator(".premirror-page-surface").first().waitFor();
+    // The engine's own reject view (#40), with no revision left to mark.
+    await view.locator('#pages-mount[data-view="original"] .premirror-page-surface').first().waitFor();
     await page.waitForTimeout(300);
+    assert.equal(await view.locator("#pages-mount .criticInsertion, #pages-mount .criticDeletion").count(), 0);
     const original = words(await pagesText(view));
     assert.ok(subsequence(rejected, original), `Original shows the rejected text\n${rejected.join(" ")}\n---\n${original.join(" ")}`);
     assert.ok(!subsequence(accepted, original), "Original does not show the accepted text");
     await view.locator('.view[data-mode="accepted"]').click();
+    await view.locator('#pages-mount[data-view="accepted"] .premirror-page-surface').first().waitFor();
     await page.waitForTimeout(300);
+    assert.equal(await view.locator("#pages-mount .criticInsertion, #pages-mount .criticDeletion").count(), 0);
     const acc = words(await pagesText(view));
     assert.ok(subsequence(accepted, acc), `Accepted shows the accepted text\n${accepted.join(" ")}\n---\n${acc.join(" ")}`);
     assert.ok(!subsequence(rejected, acc), "Accepted does not show the rejected text");

@@ -5,9 +5,9 @@
 
 // The card's state machine against a host whose docx_preview answers late.
 import { readFileSync } from "node:fs";
-import { beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const host = vi.hoisted(() => ({ app: null, pending: [] }));
+const host = vi.hoisted(() => ({ app: null, pending: [], mounts: [] }));
 vi.mock("@modelcontextprotocol/ext-apps", () => ({
   App: class {
     constructor() {
@@ -30,10 +30,18 @@ vi.mock("@modelcontextprotocol/ext-apps", () => ({
 }));
 vi.mock("./fonts.js", () => ({ loadFonts: async () => [] }));
 vi.mock("../reader/pagination.js", () => ({
-  mountPagination: () => ({
-    destroy() {},
-    composed: { layout: { pages: [{}] }, geometry: { label: "Letter portrait" }, warnings: [] },
-  }),
+  mountPagination: (container, result, options) => (
+    host.mounts.push({
+      result,
+      mode: options?.mode,
+      dataMode: container.dataset.mode,
+      dataView: container.dataset.view,
+    }),
+    {
+      destroy() {},
+      composed: { layout: { pages: [{}] }, geometry: { label: "Letter portrait" }, warnings: [] },
+    }
+  ),
 }));
 
 const $ = (id) => document.getElementById(id);
@@ -115,4 +123,61 @@ it("a failure outside the list offers no way back", async () => {
   host.pending[0].resolve({ isError: true, content: [{ type: "text", text: "nope" }] });
   await settle();
   expect($("empty-back")?.hidden ?? true).toBe(true);
+});
+
+const text = (mount) => mount.result.doc.textContent;
+const pick = (view) => document.querySelector(`.view[data-mode="${view}"]`);
+const tracked = {
+  structuredContent: {
+    path: "doc.docx",
+    name: "doc.docx",
+    view: "tracked",
+    markdown: "---\nview: tracked\n---\n\nKeep {--gone--}{++new++} end\n",
+  },
+};
+
+describe("Accepted and Original are the engine's views (#40)", () => {
+  it("asks the server for the engine's accepted view and draws it as is", async () => {
+    host.app.ontoolinput({ arguments: { path: "doc.docx" } });
+    host.app.ontoolresult({ structuredContent: { path: "doc.docx" } });
+    host.pending[0].resolve(tracked);
+    await settle();
+    pick("accepted").click();
+    expect(host.pending.at(-1).request.arguments).toEqual({ path: "doc.docx", view: "accepted" });
+    host.pending.at(-1).resolve({
+      structuredContent: {
+        ...tracked.structuredContent,
+        view: "accepted",
+        markdown: "---\nview: tracked\n---\n\nKeep new end ENGINE\n",
+      },
+    });
+    await settle();
+    const last = host.mounts.at(-1);
+    expect(text(last)).toContain("ENGINE");
+    expect(last.mode).toBe("tracked");
+    expect(last.dataView).toBe("accepted");
+  });
+  it("comes back to a view it has without asking again", async () => {
+    const asked = host.pending.length;
+    pick("tracked").click();
+    await settle();
+    pick("accepted").click();
+    await settle();
+    expect(host.pending.length).toBe(asked);
+    expect(text(host.mounts.at(-1))).toContain("ENGINE");
+  });
+  it("falls back to the card's own projection, styled for its mode, when the view cannot be read", async () => {
+    pick("original").click();
+    expect(host.pending.at(-1).request.arguments).toEqual({ path: "doc.docx", view: "original" });
+    host.pending.at(-1).resolve({ isError: true, content: [{ type: "text", text: "old server" }] });
+    await settle();
+    const last = host.mounts.at(-1);
+    expect(last.mode).toBe("original");
+    expect(last.dataMode).toBe("original");
+    expect(last.dataView).toBe("original");
+    expect(text(last)).toContain("gone");
+    expect($("notices").textContent).toMatch(/rebuilt/i);
+    pick("tracked").click();
+    await settle();
+  });
 });

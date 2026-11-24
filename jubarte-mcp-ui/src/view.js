@@ -28,6 +28,13 @@ let preview = null;
 let mode = "tracked";
 let input = undefined;
 let listing = null;
+// The open document's previews by view: the engine's tracked, accepted and
+// original reads, each asked for the first time it is shown (#40).
+let docPath = null;
+let previews = new Map();
+// How the reader draws the markdown on screen: "tracked" for an engine view;
+// the button's mode when the card rebuilds it from the tracked view.
+let drawMode = "tracked";
 const fontsReady = loadFonts().catch(() => []);
 
 const app = new App({ name: "jubarte", version: VERSION || "0" }, {}, { autoResize: true });
@@ -50,6 +57,8 @@ function clearPages() {
   view?.destroy();
   view = null;
   result = null;
+  previews = new Map();
+  docPath = null;
   $("pages-mount").replaceChildren();
   $("notices").replaceChildren();
   $("embed-discussions").hidden = true;
@@ -158,7 +167,11 @@ async function compose(current) {
   }
   if (current !== generation) return;
   view?.destroy();
-  view = mountPagination($("pages-mount"), result, { mode, onSelect: showThreads });
+  // The reader's stylesheet hides and unmarks changes by this (#40).
+  $("pages-mount").dataset.mode = drawMode;
+  // The view on screen, engine's or rebuilt: what a test waits for.
+  $("pages-mount").dataset.view = drawMode === "tracked" ? (preview.view ?? "tracked") : drawMode;
+  view = mountPagination($("pages-mount"), result, { mode: drawMode, onSelect: showThreads });
   fit();
   const composed = view.composed;
   const pages = composed.layout.pages.length;
@@ -170,6 +183,9 @@ async function compose(current) {
     .filter(Boolean)
     .join(" · ");
   const warnings = [
+    drawMode === "tracked"
+      ? ""
+      : "This view is rebuilt in the card: the engine's own could not be read, so a formatting change or a renumbered list may differ.",
     ...(preview.warnings ?? []),
     ...readerNotices(result.warnings),
     ...composed.warnings,
@@ -233,7 +249,39 @@ async function open(path, { fromList = false } = {}) {
     fail("The document could not be read", errorText(res) || "The server returned no preview.");
     return;
   }
-  preview = res.structuredContent;
+  docPath = path;
+  previews = new Map([["tracked", res.structuredContent]]);
+  show(mode);
+}
+
+/** Draws the open document in `view`, asking the server the first time. */
+async function show(view) {
+  const have = previews.get(view);
+  if (have) {
+    preview = have;
+    drawMode = "tracked";
+    render();
+    return;
+  }
+  const current = ++generation;
+  $("pages-fit").setAttribute("aria-busy", "true");
+  let res = null;
+  try {
+    res = await app.callServerTool({ name: "docx_preview", arguments: { path: docPath, view } });
+  } catch {
+    res = null;
+  }
+  if (current !== generation) return;
+  $("pages-fit").removeAttribute("aria-busy");
+  const got = res?.structuredContent;
+  if (!res?.isError && got?.markdown && got.view === view) {
+    previews.set(view, got);
+    preview = got;
+    drawMode = "tracked";
+  } else {
+    preview = previews.get("tracked");
+    drawMode = view;
+  }
   render();
 }
 
@@ -280,7 +328,7 @@ for (const button of document.querySelectorAll(".view")) {
     mode = button.dataset.mode;
     for (const b of document.querySelectorAll(".view"))
       b.setAttribute("aria-pressed", String(b === button));
-    if (result) compose(++generation);
+    if (previews.size) show(mode);
   };
 }
 $("show-discussions").onclick = () => showThreads();
