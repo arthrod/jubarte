@@ -83,19 +83,28 @@ export function composeWithTables(snapshot,runtime,input){
  // give the levels (a number at 2); L2 orders the runs. The browser orders the text inside
  // each run.
  const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u,DIGIT=/\p{Nd}/u;
+ const SEPARATOR=/^[,.\/:\u00a0\u060c\u202f\u2044+\-\u2212]$/u,TERMINATOR=/^[#%\u00b0\u00b1\u2030-\u2034\p{Sc}]+$/u;
  function charClass(ch){if(STRONG.test(ch))return RTL.test(ch)?'R':'L';return DIGIT.test(ch)?'EN':null;}
- function runClass(text){for(const ch of text||''){const c=charClass(ch);if(c)return c;}return null;}
+ // W4 and W5 on characters: a separator between two digits, and terminators beside one,
+ // are part of the number.
+ function numberClasses(chars){const classes=chars.map(charClass);
+  chars.forEach((ch,i)=>{if(!classes[i]&&SEPARATOR.test(ch)&&classes[i-1]==='EN'&&classes[i+1]==='EN')classes[i]='EN';});
+  for(const step of [1,-1])for(let k=0;k<chars.length;k++){const i=step===1?k:chars.length-1-k;if(!classes[i]&&TERMINATOR.test(chars[i])&&classes[i-step]==='EN')classes[i]='EN';}
+  return classes;}
  function isRtl(block){for(const r of block.runs||[]){for(const ch of r.text||'')if(STRONG.test(ch))return RTL.test(ch);}return false;}
  function hasRtl(block){return (block.runs||[]).some(r=>RTL.test(r.text||''));}
- // A run holding text of more than one class, cut where the class changes; neutral text
+ // A run cut where the class of its characters changes (classes computed over the whole
+ // line, so a sign or separator next to a number in another run joins it); neutral text
  // between two pieces of one class stays with them.
- function splitMixed(run){const text=run.text||'',chars=[...text],classes=chars.map(charClass);if(new Set(classes.filter(Boolean)).size<2)return [run];
+ function splitByClass(run,classes){const text=run.text||'',chars=[...text];if(new Set(classes.filter(Boolean)).size<2)return [{run,cls:classes.find(Boolean)||null}];
   const at=[];let offset=0;for(const ch of chars){at.push(offset);offset+=ch.length;}at.push(offset);
   const pieces=[];let start=0,cls=null,lastEnd=0;
-  classes.forEach((c,i)=>{if(!c)return;if(cls==null){cls=c;lastEnd=i+1;return;}if(c!==cls){pieces.push([start,lastEnd]);if(lastEnd<i)pieces.push([lastEnd,i]);start=i;cls=c;}lastEnd=i+1;});pieces.push([start,chars.length]);
-  let x=run.x;return pieces.map(([a,b])=>{const piece=text.slice(at[a],at[b]),width=glyphWidth(piece,run.font);const out={...run,text:piece,x,width,pmRange:{from:run.pmRange.from+at[a],to:run.pmRange.from+at[b]}};x+=width;return out;});}
- function reorder(line,base){const runs=line.runs.flatMap(splitMixed);if(!runs.length)return line;const sos=base===1?'R':'L';
-  const classes=runs.map(r=>runClass(r.text));
+  classes.forEach((c,i)=>{if(!c)return;if(cls==null){cls=c;lastEnd=i+1;return;}if(c!==cls){pieces.push([start,lastEnd,cls]);if(lastEnd<i)pieces.push([lastEnd,i,null]);start=i;cls=c;}lastEnd=i+1;});pieces.push([start,chars.length,cls]);
+  let x=run.x;return pieces.map(([a,b,c])=>{const piece=text.slice(at[a],at[b]),width=glyphWidth(piece,run.font);const out={...run,text:piece,x,width,pmRange:{from:run.pmRange.from+at[a],to:run.pmRange.from+at[b]}};x+=width;return {run:out,cls:c};});}
+ function reorder(line,base){if(!line.runs.length)return line;const sos=base===1?'R':'L';
+  const lineClasses=numberClasses(line.runs.flatMap(r=>[...(r.text||'')]));let k=0;
+  const cut=line.runs.flatMap(r=>{const n=[...(r.text||'')].length,own=lineClasses.slice(k,k+n);k+=n;return splitByClass(r,own);});
+  const runs=cut.map(p=>p.run),classes=cut.map(p=>p.cls);
   // W7: a number whose previous strong run is L (or the paragraph, when LTR) is L.
   let strong=sos;const typed=classes.map(c=>{if(c==='R'||c==='L'){strong=c;return c;}if(c==='EN')return strong==='L'?'L':'EN';return null;});
   const asStrong=c=>c==='EN'?'R':c;

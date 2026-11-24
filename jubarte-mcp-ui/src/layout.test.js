@@ -340,3 +340,30 @@ describe("numbers keep their order inside right-to-left text (#55)", () => {
     done();
   });
 });
+
+describe("separators and signs belong to their number in right-to-left text (#56)", () => {
+  const visual = (composed, chars) =>
+    bodyRuns(composed, 0)
+      .filter((r) => [...chars].some((c) => r.text.includes(c)))
+      .sort((a, b) => a.x - b.x)
+      .map((r) => r.text.trim())
+      .join("");
+  it("a formatted decimal point or thousands comma keeps the number whole", () => {
+    for (const [source, number] of [
+      ["12<b>.</b>34", "12.34"],
+      ["12<b>,</b>345", "12,345"],
+      ["<b>$</b>12", "$12"],
+      ["12<b>%</b>", "12%"],
+      ["12%", "12%"],
+      ["$12", "$12"],
+      ["12.5", "12.5"],
+      ["<b>12</b>% ", "12%"],
+      [" $<b>12</b>", "$12"],
+      ["<b>12</b>.5", "12.5"],
+    ]) {
+      const { composed, done } = compose(`${header()}<!-- p0 -->\nשלום ${source} סוף\n`);
+      expect(visual(composed, "0123456789.,$%"), source).toBe(number);
+      done();
+    }
+  });
+});
