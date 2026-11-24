@@ -157,6 +157,8 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
   const d=table.directives?.find(d=>d.type==='table');if(!d)continue;
   // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).
   table.headerRowRepeats=(d.properties?.headerRowRepeats??d.parsed?.headerRowRepeats??d.headerRowRepeats)===true;
+  // GFM makes every table's first row a header; Word's is one only when it repeats (#78).
+  if(!table.headerRowRepeats)for(const cell of table.children?.[0]?.children||[])if(cell.type==='th')cell.type='td';
   // Where Word puts the table and whether it autofits: \`t0 center\`/\`t0 right\` (w:jc), \`indent X\`
   // (w:tblInd), \`layout fixed\` (w:tblLayout) (#67, #68, #69).
   if(d.alignment==='center'||d.alignment==='right')table.tableAlignment=d.alignment;

@@ -760,3 +760,23 @@ describe("keep constraints hold wherever the page ends (#76, #77)", () => {
     }
   });
 });
+
+describe("a table's first row is a header only when Word says so (#78)", () => {
+  const table = (clause) =>
+    `---\nview: tracked\n---\n\n<!-- t0 2x1, cells p0-p1 by row${clause} -->\n|FIRST|\n|-|\n|SECOND|\n`;
+  const runOf = (composed, text) =>
+    composed.layout.pages[0].frames[0].fragments
+      .flatMap((f) => (f.lines || []).flatMap((l) => l.runs))
+      .find((r) => r.text === text);
+  it("a plain first row keeps normal weight and is no header", () => {
+    const { composed, done } = compose(table(""));
+    expect(runOf(composed, "FIRST").font).toContain(" 400 ");
+    expect(composed.tableFragments[0].rows[0].header).toBe(false);
+    done();
+  });
+  it("a repeating header row is still a header", () => {
+    const { composed, done } = compose(table(", header row repeats"));
+    expect(composed.tableFragments[0].rows[0].header).toBe(true);
+    done();
+  });
+});
