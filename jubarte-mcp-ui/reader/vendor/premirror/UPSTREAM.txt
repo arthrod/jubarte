@@ -9,6 +9,7 @@ Local integration changes:
 - Composer applies kinsoku when it picks a break: closing punctuation (。」、 …) never starts a line, an opening bracket (「（ …) never ends one (NO_LINE_START / NO_LINE_END).
 - Composer breaks each line of a block at the width of its own slot (the band at that line's y), not the first line's, so first-line and hanging obstacles narrow only their lines.
 - Composer treats a soft hyphen (U+00AD) as a break opportunity, taken only when the hyphen drawn there still fits the line.
+- Composer's word-boundary repair treats no-break characters (U+00A0, U+202F, U+2007, U+2011, U+2060, U+FEFF) as binding, so no line ends at one across a run boundary, and never empties a line.
 - Other runtime source retained from the pinned arthrod commit.
 
 Security maintenance (2026-10-14): composer and adapter pretext dependencies are pinned to patched 0.0.5; upstream source revision is unchanged. See https://github.com/chenglou/pretext/security/advisories/GHSA-5478-66c3-rhxr.

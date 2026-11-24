@@ -156,3 +156,25 @@ it("a soft hyphen whose hyphen would overflow yields to an earlier one, not a cu
     `${"c".repeat(38)}${SHY}${"d".repeat(10)}`,
   ]);
 });
+
+it("a no-break space holds its words together across a formatting boundary (#90)", () => {
+  const text = (md) => {
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 -->\n${md}\n`,
+    );
+    const lines = composed.layout.pages[0].frames[0].fragments
+      .flatMap((f) => f.lines || [])
+      .map((l) => l.runs.map((r) => r.text || "").join(""))
+      .filter((t) => t.trim());
+    done();
+    return lines;
+  };
+  const a = "a".repeat(73);
+  for (const [md, glued] of [
+    [`${a} **abc** def`, "abc def"],
+    [`${a} abc **def**`, "abc def"],
+    [`${a} **abc d**ef`, "abc def"],
+    [`${a} **abc**‑def`, "abc‑def"],
+  ])
+    expect(text(md), JSON.stringify(md.slice(74))).toEqual([`${a} `, glued]);
+});

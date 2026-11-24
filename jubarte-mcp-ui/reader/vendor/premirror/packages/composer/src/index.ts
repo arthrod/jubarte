@@ -317,6 +317,11 @@ function splitPlacedRunAtWordBoundary(
   };
 }
 
+// Jubarte fork: no-break characters (no-break spaces, the non-breaking hyphen, the word
+// joiner) bind their neighbours as letters do, so no line ends or starts at one (#90).
+const NO_BREAK = /^[\u00a0\u202f\u2007\u2011\u2060\ufeff]$/u;
+const binds = (ch: string | undefined): boolean => isWordChar(ch) || (ch !== undefined && NO_BREAK.test(ch));
+
 function fixWordBoundarySplits(
   lines: LineDraft[],
   measured: MeasuredDocumentSnapshot["measuredRuns"],
@@ -341,13 +346,16 @@ function fixWordBoundarySplits(
     const nextFirstWord = firstWordCharIndex(nextText);
     if (nextFirstWord < 0) continue;
     const head = nextText[nextFirstWord];
-    if (!isWordChar(tail) || !isWordChar(head)) continue;
+    const glued = (NO_BREAK.test(tail ?? "") && binds(nextText[0])) || (binds(tail) && NO_BREAK.test(nextText[0] ?? ""));
+    if (!glued && (!isWordChar(tail) || !isWordChar(head))) continue;
+
+    const kept = [...current.runs];
 
     const moved: PlacedRun[] = [];
     while (current.runs.length > 0) {
       const last = current.runs[current.runs.length - 1]!;
       let j = last.text.length;
-      while (j > 0 && isWordChar(last.text[j - 1])) j--;
+      while (j > 0 && binds(last.text[j - 1])) j--;
       if (j === last.text.length) break;
       if (j === 0) {
         moved.unshift(last);
@@ -360,6 +368,11 @@ function fixWordBoundarySplits(
       break;
     }
     if (moved.length === 0) continue;
+    // A word longer than the line stays where it was broken; the line is never emptied.
+    if (current.runs.length === 0) {
+      current.runs = kept;
+      continue;
+    }
     next.runs = [...moved, ...next.runs];
     recalcLineDraft(current, measured);
     recalcLineDraft(next, measured);
