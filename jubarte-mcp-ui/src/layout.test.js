@@ -877,3 +877,26 @@ describe("CJK lines keep their punctuation where Word does (#82)", () => {
     }
   });
 });
+
+describe("a paragraph's style draws its bold, italic, underline and strike (#87)", () => {
+  const styled = (font) =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: ${font}, after 8pt, line 1.08, left\n---\n\n<!-- p0 -->\nSTYLED\n`;
+  const drawn = (container) =>
+    [...container.querySelectorAll(".premirror-run")].find((r) => r.textContent.includes("STYLED"));
+  it("bold italic underline strike in Normal reach every run", () => {
+    const { container, done } = compose(styled("Calibri bold italic underline strike 11pt"));
+    const run = drawn(container);
+    expect(run.style.font).toContain("italic");
+    expect(run.style.font).toContain("600");
+    expect([...run.classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
+    done();
+  });
+  it("a plain Normal stays plain", () => {
+    const { container, done } = compose(styled("Calibri 11pt"));
+    const run = drawn(container);
+    expect(run.style.font).not.toContain("italic");
+    expect(run.style.font).toContain("400");
+    expect([...run.classList]).not.toContain("underline");
+    done();
+  });
+});
