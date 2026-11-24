@@ -164,6 +164,7 @@ page:      Letter portrait, margins 1in, header/footer 0.5in   # columns 2, colu
 styles:
   Normal: Calibri 11pt, after 8pt, line 1.08, left   # default style
   "#": Heading1, Calibri bold 16pt, before 12pt, keep-next, keep-lines
+  Emphasis: Calibri underline strike 11pt   # marks: bold italic underline(-KIND) strike dstrike
   ListParagraph: Calibri 11pt, indent 0.5in, contextual spacing, named List Paragraph
 headers:
   first: none                        # or {id: header2, text: "{PAGE}", center}

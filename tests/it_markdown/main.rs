@@ -49,6 +49,7 @@ mod md_story_format;
 mod md_story_highlight;
 mod md_story_styles;
 mod md_story_trailing_paragraphs;
+mod md_style_marks;
 mod md_substitution_adjacency;
 mod md_substitution_dates;
 mod md_table_borders;

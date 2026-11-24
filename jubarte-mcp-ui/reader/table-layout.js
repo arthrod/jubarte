@@ -124,7 +124,11 @@ export function composeWithTables(snapshot,runtime,input){
  // narrows it, and an obstacle carves the first line (first-line) or the lines after it
  // (hanging). A note continued from another page, and the text after a manual line break (#66), has no first line here. List paragraphs
  // keep the list's own geometry (#63).
- function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const p=block.attrs?.sourceData?.paragraphProperties?.indents;if(!p)return none;
+ function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const own=block.attrs?.sourceData?.paragraphProperties?.indents||{},style=block.attrs?.sourceData?.documentStyle?.indents||{};
+  // The style's indents stand where the paragraph states none (#96). first-line and hanging are one property in w:ind, so the
+  // paragraph's own either one replaces the style's pair.
+  const firstOwn=own['first-line']!=null||own.hanging!=null,p={left:own.left??style.left,right:own.right??style.right,'first-line':firstOwn?own['first-line']:style['first-line'],hanging:firstOwn?own.hanging:style.hanging};
+  if(Object.values(p).every(v=>v==null))return none;
   const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null||block.attrs?.first===false?0:px(p['first-line'])-px(p.hanging),shift=Math.min(left,left+first);
   // A negative start or right indent runs into the margin, as Word draws it (#83).
   return {shift,right:px(p.right),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}

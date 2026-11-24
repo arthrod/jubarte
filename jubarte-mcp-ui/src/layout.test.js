@@ -535,6 +535,25 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     expect(hanging[1]).toBeCloseTo(96, 0);
     done();
   });
+  it("a style's indents reach its paragraphs; a paragraph's own clause wins per side (#96)", () => {
+    const styles =
+      "styles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  Hang: Calibri 11pt, indent 1in, hanging 0.5in\n  First: Calibri 11pt, first-line 0.5in\n";
+    const { composed, done } = compose(
+      `${header(styles)}<!-- p0 Hang -->\n${words("sty")}\n\n<!-- p1 Hang, left 2in -->\n${words("own")}\n\n<!-- p2 First -->\n${words("fst")}\n\n<!-- p3 Hang, first-line 0.25in -->\n${words("pair")}\n`,
+    );
+    const [styled, own, first] = [lines(composed, "sty"), lines(composed, "own"), lines(composed, "fst")];
+    // Word's PDF: the paragraph's own first-line replaces the style's hanging, the style's left stays.
+    const pair = lines(composed, "pair");
+    expect(pair[0]).toBeCloseTo(120, 0);
+    expect(pair[1]).toBeCloseTo(96, 0);
+    expect(styled[0]).toBeCloseTo(48, 0);
+    expect(styled[1]).toBeCloseTo(96, 0);
+    expect(own[0]).toBeCloseTo(144, 0);
+    expect(own[1]).toBeCloseTo(192, 0);
+    expect(first[0]).toBeCloseTo(48, 0);
+    expect(first[1]).toBe(0);
+    done();
+  });
   it("a manual line break continues the paragraph: the first-line indent applies once (#66)", () => {
     const { composed, done } = compose(
       `${header()}<!-- p0 first-line 1in -->\nFIRST\\\nSECOND\n\n<!-- p1 hanging 0.5in, left 1in -->\nHFIRST\\\nHSECOND\n`,
@@ -953,6 +972,22 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
       expect(inherited.style.font, mark).toContain(mark === "bold" ? "600" : "italic");
       done();
     }
+  });
+  it("a named style's underline and strike reach its runs, the engine prints neither inline (#96)", () => {
+    const md = `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  Emph: Calibri underline strike 11pt\n---\n\n<!-- p0 Emph -->\nSTYLED\n`;
+    const { container, done } = compose(md);
+    expect([...drawn(container).classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
+    done();
+  });
+  it("a double underline and a double strike keep their kind, not the font's name (#96)", () => {
+    const md = `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  Emph: Calibri underline-double dstrike 11pt\n---\n\n<!-- p0 Emph -->\nSTYLED\n`;
+    const { container, done } = compose(md);
+    const run = drawn(container);
+    expect(run.style.font).not.toMatch(/underline|dstrike/);
+    expect([...run.classList]).toEqual(
+      expect.arrayContaining(["underline", "underline-double", "strikethrough", "strike-double"]),
+    );
+    done();
   });
   it("a plain Normal stays plain", () => {
     const { container, done } = compose(styled("Calibri 11pt"));

@@ -497,3 +497,15 @@ test('a table line names the rows Word keeps on one page (#71)', () => {
   assert.deepEqual(directive.properties.cantSplitRows, [1, 2]);
   assert.deepEqual(directive.properties.unknown, []);
 });
+
+test('a style line names a double underline and a double strike apart from its font (#96)', () => {
+  const {styles} = parse('---\nview: tracked\nstyles:\n  Emph: Calibri bold underline-double strike dstrike 11pt\n---\n').metadata;
+  assert.equal(styles.Emph.fontFamily, 'Calibri');
+  assert.equal(styles.Emph.fontSizePt, 11);
+  assert.equal(styles.Emph.bold, true);
+  assert.equal(styles.Emph.underline, true);
+  assert.equal(styles.Emph.underlineKind, 'double');
+  assert.equal(styles.Emph.strike, true);
+  assert.equal(styles.Emph.dstrike, true);
+  assert.deepEqual(styles.Emph.unknown, []);
+});

@@ -778,6 +778,10 @@ struct Resolved {
     size_half_points: Option<f64>,
     bold: bool,
     italic: bool,
+    /// The `w:u` kind the nearest style sets (`none` included), #96.
+    underline: Option<String>,
+    strike: Option<bool>,
+    dstrike: Option<bool>,
     before: Option<f64>,
     after: Option<f64>,
     line: Option<(f64, String)>,
@@ -841,6 +845,21 @@ fn apply(r: &mut Resolved, ppr: Option<&Element>, rpr: Option<&Element>, theme: 
         }
         r.bold |= rpr.toggle("b").unwrap_or(false);
         r.italic |= rpr.toggle("i").unwrap_or(false);
+        // The nearest style that sets a mark decides it, an off included
+        // (#96): the chain is walked from the style toward its bases.
+        if r.underline.is_none() {
+            // Word draws no line for a `w:u` with no `w:val` (an Apple
+            // Pages export writes `<w:u w:color="000000"/>` on its styles).
+            r.underline = rpr
+                .child("u")
+                .map(|u| u.attr("val").unwrap_or("none").to_string());
+        }
+        if r.strike.is_none() {
+            r.strike = rpr.toggle("strike");
+        }
+        if r.dstrike.is_none() {
+            r.dstrike = rpr.toggle("dstrike");
+        }
     }
     if let Some(ppr) = ppr {
         if let Some(sp) = ppr.child("spacing") {
@@ -982,6 +1001,18 @@ fn describe(r: &Resolved, base: Option<&Resolved>) -> String {
     }
     if r.italic {
         font.push_str(" italic");
+    }
+    // `underline` is Word's single line; another kind names itself (#96).
+    match r.underline.as_deref() {
+        None | Some("none") => {}
+        Some("single") => font.push_str(" underline"),
+        Some(kind) => font.push_str(&format!(" underline-{kind}")),
+    }
+    if r.strike == Some(true) {
+        font.push_str(" strike");
+    }
+    if r.dstrike == Some(true) {
+        font.push_str(" dstrike");
     }
     let size = r.size_half_points.unwrap_or(20.0) / 2.0;
     let size = format!("{size:.1}");
