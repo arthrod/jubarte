@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from importlib import resources
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     from mcp.server import MCPServer
@@ -739,22 +739,24 @@ def build_server(*, root: Path) -> MCPServer:
         )
 
     @mcp.tool(annotations=_READ, meta=_APP_ONLY)
-    def docx_preview(path: str) -> CallToolResult:
-        """The document card's own read (hidden from the model in MCP Apps hosts): Markdown for the paginated reader, move kinds and change counts. A model should call docx_text instead."""
+    def docx_preview(path: str, view: Literal["tracked", "accepted", "original"] = "tracked") -> CallToolResult:
+        """The document card's own read (hidden from the model in MCP Apps hosts): Markdown for the paginated reader, move kinds and change counts; `view` accepted or original is the engine's own accept or reject of every change. A model should call docx_text instead."""
         from . import _native
 
         doc = load(path)
         p = contained(path)
         data = doc.to_bytes()
-        markdown, warnings = engine(lambda: _native.read_view(data, page_markers=False))
+        track = {"tracked": None, "accepted": "accept", "original": "reject"}[view]
+        markdown, warnings = engine(lambda: _native.read_view(data, track_changes=track, page_markers=False))
         markdown = _image_stand_ins(markdown)
         preview = {
             "path": relative(p),
             "name": p.name,
             "sha256": engine(lambda: _native.source_sha256(data)),
+            "view": view,
             "markdown": markdown,
             "warnings": list(warnings),
-            "revision_kinds": move_kinds(data),
+            "revision_kinds": move_kinds(data) if view == "tracked" else {},
             "counts": change_counts(engine(doc.changes)),
         }
         if len(json.dumps(preview, ensure_ascii=False).encode()) > _PREVIEW_LIMIT:

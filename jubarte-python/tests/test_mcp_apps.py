@@ -608,3 +608,30 @@ def test_image_stand_ins_leave_code_blocks_as_written(tmp_path: Path) -> None:
     view = _native.read_view(data, page_markers=False)[0]
     assert view.count(literal) == 2, view
     assert preview.structured_content["markdown"] == view
+
+
+def test_preview_serves_the_engines_accepted_and_original_views(tmp_path: Path) -> None:
+    # #40: the card's Accepted and Original are the engine's accept and
+    # reject, not a client rebuild: a joined break, renumbered items.
+    source = "1. First\n2. {--Deleted--}\n3. Third\n\nOne{--\n\n--}Two\n"
+    docx = _native.markdown_to_docx(source)
+    data = bytes(docx[0] if isinstance(docx, tuple) else docx)
+    (tmp_path / "v.docx").write_bytes(data)
+    tracked, accepted, original, bad = call(
+        tmp_path,
+        ("docx_preview", {"path": "v.docx"}),
+        ("docx_preview", {"path": "v.docx", "view": "accepted"}),
+        ("docx_preview", {"path": "v.docx", "view": "original"}),
+        ("docx_preview", {"path": "v.docx", "view": "sideways"}),
+    )
+    assert tracked.structured_content["view"] == "tracked"
+    assert tracked.structured_content["markdown"] == _native.read_view(data, page_markers=False)[0]
+    for result, view, mode in ((accepted, "accepted", "accept"), (original, "original", "reject")):
+        s = result.structured_content
+        assert s["view"] == view
+        assert s["markdown"] == _native.read_view(data, track_changes=mode, page_markers=False)[0]
+        assert s["counts"] == tracked.structured_content["counts"]
+    assert "2. Third" in accepted.structured_content["markdown"]
+    assert "OneTwo" in accepted.structured_content["markdown"]
+    assert "{--" not in original.structured_content["markdown"]
+    assert bad.is_error
