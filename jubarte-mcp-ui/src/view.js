@@ -271,7 +271,12 @@ async function open(path, { fromList = false } = {}) {
   }
   docPath = path;
   previews = new Map([["tracked", res.structuredContent]]);
-  show(mode);
+  showView(mode);
+}
+
+/** `show`, with a failure to draw reported on the card instead of lost. */
+function showView(view) {
+  show(view).catch((error) => fail("The document could not be drawn", error));
 }
 
 /** Draws the open document in `view`, asking the server the first time. */
@@ -352,7 +357,7 @@ for (const button of document.querySelectorAll(".view")) {
     mode = button.dataset.mode;
     for (const b of document.querySelectorAll(".view"))
       b.setAttribute("aria-pressed", String(b === button));
-    if (previews.size) show(mode);
+    if (previews.size) showView(mode);
   };
 }
 $("show-discussions").onclick = () => showThreads();
