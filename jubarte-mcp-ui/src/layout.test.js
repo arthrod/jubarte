@@ -160,3 +160,34 @@ describe("an empty paragraph's page break (#48)", () => {
     done();
   });
 });
+
+describe("sections and their notes (#49)", () => {
+  it("a footnote on a portrait page after a landscape section wraps to that page", () => {
+    const note = "word ".repeat(100).trim();
+    const { composed, done } = compose(
+      "---\nview: tracked\npage: Letter landscape, margins 1in, header/footer 0.5in\nsections:\n  2: {p2-p2, page: Letter portrait, margins 1in, header/footer 0.5in}\n---\n\n" +
+        `<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND[^1]\n\n<!-- footnotes.p0 Normal -->\n[^1]: ${note}\n`,
+    );
+    const fragments = composed.footnoteFragments;
+    expect(fragments.length).toBeGreaterThan(0);
+    for (const fragment of fragments) {
+      const page = composed.layout.pages[fragment.pageIndex];
+      const content = page.spec.widthPx - page.margins.leftPx - page.margins.rightPx;
+      const right = Math.max(
+        ...fragment.lines.flatMap((l) => l.runs.map((r) => r.x + (r.width ?? 0))),
+      );
+      expect(right).toBeLessThanOrEqual(content + 1);
+    }
+    done();
+  });
+  it("an empty section keeps its own blank page and the next section its setup", () => {
+    const { composed, done } = compose(
+      `${header("sections:\n  2: {p2-p2, page: Letter landscape, margins 1in, header/footer 0.5in}\n  3: {p3-p3, page: A4 portrait, margins 1in, header/footer 0.5in}\n")}` +
+        "<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\n\n<!-- p2 section-break -->\n\n<!-- p3 -->\nTHIRD\n",
+    );
+    const pages = composed.layout.pages;
+    expect(pages.map((p) => Math.round(p.spec.widthPx))).toEqual([816, 1056, 794]);
+    expect(composed.warnings.join(" ")).not.toMatch(/does not show/);
+    done();
+  });
+});

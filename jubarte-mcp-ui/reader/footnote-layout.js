@@ -45,11 +45,12 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   const id = String(target); nestedReferences.add(id);
   if (!notes.has(id)) warn('missing-footnote-definition', `Footnote reference ${id} inside note ${note.identifier} has no visible definition.`, id);
  }
- for (const note of notes.values()) {
+ const wrap = note => {
   note.lines = composeLines(note.blocks, width);
   // An empty definition is still a visible labelled note.
   if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
- }
+ };
+ for (const note of notes.values()) wrap(note);
  let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
  const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + item.count * lineHeight, 0) + between * (items.length - 1) : 0;
@@ -152,7 +153,18 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,
   get bodyLimit() { return height - footprint(allocations); },
  // A section's pages bring their own content area (#47).
- setGeometry(geometry) { width = geometry.width; height = geometry.height; },
+ // Notes are rewrapped to its width (#49); a note continued from the previous
+ // page resumes at the new line holding the first text it had not shown.
+ setGeometry(geometry) {
+  const rewrap = Math.abs(geometry.width - width) > 0.001;
+  width = geometry.width; height = geometry.height;
+  if (!rewrap) return;
+  for (const note of notes.values()) {
+   const carried = pending.filter(item => item.id === note.id), from = carried.map(item => note.lines[item.offset]?.pmRange?.from);
+   wrap(note);
+   carried.forEach((item, i) => { let at = 0; note.lines.forEach((line, li) => { if ((line.pmRange?.from ?? 0) <= from[i]) at = li; }); item.offset = at; });
+  }
+ },
   get hasPending() { return pending.length > 0; },
   get enabled() { return notes.size > 0 || sourceRuns.size > 0; }};
 }

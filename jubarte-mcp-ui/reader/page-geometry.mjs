@@ -127,11 +127,11 @@ export function resolveSections(result = {}) {
   const documentRaw = result.metadata?.page?.raw ?? result.metadata?.raw?.page;
   const startsOf = setup => (typeof setup === 'string' && setup.match(/(?:^|,)\s*starts\s+(nextPage|continuous|evenPage|oddPage|nextColumn)\b/i)?.[1]) || 'nextPage';
   return Object.entries(sections).filter(([id]) => /^\d+$/.test(id)).sort((a, b) => Number(a[0]) - Number(b[0])).flatMap(([id, section]) => {
-    const start = section?.paragraphRanges?.[0]?.start;
+    const start = section?.paragraphRanges?.[0]?.start, end = section?.paragraphRanges?.[0]?.end;
     if (!Number.isInteger(start)) return [];
     const raw = object(section.raw) ? section.raw : {}, keys = Object.keys(raw), at = keys.indexOf('page');
-    if (at < 0) return [{id, start, starts: startsOf(documentRaw), geometry: resolvePageGeometry(result)}];
+    if (at < 0) return [{id, start, end, starts: startsOf(documentRaw), geometry: resolvePageGeometry(result)}];
     const setup = [String(raw.page), ...keys.slice(at + 1).filter(key => raw[key] === null && !/^p\d+-p\d+$/.test(key))].join(', ');
-    return [{id, start, starts: startsOf(setup), geometry: resolvePageGeometry({metadata: {page: {raw: setup}}})}];
+    return [{id, start, end, starts: startsOf(setup), geometry: resolvePageGeometry({metadata: {page: {raw: setup}}})}];
   });
 }
