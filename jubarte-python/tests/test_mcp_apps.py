@@ -236,6 +236,29 @@ def test_move_kinds_decode_character_references_in_the_id() -> None:
     assert server.move_kinds(package(MOVE.replace('w:id="7"', 'w:id="&amp;7"'))).get("body:rev:&7") == "movedel"
 
 
+def test_move_kinds_find_the_main_part_past_a_commented_relationship() -> None:
+    # #51: a relationship inside an XML comment names no part.
+    import zipfile
+    from io import BytesIO
+
+    source = BytesIO(package(MOVE))
+    out = BytesIO()
+    with zipfile.ZipFile(source) as old, zipfile.ZipFile(out, "w") as new:
+        for item in old.infolist():
+            data = old.read(item)
+            if item.filename == "_rels/.rels":
+                text = data.decode()
+                decoy = (
+                    '<!-- <Relationship Id="x" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                    'relationships/officeDocument" Target="decoy.xml"/> -->'
+                )
+                at = text.index("<Relationship ")
+                data = (text[:at] + decoy + text[at:]).encode()
+            new.writestr(item, data)
+    assert b"decoy.xml" in out.getvalue()
+    assert server.move_kinds(out.getvalue()) == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+
+
 def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

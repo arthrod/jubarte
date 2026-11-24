@@ -74,7 +74,13 @@ export function composeWithTables(snapshot,runtime,input){
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
  const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
  // The room left on a line, its trailing spaces hanging as in Word.
- function alignShift(line,inner){const runs=line.runs.filter(r=>r.text?.trim());const last=runs.at(-1);if(!last)return 0;const text=last.text,kept=text.trimEnd().length;const right=last.x+(last.width||0)*(text.length?kept/text.length:1);return Math.max(0,inner-right);}
+ function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
+ // A paragraph whose first strong letter is Hebrew, Arabic, Syriac or Thaana reads
+ // right to left (Unicode P2); the engine writes no w:bidi, so each line's runs are
+ // mirrored across the room they take, the browser ordering the text inside each (#51).
+ const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u;
+ function isRtl(block){for(const r of block.runs||[])for(const ch of r.text||'')if(STRONG.test(ch))return RTL.test(ch);return false;}
+ function mirror(line){const xs=line.runs.map(r=>r.x),lo=Math.min(...xs),hi=Math.max(...line.runs.map(r=>r.x+(r.width||0)));return {...line,runs:line.runs.map(r=>({...r,x:lo+hi-r.x-(r.width||0),rtl:true}))};}
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
   for(const block of blocks){const indent=Math.min(Math.max(0,block.attrs?.indentPx||0),Math.max(0,w-1)),inner=Math.max(1,w-indent);const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
@@ -84,7 +90,8 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrain(lines,inner);
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
-   for(const line of lines){const shift=align==='right'||align==='center'?alignShift(line,inner)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
+   const rtl=isRtl(block);
+   for(const drawn of lines){const line=rtl&&drawn.runs.length?mirror(drawn):drawn;const shift=align==='right'||align==='center'?alignShift(line,inner,rtl)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
   }
   lineCache.set(key,result);return result;
  }
@@ -132,7 +139,7 @@ export function composeWithTables(snapshot,runtime,input){
     if(!accepted){notes.restore(checkpoint);newPage();continue;}
     if(accepted<remaining&&accepted<orphan&&y>0){notes.restore(checkpoint);newPage();continue;}
     if(remaining>accepted&&remaining-accepted<widow&&accepted-(widow-(remaining-accepted))>=orphan){const reduced=accepted-(widow-(remaining-accepted));notes.restore(checkpoint);accepted=0;while(accepted<reduced&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;}
-    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh,runs:colX?l.runs.map(r=>({...r,x:r.x+colX})):l.runs}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
+    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh,runs:colX?l.runs.map(r=>({...r,x:r.x+colX})):l.runs}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(colX?{offsetX:colX}:{}),...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
    continue;}
   const g=grids.get(block.id);if(!g.total)continue;
   if(y>0&&g.headerCount>0&&g.headerCount<g.rowHeights.length){const initialGroup=g.rowTops[g.headerCount+1];if(initialGroup<=height&&initialGroup>notes.bodyLimit-y)newPage();}

@@ -174,9 +174,11 @@ def _main_part(package: zipfile.ZipFile) -> str:
         rels = package.read("_rels/.rels").decode("utf-8", "replace")
     except KeyError:
         return "word/document.xml"
-    for rel in re.findall(r"<(?:[\w.-]+:)?Relationship\b[^>]*>", rels):
-        if "/officeDocument" in rel:
-            target = re.search(r"""Target\s*=\s*["']([^"']+)""", rel)
+    # A relationship inside a comment names nothing (#51).
+    for rel in re.findall(r"<(?:[\w.-]+:)?Relationship\b[^>]*>", _without_comments(rels)):
+        kind = re.search(r"""\bType\s*=\s*["']([^"']+)""", rel)
+        if kind and kind.group(1).endswith("/officeDocument"):
+            target = re.search(r"""\bTarget\s*=\s*["']([^"']+)""", rel)
             if target:
                 return target.group(1).lstrip("/")
     return "word/document.xml"

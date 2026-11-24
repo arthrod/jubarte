@@ -249,3 +249,45 @@ describe("continued notes, continuous margins and alignment (#50)", () => {
     done();
   });
 });
+
+describe("list numbers in continuous sections and right-to-left lines (#51)", () => {
+  it("a list number moves with its text to a continuous section's margin", () => {
+    const { container, done } = compose(
+      "---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p2-p3, page: Letter portrait, margins top 1in, right 2in, bottom 1in, left 2in, header/footer 0.5in, starts continuous}\n---\n\n" +
+        '<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\nBREAK\n\n<!-- p2 ListParagraph num "1." -->\n1. SECOND\n\n<!-- p3 ListParagraph num "2." -->\n2. THIRD\n',
+    );
+    const markers = [...container.querySelectorAll(".paged-marker")];
+    expect(markers.length).toBe(2);
+    for (const marker of markers) {
+      const block = marker.parentElement;
+      const word = [...block.querySelectorAll(".premirror-run")].find((r) =>
+        /SECOND|THIRD/.test(r.textContent),
+      );
+      const markerRight = parseFloat(marker.style.left) + parseFloat(marker.style.width);
+      expect(markerRight).toBeLessThanOrEqual(parseFloat(word.style.left) + 0.5);
+      expect(markerRight).toBeGreaterThan(96);
+    }
+    done();
+  });
+  it("a right-to-left line runs its words from the right, across formatting", () => {
+    const { composed, container, done } = compose(
+      `${header()}<!-- p0 right -->\nمرحبا **بكم** اليوم\n`,
+    );
+    // Each span reads right to left too, so a run's trailing space falls between the words.
+    const spans = [...container.querySelectorAll(".premirror-run")].filter((r) =>
+      r.textContent.trim(),
+    );
+    expect(spans.length).toBe(3);
+    for (const span of spans) expect(span.getAttribute("dir")).toBe("rtl");
+    const runs = bodyRuns(composed, 0);
+    const at = (word) => runs.find((r) => r.text.includes(word));
+    const first = at("مرحبا"),
+      second = at("بكم"),
+      third = at("اليوم");
+    expect(first.x).toBeGreaterThan(second.x);
+    expect(second.x).toBeGreaterThan(third.x);
+    const width = contentWidth(composed.layout.pages[0]);
+    expect(first.x + first.width).toBeGreaterThan(width - 12);
+    done();
+  });
+});
