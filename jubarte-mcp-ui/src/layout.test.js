@@ -545,6 +545,23 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     expect(lines(composed, "HSECOND")[0]).toBeCloseTo(96, 0);
     done();
   });
+  it("a word wider than the line keeps the paragraph's indents (#72)", () => {
+    const long = "X".repeat(150);
+    const { composed, done } = compose(
+      `${header()}<!-- p0 first-line 0.5in -->\nF${long}\n\n<!-- p1 hanging 0.5in, left 0.5in -->\nH${long}\n`,
+    );
+    const starts = (tag) =>
+      composed.layout.pages[0].frames[0].fragments
+        .filter((f) => (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))))
+        .flatMap((f) => f.lines.map((l) => Math.round(Math.min(...l.runs.map((r) => r.x)))));
+    const first = starts("F"),
+      hanging = starts("H");
+    expect(first[0]).toBe(48);
+    expect(first[1]).toBe(0);
+    expect(hanging[0]).toBe(0);
+    expect(hanging[1]).toBe(48);
+    done();
+  });
   it("a right indent narrows the lines", () => {
     const { composed, done } = compose(`${header()}<!-- p0 right 2in -->\n${words("narrow")}\n`);
     const right = Math.max(...bodyRuns(composed, 0).map((r) => r.x + r.width));

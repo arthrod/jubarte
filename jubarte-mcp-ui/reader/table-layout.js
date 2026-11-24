@@ -73,7 +73,6 @@ export function composeWithTables(snapshot,runtime,input){
  function ensurePage(){if(y>=notes.bodyLimit-0.001)newPage();}
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
- const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
  // The room left on a line, its trailing spaces hanging as in Word.
  function alignShift(line,inner,rtl){const right=Math.max(0,...line.runs.filter(r=>r.text?.trim()).map(r=>{const t=r.text,kept=rtl?t.length:t.trimEnd().length;return r.x+(r.width||0)*(t.length?kept/t.length:1)}));return right?Math.max(0,inner-right):0;}
  // Right-to-left text without the engine's w:bidi (#51, #53, #55; engine gap #54): a
@@ -134,7 +133,7 @@ export function composeWithTables(snapshot,runtime,input){
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
    const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:indentObstacles(ind,inner)});
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});
-   lines=constrain(lines,inner);
+   lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
@@ -250,7 +249,10 @@ const graphemes=text=>typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(
  * those lines, preserving code points, marks and PM spans. Spaces hang past
  * the edge as Word lets them, a line breaks after its last space, and only a
  * word wider than the slot is cut by grapheme (b106: "(i" / "f "). */
-export function constrainLines(lines,w,lh,glyphWidth){
+/** `indent` ({first, rest}, px): where the block's first line and its following lines begin,
+ * so a line rebuilt here keeps the paragraph's indents (#72). */
+export function constrainLines(lines,w,lh,glyphWidth,indent={first:0,rest:0}){
+  const at=i=>Math.max(0,Math.min(w-1,i===0?indent.first||0:indent.rest||0));
   const space=ch=>ch===' '||ch==='\t';
   // The composer leaves empty lines while it looks for room for a word wider than the
   // line, then forces it; in a block with text an empty line is only that (#67).
@@ -265,14 +267,14 @@ export function constrainLines(lines,w,lh,glyphWidth){
     for(const run of line.runs){let offset=0;const span=run.pmRange.to-run.pmRange.from;for(const ch of graphemes(run.text)){chars.push({run,ch,cw:glyphWidth(ch,run.font),from:run.pmRange.from+Math.floor(offset*span/run.text.length),to:run.pmRange.from+Math.floor((offset+ch.length)*span/run.text.length)});offset+=ch.length;}}
     const pieces=[];
     for(let start=0;start<chars.length;){
-      let end=start,used=0,lastBreak=-1;
-      while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>w+0.01)break;used+=c.cw;end++;if(space(c.ch))lastBreak=end;}
+      let end=start,used=0,lastBreak=-1;const room=w-at(out.length+pieces.length);
+      while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>room+0.01)break;used+=c.cw;end++;if(space(c.ch))lastBreak=end;}
       if(end<chars.length&&lastBreak>start)end=lastBreak;
       pieces.push(chars.slice(start,end));start=end;
     }
     if(pieces.length<=1){out.push(line);continue;}
     for(const piece of pieces){
-      const runs=[];let used=0;
+      const runs=[];let used=at(out.length);
       for(const c of piece){const previous=runs.at(-1);if(previous&&previous.runId===c.run.runId&&previous.pmRange.to===c.from){previous.text+=c.ch;previous.width+=c.cw;previous.pmRange.to=c.to;}else runs.push({...c.run,text:c.ch,x:used,width:c.cw,pmRange:{from:c.from,to:c.to}});used+=c.cw;}
       out.push({...line,runs,pmRange:{from:Math.min(...runs.map(r=>r.pmRange.from)),to:Math.max(...runs.map(r=>r.pmRange.to))}});
     }
