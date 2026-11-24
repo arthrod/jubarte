@@ -568,3 +568,71 @@ describe("a table narrower than the text area keeps Word's width (#65)", () => {
     done();
   });
 });
+
+describe("a table's layout and place are Word's (#67, #68, #69)", () => {
+  const doc = (head, cell = "LEFT") =>
+    `---\nview: tracked\npage: Letter landscape, margins 1in, header/footer 0.5in\n---\n\n<!-- ${head} -->\n|COL1|COL2|\n|-|-|\n|${cell}|RIGHT|\n`;
+  const table = (markdown) => {
+    const { composed, done } = compose(markdown);
+    const t = composed.tableFragments[0];
+    const runs = composed.layout.pages[0].frames[0].fragments
+      .filter((f) => f.tableCell)
+      .flatMap((f) => f.lines.flatMap((l) => l.runs));
+    done();
+    return { t, runs };
+  };
+  it("a fixed-layout table keeps its grid width; a long word breaks inside its column (#67)", () => {
+    const { t } = table(
+      doc(
+        "t0 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, layout fixed",
+        "W".repeat(60),
+      ),
+    );
+    expect(Math.round(t.width)).toBe(288);
+    expect(t.columnWidths.map(Math.round)).toEqual([144, 144]);
+    // The broken word starts on the cell's first line: no empty lines before it.
+    const cell = t.cells.find((c) => c.rowIndex === 1 && c.columnIndex === 0);
+    expect(cell.lines[0].runs.map((r) => r.text).join("")).toMatch(/^W+$/);
+  });
+  it("a fixed-layout table lends a wide column's room to a word that fits the table (b097)", () => {
+    const { t } = table(
+      doc(
+        "t0 2x2, cells p0-p3 by row, widths 0.4in 2.6in, width 3in, layout fixed",
+        "Interdependencies",
+      ),
+    );
+    expect(Math.round(t.width)).toBe(288);
+    expect(t.columnWidths[0]).toBeGreaterThan(0.4 * 96);
+  });
+  it("an autofit table still grows for a long word", () => {
+    const { t } = table(
+      doc("t0 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in", "W".repeat(60)),
+    );
+    expect(t.width).toBeGreaterThan(288);
+  });
+  it("a centred or right-aligned table sits where Word puts it (#68)", () => {
+    const centre = table(
+      doc("t0 center 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, layout fixed"),
+    );
+    const right = table(
+      doc("t0 right 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, layout fixed"),
+    );
+    const left = table(
+      doc("t0 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, layout fixed"),
+    );
+    expect(Math.round(centre.t.x - left.t.x)).toBe(288);
+    expect(Math.round(right.t.x - left.t.x)).toBe(576);
+    const first = (r) =>
+      Math.min(...r.runs.filter((x) => x.text?.includes("COL1")).map((x) => x.x));
+    expect(Math.round(first(centre) - first(left))).toBe(288);
+  });
+  it("a table's indent moves it in from the margin (#69)", () => {
+    const left = table(
+      doc("t0 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, layout fixed"),
+    );
+    const indented = table(
+      doc("t0 2x2, cells p0-p3 by row, widths 1.5in 1.5in, width 3in, indent 0.5in, layout fixed"),
+    );
+    expect(Math.round(indented.t.x - left.t.x)).toBe(48);
+  });
+});

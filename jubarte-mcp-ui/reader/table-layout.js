@@ -157,8 +157,18 @@ export function composeWithTables(snapshot,runtime,input){
   }}
   if(!columns)return {cells:[],rowHeights:[],rowTops:[0],columnWidths:[],total:0,headerHeight:0};
   const mins=Array.from({length:columns},()=>0);for(const c of cells){if(c.colspan!==1)continue;for(const block of c.blocks||[])for(const run of block.runs||[])for(const word of run.text.split(/\s+/))if(word)mins[c.columnIndex]=Math.max(mins[c.columnIndex],glyphWidth(word,run.font))}
-  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),base=tableWidth(weights,width,margins.rightPx),fit=fitTable(mins,base,maxWidth),drawn=Math.max(base,fit.width);
-  const columnWidths=fitMinimums(gridWidths(weights,columns,drawn),mins.map(t=>t>0?t+2*fit.pad+3:0),drawn);
+  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),base=tableWidth(weights,width,margins.rightPx),src=table.attrs?.sourceData||{},fixed=src.layoutFixed===true&&Array.isArray(weights)&&weights.length>0;
+  // A fixed layout keeps its grid: no growth, words break inside their column (#67).
+  const fit=fitTable(mins,base,fixed?base:maxWidth),drawn=fixed?base:Math.max(base,fit.width);
+  // When the reader's larger type would break a word Word keeps whole, and every column's longest
+  // word fits the fixed width together, the columns share it by those words; else the grid holds.
+  const need=mins.map(t=>t>0?t+2*fit.pad+3:0),fitsFixed=need.reduce((a,b)=>a+b,0)<=drawn+0.001;
+  const columnWidths=fixed&&!fitsFixed?gridWidths(weights,columns,drawn):fitMinimums(gridWidths(weights,columns,drawn),need,drawn);
+  // Word's place for the table: centred or right in the text area (#68), else in by its indent (#69);
+  // never past the page edge's 12px gutter on either side.
+  const lo=-Math.max(0,margins.leftPx-12),hi=Math.max(lo,width+Math.max(0,margins.rightPx-12)-drawn);
+  const want=src.tableAlignment==='center'?(width-drawn)/2:src.tableAlignment==='right'?width-drawn:Number.isFinite(src.indentIn)?src.indentIn*96:0;
+  const offsetX=Math.min(hi,Math.max(src.tableAlignment?0:lo,want));
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
   const rowHeights=rows.map(()=>lh);
   for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(fit.pad,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);c.lines=composeLines(c.blocks,c.innerWidth);const align=c.sourceData?.align||c.align;if(align==='center'||align==='right')c.lines=c.lines.map(l=>{const used=l.runs.reduce((n,r)=>Math.max(n,r.x+r.width),0),shift=Math.max(0,c.innerWidth-used)*(align==='center'?0.5:1);return {...l,runs:l.runs.map(r=>({...r,x:r.x+shift}))};});if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
@@ -168,15 +178,15 @@ export function composeWithTables(snapshot,runtime,input){
   let headerCount=0;while(headerCount<rows.length&&(rows[headerCount].header||(rows[headerCount].cells.length&&rows[headerCount].cells.every(c=>c.header))))headerCount++;
   // A header/body-crossing rowspan cannot be repeated independently.
   if(cells.some(c=>c.rowIndex<headerCount&&c.rowIndex+c.rowspan>headerCount)){warn('header-rowspan-crosses-body','Header repetition is disabled because a header cell spans into the table body.',table.id);headerCount=0;}
-  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,total:rowTops.at(-1),headerHeight,headerCount};
+  const headerHeight=rowTops[headerCount];return {cells,rowHeights,rowTops,columnWidths,width:drawn,offsetX,total:rowTops.at(-1),headerHeight,headerCount};
  }
  // A table's grid is measured on the width of the section it falls in.
  const grids={cache:new Map(),get(id){const b=tableBlocks.get(id);if(!b)return undefined;const key=id+'@'+width;if(!this.cache.has(key))this.cache.set(key,grid(b));return this.cache.get(key);}};const tableBlocks=new Map(snapshot.blocks.filter(b=>b.type==='table').map(b=>[b.id,b]));
  notes=createFootnoteAllocator({snapshot,composeLines,width,height,lineHeight:lh,warn});newPage();
- function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:colX,y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
+ function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:colX+(g.offsetX||0),y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
   for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y+lh<=end+0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
    const cell={cellId:c.id,sourceCellIds:c.sourceCellIds,rowIndex:Math.max(c.rowIndex,fragment.rowStart),originalRowIndex:c.rowIndex,columnIndex:c.columnIndex,colspan:c.colspan,rowspan:fragment.rows.filter(r=>r.rowIndex>=c.rowIndex&&r.rowIndex<c.rowIndex+c.rowspan).length,originalRowspan:c.rowspan,pmRange:c.pmRange,x:c.x,y:top-start,width:c.width,height:bottom-top,lines,header:c.header,repeated,continuedBefore:top>c.y,continuedAfter:bottom<c.y+c.height,paddingX:c.paddingX};fragment.cells.push(cell);
-   const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x+colX}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
+   const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x+colX+(g.offsetX||0)}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
   }const previous=tableFragments.at(-1);if(previous&&previous.tableId===fragment.tableId&&previous.pageIndex===fragment.pageIndex&&Math.abs(previous.y+previous.height-fragment.y)<0.001){const offset=previous.height;previous.cells.push(...fragment.cells.map(c=>({...c,y:c.y+offset})));previous.rows.push(...fragment.rows.map(r=>({...r,y:r.y+offset})));previous.height+=fragment.height;previous.repeated=previous.repeated&&fragment.repeated;}else tableFragments.push(fragment);y+=fragment.height;
  }
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];for(const section of block.attrs?.sectionStarts||[])startSection(section);
@@ -240,6 +250,9 @@ const graphemes=text=>typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(
  * word wider than the slot is cut by grapheme (b106: "(i" / "f "). */
 export function constrainLines(lines,w,lh,glyphWidth){
   const space=ch=>ch===' '||ch==='\t';
+  // The composer leaves empty lines while it looks for room for a word wider than the
+  // line, then forces it; in a block with text an empty line is only that (#67).
+  if(lines.some(l=>l.runs?.length))lines=lines.filter(l=>l.runs?.length);
   const out=[];
   for(const line of lines){
     // Judged on the composer's own widths: a sum of glyphs runs wider than a

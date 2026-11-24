@@ -156,7 +156,11 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  for(const table of blocks.filter(b=>b.type==='table')){
   const d=table.directives?.find(d=>d.type==='table');if(!d)continue;
   // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).
-  table.headerRowRepeats=(d.properties?.headerRowRepeats??d.parsed?.headerRowRepeats??d.headerRowRepeats)===true;if(d.columnWidthsIn&&d.columnWidthsIn.length===Math.max(0,...table.children.map(r=>r.children.length)))table.columnWidthsIn=d.columnWidthsIn;
+  table.headerRowRepeats=(d.properties?.headerRowRepeats??d.parsed?.headerRowRepeats??d.headerRowRepeats)===true;
+  // Where Word puts the table and whether it autofits: \`t0 center\`/\`t0 right\` (w:jc), \`indent X\`
+  // (w:tblInd), \`layout fixed\` (w:tblLayout) (#67, #68, #69).
+  if(d.alignment==='center'||d.alignment==='right')table.tableAlignment=d.alignment;
+  for(const raw of d.unknown||d.properties?.unknown||[]){const c=String(raw).trim();if(c==='layout fixed')table.layoutFixed=true;const m=/^indent (-?\d+(?:\.\d+)?)in$/.exec(c);if(m)table.indentIn=Number(m[1]);}if(d.columnWidthsIn&&d.columnWidthsIn.length===Math.max(0,...table.children.map(r=>r.children.length)))table.columnWidthsIn=d.columnWidthsIn;
   // `merged tN.rowR.cellC` counts Word cells, as write.rs plan_table does: the empty
   // Markdown cells after a span are its covered columns, and a vertical merge's
   // continuation (a Word cell of its own) covers the same grid column below.
