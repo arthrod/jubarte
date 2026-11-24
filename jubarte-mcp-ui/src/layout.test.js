@@ -535,10 +535,36 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     expect(hanging[1]).toBeCloseTo(96, 0);
     done();
   });
+  it("a manual line break continues the paragraph: the first-line indent applies once (#66)", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 first-line 1in -->\nFIRST\\\nSECOND\n\n<!-- p1 hanging 0.5in, left 1in -->\nHFIRST\\\nHSECOND\n`,
+    );
+    expect(lines(composed, "FIRST")[0]).toBeCloseTo(96, 0);
+    expect(lines(composed, "SECOND")[0]).toBe(0);
+    expect(lines(composed, "HFIRST")[0]).toBeCloseTo(48, 0);
+    expect(lines(composed, "HSECOND")[0]).toBeCloseTo(96, 0);
+    done();
+  });
   it("a right indent narrows the lines", () => {
     const { composed, done } = compose(`${header()}<!-- p0 right 2in -->\n${words("narrow")}\n`);
     const right = Math.max(...bodyRuns(composed, 0).map((r) => r.x + r.width));
     expect(right).toBeLessThanOrEqual(contentWidth(composed.layout.pages[0]) - 192 + 1);
+    done();
+  });
+});
+
+describe("a table narrower than the text area keeps Word's width (#65)", () => {
+  it("a fixed 3in table in a landscape section draws 3in wide", () => {
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p1-p5, page: Letter landscape, margins 1in, header/footer 0.5in}\n---\n\n<!-- p0 section-break -->\nFIRST\n\n<!-- t0 2x2, cells p1-p4 by row, widths 1.5in 1.5in, width 3in, layout fixed, header row repeats -->\n|COL1|COL2|\n|-|-|\n|LEFT|RIGHT|\n\n<!-- p5 empty -->\n`,
+    );
+    const t = composed.tableFragments.find((f) => f.pageIndex === 1);
+    expect(t).toBeTruthy();
+    expect(Math.round(t.width)).toBe(288);
+    expect(
+      t.columnWidths?.map(Math.round) ??
+        t.cells.filter((c) => c.rowIndex === 0).map((c) => Math.round(c.width)),
+    ).toEqual([144, 144]);
     done();
   });
 });

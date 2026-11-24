@@ -85,8 +85,8 @@ test('a grid wider than the text frame reaches into the right margin, as in Word
   assert.ok(Math.abs(tableWidth([3.2, 3.2], 576, 96) - 614.4) < 1e-9);
   // Never past the page edge: the margin keeps a 12px gutter.
   assert.equal(tableWidth([5, 3], 576, 96), 576 + 96 - 12);
-  // A grid that fits, or no grid, fills the frame as before.
-  assert.equal(tableWidth([1, 1], 576, 96), 576);
+  // A narrower grid draws at its own width, as Word draws tblGrid (#65); no grid fills the frame.
+  assert.equal(tableWidth([1, 1], 576, 96), 192);
   assert.equal(tableWidth(undefined, 576, 96), 576);
 });
 

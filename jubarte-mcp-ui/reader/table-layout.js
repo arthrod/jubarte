@@ -28,12 +28,13 @@ export function fitMinimums(widths,mins,total){
  const minTotal=mins.reduce((a,b)=>a+b,0);if(minTotal>=total)return mins.map(m=>total*m/minTotal);
  const slack=widths.map((w,i)=>Math.max(0,w-mins[i])),free=slack.reduce((a,b)=>a+b,0);
  return widths.map((w,i)=>w<mins[i]?mins[i]:w-need*slack[i]/free)}
-/** A table's drawn width: the frame's, or the source grid's own width
- * (inches) when that is wider, reaching into the right margin as Word draws
- * it, short of the page edge by a 12px gutter. */
+/** A table's drawn width: the source grid's own width (inches), as Word
+ * draws it, narrower than the frame (#65) or reaching into the right margin,
+ * short of the page edge by a 12px gutter; the frame's when there is no grid. */
 export function tableWidth(widthsIn,frame,rightMargin){
- const natural=Array.isArray(widthsIn)&&widthsIn.every(Number.isFinite)?widthsIn.reduce((a,b)=>a+b,0)*96:0;
- return natural>frame?Math.min(natural,frame+Math.max(0,rightMargin-12)):frame}
+ const natural=Array.isArray(widthsIn)&&widthsIn.length&&widthsIn.every(Number.isFinite)?widthsIn.reduce((a,b)=>a+b,0)*96:0;
+ if(!(natural>0))return frame;
+ return Math.min(natural,frame+Math.max(0,rightMargin-12))}
 /** Padding and width for a table whose columns' longest words (`textMins`,
  * px) must fit: as Word's autofit, the table first grows from the frame
  * (`width`) toward `maxWidth`, then its cell padding tightens from 8px to
@@ -120,10 +121,10 @@ export function composeWithTables(snapshot,runtime,input){
  // Word's w:ind on a paragraph (the engine's left, right, first-line and hanging clauses):
  // the paragraph moves by the smaller of its left and first-line starts, the right indent
  // narrows it, and an obstacle carves the first line (first-line) or the lines after it
- // (hanging). A note continued from another page has no first line here. List paragraphs
+ // (hanging). A note continued from another page, and the text after a manual line break (#66), has no first line here. List paragraphs
  // keep the list's own geometry (#63).
  function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const p=block.attrs?.sourceData?.paragraphProperties?.indents;if(!p)return none;
-  const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null?0:px(p['first-line'])-px(p.hanging),shift=Math.max(0,Math.min(left,left+first));
+  const px=v=>Number.isFinite(v)?v*96:0,left=px(p.left),first=block.attrs?.clipFrom!=null||block.attrs?.first===false?0:px(p['first-line'])-px(p.hanging),shift=Math.max(0,Math.min(left,left+first));
   return {shift,right:Math.max(0,px(p.right)),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
@@ -156,7 +157,7 @@ export function composeWithTables(snapshot,runtime,input){
   }}
   if(!columns)return {cells:[],rowHeights:[],rowTops:[0],columnWidths:[],total:0,headerHeight:0};
   const mins=Array.from({length:columns},()=>0);for(const c of cells){if(c.colspan!==1)continue;for(const block of c.blocks||[])for(const run of block.runs||[])for(const word of run.text.split(/\s+/))if(word)mins[c.columnIndex]=Math.max(mins[c.columnIndex],glyphWidth(word,run.font))}
-  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),fit=fitTable(mins,width,maxWidth),drawn=Math.max(tableWidth(weights,width,margins.rightPx),fit.width);
+  const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),base=tableWidth(weights,width,margins.rightPx),fit=fitTable(mins,base,maxWidth),drawn=Math.max(base,fit.width);
   const columnWidths=fitMinimums(gridWidths(weights,columns,drawn),mins.map(t=>t>0?t+2*fit.pad+3:0),drawn);
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
   const rowHeights=rows.map(()=>lh);
