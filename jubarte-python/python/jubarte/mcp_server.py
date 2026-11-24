@@ -14,13 +14,14 @@ Install with ``pip install 'jubarte-docx[mcp]'`` or run with
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import stat
 import sys
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import asdict
 from datetime import datetime, timezone
 from importlib import resources
@@ -127,17 +128,25 @@ def _main_part(package: zipfile.ZipFile) -> str:
     return "word/document.xml"
 
 
+_HIDDEN = (("<!--", "-->"), ("<![CDATA[", "]]>"))
+
+
 def _without_comments(xml: str) -> str:
-    """`xml` without its comments, in one pass: an unclosed `<!--` drops
-    the rest, as a parser would refuse it."""
+    """`xml` without its comments and CDATA sections (text that only looks
+    like markup), in one pass: an unclosed opener drops the rest, as a
+    parser would refuse it."""
     out: list[str] = []
     at = 0
-    while (start := xml.find("<!--", at)) >= 0:
+    while True:
+        found = [(i, opener, closer) for opener, closer in _HIDDEN if (i := xml.find(opener, at)) >= 0]
+        if not found:
+            break
+        start, opener, closer = min(found)
         out.append(xml[at:start])
-        end = xml.find("-->", start + 4)
+        end = xml.find(closer, start + len(opener))
         if end < 0:
             return "".join(out)
-        at = end + 3
+        at = end + len(closer)
     out.append(xml[at:])
     return "".join(out)
 
@@ -171,6 +180,15 @@ def move_kinds(docx: bytes) -> dict[str, str]:
     return kinds
 
 
+def _story(ident: str) -> str:
+    """The story a change id names: `footnotes.r7` and `header1.r3` by
+    their stem, a long id `header.a:rev:4` by what comes before `:rev:`,
+    a bare `r7` the body."""
+    if ":rev:" in ident:
+        return ident.rsplit(":rev:", 1)[0]
+    return ident.rsplit(".", 1)[0] if "." in ident else "body"
+
+
 def change_counts(changes: Sequence[Any]) -> dict[str, int]:
     """The desk's four chips from docx_changes: a replacement is one
     insertion and one deletion; both sides of a move count once."""
@@ -187,8 +205,7 @@ def change_counts(changes: Sequence[Any]) -> dict[str, int]:
         if kind == "move":
             # Word names moves per story: a body move1 and a footnote move1
             # are two moves. A change id carries its story (`footnotes.r7`).
-            story = change.id.rsplit(".", 1)[0] if "." in change.id else "body"
-            moves.add(f"{story}\0{change.move_name}" if change.move_name else change.id)
+            moves.add(f"{_story(change.id)}\0{change.move_name}" if change.move_name else change.id)
     counts["moved"] = len(moves)
     return counts
 
@@ -213,23 +230,29 @@ def _open_below(top: int, rel: str) -> int | None:
     return current
 
 
-def _scan(root: Path, top: int | None, rel: str) -> Any:
+@contextlib.contextmanager
+def _scan(root: Path, top: int | None, rel: str) -> Generator[Any]:
     """os.scandir of folder `rel`: by descriptor where the platform allows,
-    otherwise by path after checking the folder's real path is inside root."""
+    otherwise by path after checking the folder's real path is inside root.
+    The folder's descriptor stays open while its entries are read (their
+    stat goes through it) and is closed on exit: os.scandir works on a
+    duplicate and never closes it."""
     if top is None:
         folder = root / rel
         real = folder.resolve()
         if real != root and root not in real.parents:
             raise NotADirectoryError(rel)
-        return os.scandir(folder)
+        with os.scandir(folder) as it:
+            yield it
+        return
     fd = _open_below(top, rel)
     if fd is None:
         raise NotADirectoryError(rel)
     try:
-        return os.scandir(fd)
-    except OSError:
+        with os.scandir(fd) as it:
+            yield it
+    finally:
         os.close(fd)
-        raise
 
 
 def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
@@ -257,14 +280,19 @@ def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
         while pending:
             rel, depth = pending.pop(0)
             entries: list[Any] = []
+            spent = False
             try:
                 with _scan(root, top, rel) as it:
                     for entry in it:
                         visits += 1
                         if visits > _LIST_VISITS:
-                            files.sort(key=lambda f: f["path"])
-                            return files, True
-                        entries.append((entry.name, entry.stat(follow_symlinks=False)))
+                            spent = True
+                            break
+                        try:
+                            entries.append((entry.name, entry.stat(follow_symlinks=False)))
+                        except OSError:
+                            # Gone (or unreadable) since the folder was read: skip it alone.
+                            continue
             except OSError:
                 continue
             subfolders: list[tuple[str, int]] = []
@@ -288,6 +316,10 @@ def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
                             "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         }
                     )
+            if spent:
+                # What the folder gave before the budget ran out is listed; no more.
+                truncated = True
+                break
             pending[:0] = subfolders
     finally:
         if top is not None:
