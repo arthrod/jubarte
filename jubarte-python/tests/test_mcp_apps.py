@@ -8,6 +8,7 @@ the app-only docx_preview it reads documents through."""
 from __future__ import annotations
 
 import os
+import time
 from importlib import resources
 from io import BytesIO
 from pathlib import Path
@@ -512,3 +513,14 @@ def test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path: Path) -> None:
     assert listed["docx_compare"]["_meta"]["ui"] == {"resourceUri": UI_URI, "visibility": ["model"]}
     assert listed["docx_preview"]["_meta"]["ui"] == {"visibility": ["app"]}
     assert "Traceback" not in stderr
+
+
+def test_hidden_sections_are_stripped_in_linear_time() -> None:
+    """#25: 200,000 CDATA sections (2.6 MB) took minutes when each pass
+    searched the rest of the part again for both openers."""
+    xml = "<w:t>" + "<![CDATA[x]]>" * 200_000 + "<!-- c -->y</w:t>"
+    started = time.perf_counter()
+    assert server._without_comments(xml) == "<w:t>y</w:t>"
+    assert time.perf_counter() - started < 2.0
+    assert server._without_comments("a<!-- <![CDATA[ -->b<![CDATA[ <!-- ]]>c") == "abc"
+    assert server._without_comments("a<![CDATA[open") == "a"

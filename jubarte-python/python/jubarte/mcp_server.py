@@ -128,7 +128,8 @@ def _main_part(package: zipfile.ZipFile) -> str:
     return "word/document.xml"
 
 
-_HIDDEN = (("<!--", "-->"), ("<![CDATA[", "]]>"))
+_HIDDEN = {"<!--": "-->", "<![CDATA[": "]]>"}
+_HIDDEN_OPEN = re.compile("|".join(re.escape(opener) for opener in _HIDDEN))
 
 
 def _without_comments(xml: str) -> str:
@@ -138,15 +139,15 @@ def _without_comments(xml: str) -> str:
     out: list[str] = []
     at = 0
     while True:
-        found = [(i, opener, closer) for opener, closer in _HIDDEN if (i := xml.find(opener, at)) >= 0]
-        if not found:
+        found = _HIDDEN_OPEN.search(xml, at)
+        if found is None:
             break
-        start, opener, closer = min(found)
+        start, opener = found.start(), found.group()
         out.append(xml[at:start])
-        end = xml.find(closer, start + len(opener))
+        end = xml.find(_HIDDEN[opener], start + len(opener))
         if end < 0:
             return "".join(out)
-        at = end + len(closer)
+        at = end + len(_HIDDEN[opener])
     out.append(xml[at:])
     return "".join(out)
 
