@@ -181,3 +181,35 @@ describe("Accepted and Original are the engine's views (#40)", () => {
     await settle();
   });
 });
+
+describe("accessibility state follows what is shown (#43)", () => {
+  it("a cached mode drawn while another is on its way clears aria-busy", async () => {
+    host.app.ontoolinput({ arguments: { path: "b.docx" } });
+    host.app.ontoolresult({ structuredContent: { path: "b.docx" } });
+    host.pending
+      .at(-1)
+      .resolve({ structuredContent: { ...tracked.structuredContent, path: "b.docx" } });
+    await settle();
+    pick("accepted").click();
+    const accepted = host.pending.at(-1);
+    expect($("pages-fit").getAttribute("aria-busy")).toBe("true");
+    pick("tracked").click();
+    await settle();
+    accepted.resolve({ structuredContent: { ...tracked.structuredContent, view: "accepted" } });
+    await settle();
+    expect($("pages-fit").hasAttribute("aria-busy")).toBe(false);
+    expect($("pages-mount").dataset.view).toBe("tracked");
+  });
+  it("a new document closes the discussions and says so", async () => {
+    $("show-discussions").click();
+    expect($("show-discussions").getAttribute("aria-expanded")).toBe("true");
+    host.app.ontoolinput({ arguments: { path: "c.docx" } });
+    host.app.ontoolresult({ structuredContent: { path: "c.docx" } });
+    host.pending
+      .at(-1)
+      .resolve({ structuredContent: { ...tracked.structuredContent, path: "c.docx" } });
+    await settle();
+    expect($("embed-discussions").hidden).toBe(true);
+    expect($("show-discussions").getAttribute("aria-expanded")).toBe("false");
+  });
+});

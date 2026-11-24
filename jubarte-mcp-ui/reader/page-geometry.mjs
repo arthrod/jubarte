@@ -6,7 +6,16 @@
  * Numeric structured lengths use inches, matching the metadata parser; explicit
  * unit strings accept in, cm, mm, pt and px. Source metadata is never mutated.
  */
-const PRESETS = {Letter: [816, 1056], A4: [210 * 96 / 25.4, 297 * 96 / 25.4], Legal: [816, 1344]};
+// Word's paper list as the engine names it (WORD_PAGE_SIZES, twips / 15 = CSS px), short side first (#42).
+const twips = (w, h) => [w / 15, h / 15];
+const PRESETS = {Letter: [816, 1056], A4: [210 * 96 / 25.4, 297 * 96 / 25.4], Legal: [816, 1344],
+  Executive: twips(10440, 15120), Tabloid: twips(15840, 24480), Ledger: twips(15840, 24480), A3: twips(16838, 23811),
+  A5: twips(8391, 11906), 'B4 (JIS)': twips(14570, 20636), 'B5 (JIS)': twips(10318, 14570)};
+const PAPER = Object.keys(PRESETS).sort((a, b) => b.length - a.length).map(name => name.replace(/[()]/g, '\\$&')).join('|');
+const PAPER_SIZE = new RegExp(`^(${PAPER})(?:\\s+(portrait|landscape))?$`, 'i');
+const PAPER_START = new RegExp(`^(${PAPER})(?:\\s|$)`, 'i');
+// Any other sheet: the engine's `6x9in portrait`, width by height as drawn.
+const CUSTOM_SIZE = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)in(?:\s+(portrait|landscape))?$/i;
 const SIDES = ['top', 'right', 'bottom', 'left'];
 const UNITS = {in: 96, cm: 96 / 2.54, mm: 96 / 25.4, pt: 96 / 72, px: 1};
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -23,13 +32,16 @@ export function resolvePageGeometry(result = {}) {
   const raw = object(normalized) && own(normalized, 'raw') ? normalized.raw
     : result.metadata?.raw?.page ?? result.document?.frontmatter?.data?.page ?? normalized;
   const warnings = [];
-  let preset = 'Letter', orientation = 'portrait', customWidth, customHeight;
+  let preset = 'Letter', orientation = 'portrait', customWidth, customHeight, customName;
   const margins = Object.fromEntries(SIDES.map(side => [`${side}Px`, 96]));
   const warn = message => warnings.push(message);
   const size = value => {
     if (typeof value !== 'string') { warn(`Invalid page size; keeping ${preset}.`); return; }
-    const match = value.trim().match(/^(Letter|A4|Legal)(?:\s+(portrait|landscape))?$/i);
-    if (match) {
+    const match = value.trim().match(PAPER_SIZE), custom = value.trim().match(CUSTOM_SIZE);
+    if (custom) {
+      customWidth = `${custom[1]}in`; customHeight = `${custom[2]}in`; customName = `${custom[1]}x${custom[2]}in`;
+      if (custom[3]) orientation = custom[3].toLowerCase();
+    } else if (match) {
       preset = Object.keys(PRESETS).find(key => key.toLowerCase() === match[1].toLowerCase());
       if (match[2]) orientation = match[2].toLowerCase();
     } else warn(`Unsupported page size “${value}”; using ${preset}.`);
@@ -54,7 +66,7 @@ export function resolvePageGeometry(result = {}) {
   if (typeof raw === 'string') {
     for (const clause of raw.split(',').map(part => part.trim()).filter(Boolean)) {
       let match;
-      if (/^(Letter|A4|Legal)(?:\s|$)/i.test(clause)) size(clause);
+      if (PAPER_START.test(clause) || CUSTOM_SIZE.test(clause)) size(clause);
       else if (/^(portrait|landscape)$/i.test(clause)) orient(clause);
       // `margins top 0.5in, right 0.5in, …`: the engine names the first side
       // after the word, the others in their own clauses.
@@ -100,6 +112,6 @@ export function resolvePageGeometry(result = {}) {
       warn(`Margins leave less than 96px of content space; ${first.replace('Px', '')} and ${second.replace('Px', '')} margins reset to safe defaults.`);
     }
   }
-  const label = `${preset || `${Math.round(widthPx)} × ${Math.round(heightPx)}px`} ${orientation}`;
+  const label = `${customName ?? (preset || `${Math.round(widthPx)} × ${Math.round(heightPx)}px`)} ${orientation}`;
   return {page: {widthPx, heightPx, ...(['Letter', 'A4'].includes(preset) ? {preset: preset.toLowerCase()} : {})}, margins, label, warnings};
 }

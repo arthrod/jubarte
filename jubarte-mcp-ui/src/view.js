@@ -62,6 +62,8 @@ function clearPages() {
   $("pages-mount").replaceChildren();
   $("notices").replaceChildren();
   $("embed-discussions").hidden = true;
+  $("show-discussions").setAttribute("aria-expanded", "false");
+  $("pages-fit").removeAttribute("aria-busy");
 }
 
 function fail(title, error) {
@@ -258,6 +260,8 @@ async function open(path, { fromList = false } = {}) {
 async function show(view) {
   const have = previews.get(view);
   if (have) {
+    // A view still on its way no longer answers anything (#43).
+    $("pages-fit").removeAttribute("aria-busy");
     preview = have;
     drawMode = "tracked";
     render();
