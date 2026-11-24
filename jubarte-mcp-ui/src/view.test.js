@@ -213,3 +213,23 @@ describe("accessibility state follows what is shown (#43)", () => {
     expect($("show-discussions").getAttribute("aria-expanded")).toBe("false");
   });
 });
+
+describe("the discussion panel (#44)", () => {
+  it("says a resolved thread is resolved", async () => {
+    host.app.ontoolinput({ arguments: { path: "r.docx" } });
+    host.app.ontoolresult({ structuredContent: { path: "r.docx" } });
+    host.pending.at(-1).resolve({
+      structuredContent: {
+        path: "r.docx",
+        view: "tracked",
+        markdown:
+          "---\nview: tracked\n---\n\n<!-- p0 -->\nBefore {==word==}{>>c5 @AC resolved: root<<}{>>c6 @AS re c5: reply<<} and {==open==}{>>c7 @AC: still open<<}.\n",
+      },
+    });
+    await settle();
+    $("show-discussions").click();
+    const [resolved, open] = $("threads").querySelectorAll("article");
+    expect(resolved.textContent).toMatch(/resolved/i);
+    expect(open.textContent).not.toMatch(/resolved/i);
+  });
+});

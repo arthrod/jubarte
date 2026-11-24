@@ -145,6 +145,16 @@ function showThreads(id) {
   for (const thread of threads) {
     const article = document.createElement("article");
     article.tabIndex = -1;
+    // Resolved is part of what the thread says, not only its colour (#44).
+    if (thread.resolved) {
+      article.classList.add("resolved");
+      article.append(
+        Object.assign(document.createElement("span"), {
+          className: "thread-status",
+          textContent: "Resolved",
+        }),
+      );
+    }
     for (const comment of thread.comments) {
       const by = document.createElement("strong");
       by.textContent = comment.author || "Reviewer";

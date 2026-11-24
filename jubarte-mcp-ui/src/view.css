@@ -187,6 +187,18 @@ body.fixed {
 #close-discussions {
     margin-bottom: 6px;
 }
+/* A resolved thread: said in words, and quieter (#44). */
+#embed-discussions article.resolved {
+    opacity: 0.72;
+}
+#embed-discussions .thread-status {
+    display: block;
+    margin-bottom: 4px;
+    font: 500 11px/1.4 "JetBrains Mono", monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #73736b;
+}
 
 /* An image the paginator cannot draw: its alt text, framed like the
    reader's .image-placeholder. Outline only, so the measured width holds;
