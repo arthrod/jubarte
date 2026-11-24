@@ -119,20 +119,21 @@ export function projectDialect(tree, critic, document){
  // Table identity and merge intent remain on nodes; CSS honors non-overlapping merges.
  for(const table of blocks.filter(b=>b.type==='table')){
   const d=table.directives?.find(d=>d.type==='table');if(!d)continue;if(d.columnWidthsIn&&d.columnWidthsIn.length===Math.max(0,...table.children.map(r=>r.children.length)))table.columnWidthsIn=d.columnWidthsIn;
-  if(d.cells?.paragraphRange){let id=d.cells.paragraphRange.start;for(const row of table.children)for(const cell of row.children){if(id<=d.cells.paragraphRange.end){cell.agentId='p'+id++;cell.paragraphIds=[cell.agentId]}}}
-  for(const rowGroup of d.cells?.rows||[]){const row=table.children[rowGroup.row];if(!row)continue;rowGroup.paragraphRanges.forEach((r,i)=>{const cell=row.children[i];if(cell)cell.paragraphIds=Array.from({length:r.end-r.start+1},(_,n)=>'p'+(r.start+n))})}
   // `merged tN.rowR.cellC` counts Word cells, as write.rs plan_table does: the empty
   // Markdown cells after a span are its covered columns, and a vertical merge's
   // continuation (a Word cell of its own) covers the same grid column below.
-  if(d.cellSizes?.length)for(const row of table.children)for(const cell of row.children){const ids=(cell.paragraphIds||[]).map(id=>Number(id.slice(1)));const size=d.cellSizes.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(size)cell.fontSizePt=size.points}
   if(d.merges?.length){const byCell=new Map(d.merges.map(m=>[m.row+'.'+m.cell,m])),used=new Set(),below=new Map();
    table.children.forEach((row,r)=>{let cell=0,spanned=0;row.children.forEach((node,at)=>{const empty=!(node.children||[]).some(function full(n){return typeof n.text==='string'?n.text.trim()!=='':(n.children||[]).some(full)});const v=below.get(at);
     if(v&&v.until>=r){node.mergedCovered=true;spanned=v.across-1;cell++;return}
-    if(spanned>0&&empty){node.mergedCovered=true;spanned--;return}
+    if(spanned>0&&empty){node.mergedCovered=true;node.spanCovered=true;spanned--;return}
     const merge=byCell.get(r+'.'+cell);spanned=0;
     if(merge){used.add(merge);node.colSpan=merge.across;node.rowSpan=merge.down;node.merge=merge;spanned=merge.across-1;if(merge.down>1)below.set(at,{until:r+merge.down-1,across:merge.across})}
     cell++})});
    for(const merge of d.merges)if(!used.has(merge))warnings.push({code:'merge-outside-table',message:'A merge directive points outside the parsed table.',merge})}
+  // Paragraph ids count Word cells too: a span's covered columns hold none.
+  if(d.cells?.paragraphRange){let id=d.cells.paragraphRange.start;for(const row of table.children)for(const cell of row.children.filter(c=>!c.spanCovered)){if(id<=d.cells.paragraphRange.end){cell.agentId='p'+id++;cell.paragraphIds=[cell.agentId]}}}
+  for(const rowGroup of d.cells?.rows||[]){const row=table.children[rowGroup.row];if(!row)continue;rowGroup.paragraphRanges.forEach((r,i)=>{const cell=row.children.filter(c=>!c.spanCovered)[i];if(cell)cell.paragraphIds=Array.from({length:r.end-r.start+1},(_,n)=>'p'+(r.start+n))})}
+  if(d.cellSizes?.length)for(const row of table.children)for(const cell of row.children){const ids=(cell.paragraphIds||[]).map(id=>Number(id.slice(1)));const size=d.cellSizes.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(size)cell.fontSizePt=size.points}
  }
  // Apply the browser-expressible portion of the style legend; preserve everything else as metadata.
  const applyStyle=node=>{if(node.type){const key=/^h[1-6]$/.test(node.type)?'#'.repeat(Number(node.type[1])):node.wordStyle||'Normal';node.documentStyle=document.metadata.styles?.[key]||document.metadata.styles?.[node.wordStyle]||(/^(h[1-6]|code_block)$/.test(node.type)?null:document.metadata.styles?.Normal)||null;}for(const child of node.children||[])if(child.type)applyStyle(child)};value.forEach(applyStyle);

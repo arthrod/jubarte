@@ -154,10 +154,13 @@ function parseClause(raw, context) {
   }
   const NUM = '(\\d+(?:\\.\\d*)?|\\.\\d+)';
   if ((match = value.match(new RegExp(`^size\\s+${NUM}pt$`)))) return {...scopedBase, type: 'size', points: Number(match[1])};
-  // A table line sizes its cells' paragraphs: `p153-p249 size 10pt`.
-  if ((match = value.match(new RegExp(`^p(\\d+)(?:-p(\\d+))?\\s+size\\s+${NUM}pt$`)))) {
+  // A table line sizes its cells' paragraphs: `p153-p249 size 10pt`, among
+  // the space-joined words the engine writes for a cell group
+  // (`p8-p38 line 8.65pt exact size 9pt mark style`; from_docx cell_spacings).
+  if ((match = value.match(new RegExp(`^p(\\d+)(?:-p(\\d+))?\\s+(?:.*\\s)?size\\s+${NUM}pt(?:\\s+mark\\s+style)?$`)))) {
     return {...scopedBase, type: 'cell-size', from: Number(match[1]), to: Number(match[2] ?? match[1]), points: Number(match[3])};
   }
+  if (value === 'mark style') return {...scopedBase, type: 'mark-style'};
   if ((match = value.match(/^widths\s+((?:(?:\d+(?:\.\d*)?|\.\d+)in\s*)+)$/))) {
     return {...scopedBase, type: 'widths', inches: match[1].trim().split(/\s+/).map((w) => Number(w.slice(0, -2)))};
   }
@@ -171,7 +174,7 @@ function parseClause(raw, context) {
 }
 
 function looksLikeClause(value) {
-  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty)(?:\s|$)/.test(value);
+  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty|size|mark|before|after|line)(?:\s|$)/.test(value);
 }
 
 function normalizeDirective(directive) {

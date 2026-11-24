@@ -119,13 +119,15 @@ test('same-kind nesting is literal and comment bodies do not parse markup', () =
   assert.equal(p.diagnostics[0].code, 'literal-nested-critic');
 });
 
-test('Critic preprocesses code globally, matching Jubarte', () => {
+test('Critic is literal in a code span and marks in a fenced block, matching Jubarte', () => {
+  // The engine (markdown_to_docx) writes `{++code++}` in a code span as text
+  // and {--old--} in a fence as a w:del (critic.rs, Literal; #25).
   const tree = parse('`{++code++}`\n\n```js\n{--old--}\n```');
   assert.equal(tree.children[0].children[0].type, 'inlineCode');
-  assert.equal(tree.children[0].children[0].value, 'code');
+  assert.equal(tree.children[0].children[0].value, '{++code++}');
   assert.equal(tree.children[1].type, 'code');
   assert.equal(tree.children[1].value, 'old');
-  assert.deepEqual(kinds(tree.data.critic), ['insertion', 'deletion']);
+  assert.deepEqual(kinds(tree.data.critic), ['deletion']);
 });
 
 test('noCritic initially bypasses scanning exactly and preserves code', () => {

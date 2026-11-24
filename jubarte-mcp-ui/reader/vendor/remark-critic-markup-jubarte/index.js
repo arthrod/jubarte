@@ -12,6 +12,7 @@
 
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { attributionTag, isDate, readNote } from '../../attribution-tags.js';
+import { verbatimEnd, verbatimRanges } from '../../verbatim.js';
 
 const FORMS = [
   { open: '{++', close: '++}', kind: 'insertion', bit: 1 },
@@ -41,7 +42,7 @@ function lowerBound(values, target) {
   return lo;
 }
 
-function closerIndex(source) {
+function closerIndex(source, inVerbatim = () => null) {
   const index = new Map();
   for (const pattern of [...FORMS.map((form) => form.close), '~>']) {
     const positions = [];
@@ -49,7 +50,7 @@ function closerIndex(source) {
     while (from < source.length) {
       const at = source.indexOf(pattern, from);
       if (at < 0) break;
-      if (!isEscaped(source, at)) positions.push(at);
+      if (!isEscaped(source, at) && inVerbatim(at) === null) positions.push(at);
       from = at + 1;
     }
     index.set(pattern, positions);
@@ -59,6 +60,19 @@ function closerIndex(source) {
     const at = values[lowerBound(values, from)];
     return at !== undefined && at + pattern.length <= until ? at : -1;
   };
+}
+
+/** CommonMark's indented code blocks, which the engine finds with
+ * pulldown-cmark: only when some line could start one. */
+function indentedCode(source) {
+  if (!/^(?: {4}|\t)/m.test(source)) return [];
+  const out = [];
+  const visit = (node) => {
+    if (node.type === 'code' && !/^[ \t]*(```|~~~)/.test(source.slice(node.position.start.offset - node.position.start.column + 1))) out.push([node.position.start.offset, node.position.end.offset]);
+    else for (const child of node.children || []) visit(child);
+  };
+  visit(fromMarkdown(source));
+  return out;
 }
 
 function literalProtectionOffsets(markdown) {
@@ -171,7 +185,9 @@ export function prepareCritic(input, options = {}) {
   let tagAnchor = null;
   let tagGap = '';
   const nextId = (kind) => `critic-${kind}-${++sequence}`;
-  const findCloser = closerIndex(source);
+  // Where Markdown reads literally nothing opens or closes (verbatim.js).
+  const inVerbatim = verbatimEnd(verbatimRanges(source, indentedCode(source)));
+  const findCloser = closerIndex(source, inVerbatim);
   const storyAt = (offset) => options.storyAt?.(offset) || options.story || 'body';
   const defaultAuthor = () => ({ author: options.planAuthor || 'Modified User', ...(options.date ? { date: options.date } : {}), isNew: true });
 
@@ -334,6 +350,14 @@ export function prepareCritic(input, options = {}) {
     let at = from;
     let previous = null;
     while (at < until) {
+      const literal = inVerbatim(at);
+      if (literal !== null) {
+        const end = Math.min(literal, until);
+        append(at, end);
+        previous = null;
+        at = end;
+        continue;
+      }
       const possibleForm = source[at] === '{' && !isEscaped(source, at)
         ? FORMS.find((candidate) => source.startsWith(candidate.open, at))
         : null;

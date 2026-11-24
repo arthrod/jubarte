@@ -100,3 +100,37 @@ test('a crowded table grows into the margin, then tightens its padding, before b
   assert.deepEqual(fitTable([400, 400], 576, 660), { pad: 2, width: 660 }); // cannot fit: tightest, widest
   assert.deepEqual(fitTable([40, 0, 40], 576, 660), { pad: 8, width: 576 }); // an empty column costs nothing
 });
+
+test('a paragraph line may open with size or spacing, not a style (#25)', async () => {
+  const { parseDirective } = await import('./metadata.mjs');
+  const d = parseDirective('p0 size 9pt');
+  assert.equal(d.fontSizePt, 9);
+  assert.ok(!d.style, `style ${d.style}`);
+  const e = parseDirective('p0 before 6pt, size 9pt, mark style');
+  assert.equal(e.fontSizePt, 9);
+  assert.ok(!e.style, `style ${e.style}`);
+  assert.equal(parseDirective('p0 Heading1, size 9pt').style, 'Heading1');
+});
+
+const cellSizes = (line, md) => {
+  const out = [];
+  parseJubarte(`---\nview: tracked\n---\n\n<!-- ${line} -->\n${md}\n`).doc.descendants((n) => {
+    if (n.type.name === 'td' || n.type.name === 'th') out.push(n.attrs.data.fontSizePt ?? null);
+  });
+  return out;
+};
+
+test('a cell group reads its size beside spacing and mark style, as the engine writes it (#25)', () => {
+  const md = '|A|B|C|\n|-|-|-|';
+  assert.deepEqual(cellSizes('t0 1x3, cells p0-p2 by row, p0-p2 size 9pt mark style', md), [9, 9, 9]);
+  assert.deepEqual(cellSizes('t0 1x3, cells p0-p2 by row, p0-p2 line 12pt exact size 9pt', md), [9, 9, 9]);
+  assert.deepEqual(cellSizes('t0 1x3, cells p0-p2 by row, p0-p2 before 1 lines after 2pt size 10.5pt mark style', md), [10.5, 10.5, 10.5]);
+});
+
+test('a covered column takes no paragraph id, so sizes stay with their cells (#25)', () => {
+  const md = '|A||B|\n|-|-|-|\n|C|D|E|';
+  assert.deepEqual(
+    cellSizes('t0 2x3, cells p0-p4 by row, p0 size 9pt, p1 size 7pt, widths 1in 1in 1in, merged t0.row0.cell0 across 2', md),
+    [9, null, 7, null, null, null],
+  );
+});
