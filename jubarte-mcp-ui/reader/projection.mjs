@@ -19,10 +19,28 @@ function textMap(raw,value,start){
  let cursor=0;const aligned=[];for(let i=0;i<value.length;i++){const ch=value[i];let at=raw.indexOf(ch,cursor);if(at<0)at=cursor;aligned.push(start+at);cursor=Math.min(raw.length,at+1)}return aligned;
 }
 const safeUrl=url=>/^(?:https?:|mailto:|#)/i.test(url||'') ? url : /^(?![a-z][a-z\d+.-]*:)[^\s]+$/i.test(url||'') ? url : '';
+// Headings are named as the engine names their bookmarks, so every link
+// read_view writes reaches its heading (#37). Ports of github_slug, Slugger
+// and bookmark_name in crates/jubarte-markdown/src/markdown/write.rs.
+const MOST_BOOKMARK=40;
+export function githubSlug(text){let out='';for(const c of text.toLowerCase()){if(c===' '||c==='-')out+='-';else if(/[\p{Alphabetic}\p{L}\p{M}\p{Nd}\p{Nl}\p{Pc}]/u.test(c))out+=c}return out}
+export function slugger(){const seen=new Map();return slug=>{let name=slug;while(seen.has(name)){const repeats=(seen.get(slug)??0)+1;seen.set(slug,repeats);name=`${slug}-${repeats}`}seen.set(name,0);return name}}
+const wordTakes=slug=>/^\p{Alphabetic}/u.test(slug)&&[...slug].length<=MOST_BOOKMARK;
+export function bookmarkName(slug,used=new Set()){
+ if(wordTakes(slug))return slug;
+ const named=/^\p{Alphabetic}/u.test(slug)?slug:'_'+slug;
+ if([...named].length<=MOST_BOOKMARK&&!used.has(named))return named;
+ for(let n=0;;n++){const suffix=n?`-${n}`:'';const name=[...named].slice(0,MOST_BOOKMARK-suffix.length).join('')+suffix;if(!used.has(name))return name}
+}
+// An <a id="…"></a> is a bookmark the engine wrote: a link target that draws
+// nothing (#37).
+const ANCHOR=/<a\s+(?:id|name)="([^"]*)"\s*>\s*<\/a>/gi;
+const anchorIds=n=>[...n.value.matchAll(ANCHOR)].map(m=>m[1]).filter(Boolean);
+const anchorOnly=n=>n.type==='html'&&new RegExp(ANCHOR.source,'i').test(n.value)&&n.value.replace(ANCHOR,'').replace(/<!--[\s\S]*?-->/g,'').trim()==='';
 export function projectDialect(tree, critic, document){
  const markdown=critic.markdown;
  const changes=critic.changes||[],highlights=critic.highlights||[],comments=critic.comments||[];
- const warnings=[];const blocks=[];const definitions=new Map();let headingCounts=new Map();
+ const warnings=[];const blocks=[];const definitions=new Map();const nameHeading=slugger();const usedNames=new Set([...markdown.matchAll(ANCHOR)].map(m=>m[1]));let aliasSink=[];let openAnchors=0;
  const sentinelPositions=new Set(critic.sentinelPositions||[]);
  const sourceOffset=p=>critic.sourceMap?.[p]??p;
  const range=(s,e)=>({start:s,end:e,sourceStart:sourceOffset(s),sourceEnd:sourceOffset(e)});
@@ -65,6 +83,8 @@ export function projectDialect(tree, critic, document){
    if(n.type==='break'){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
    if(n.type==='html'){
     if(commentOnly(n))continue;
+    if(anchorOnly(n)){aliasSink.push(...anchorIds(n));continue}
+    {const open=n.value.trim().match(/^<a\s+(?:id|name)="([^"]*)"\s*>$/i);if(open){if(open[1])aliasSink.push(open[1]);openAnchors++;continue}if(openAnchors&&/^<\/a\s*>$/i.test(n.value.trim())){openAnchors--;continue}}
     const raw=n.value.trim();const m=raw.match(/^<(\/)?(u|sup|sub|b|i|s|code|mark)(?:\s+class="hl-([A-Za-z]+)")?\s*>$/i);if(m&&!(m[3]&&m[2].toLowerCase()!=='mark')){const tag=m[2].toLowerCase(),key={u:'underline',sup:'superscript',sub:'subscript',b:'bold',i:'italic',s:'strikethrough',code:'code',mark:'highlight'}[tag];if(m[1]){active[key]=stacks[key]?.pop()||false}else{(stacks[key]??=[]).push(active[key]||false);active[key]=tag==='mark'?(m[3]||'yellow').toLowerCase():true}continue}
     if(/^<br\s*\/?\s*>$/i.test(raw)){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
     out.push(...leaves(n.value,offset(n),n.value,{...active,htmlLiteral:true}));continue;
@@ -83,27 +103,31 @@ export function projectDialect(tree, critic, document){
  // An HTML comment the directive pass left (a picture's drawing, a text box's
  // bounds) writes no text in the engine, so it draws nothing here (b106).
  const commentOnly=n=>n.type==='html'&&n.value.replace(/<!--[\s\S]*?-->/g,'').trim()==='';
+ // A block's children without definitions, comments and <a id> bookmarks; a
+ // bookmark on a line of its own becomes the next block's alias (#37).
+function siblings(children){const kept=[];let carry=[];for(const x of children){if(x.type==='definition'||commentOnly(x))continue;if(anchorOnly(x)){carry.push(...anchorIds(x));continue}if(carry.length){x.jubarteAliases=[...(x.jubarteAliases||[]),...carry];carry=[]}kept.push(x)}if(carry.length&&kept.length){const last=kept.at(-1);last.jubarteAliases=[...(last.jubarteAliases||[]),...carry]}return kept}
  function make(n,extra={}){
   const type=n.type==='heading'?'h'+n.depth:n.type==='list'?(n.ordered?'ol':'ul'):mdTypes[n.type]||'p';
-  const result={type,sourceRange:range(offset(n),end(n)),...extra,children:[]};
+  const result={type,sourceRange:range(offset(n),end(n)),...extra,children:[]};const outerSink=aliasSink;aliasSink=[...(n.jubarteAliases||[])];
   if(['paragraph','heading','tableCell'].includes(n.type))result.children=inline(n.children);
   else if(n.type==='code'){
    result.lang=n.lang||'';const raw=markdown.slice(offset(n),end(n));const firstLine=raw.indexOf('\n');const start=/^ {0,3}(`{3,}|~{3,})/.test(raw)?offset(n)+firstLine+1:offset(n);result.children=leaves(n.value,start,markdown.slice(start,end(n)),{codeBlock:true});
   }else if(n.type==='thematicBreak')result.children=[{text:''}];
   else if(n.type==='html'){result.type='p';result.children=inline([n]);}
-  else result.children=(n.children||[]).filter(x=>x.type!=='definition'&&!commentOnly(x)).map(x=>make(x));
+  else result.children=siblings(n.children||[]).map(x=>make(x));
   if(n.type==='list')result.start=n.start||1;
   if(n.type==='listItem')result.checked=n.checked;
   if(n.type==='footnoteDefinition'){result.identifier=n.identifier;result.story='footnotes'}
   if(n.type==='table'){result.align=n.align;result.headerRowRepeats=true;result.wordStyle='TableGrid';result.children.forEach((row,ri)=>row.children.forEach((cell,ci)=>{cell.type=ri===0?'th':'td';cell.align=n.align?.[ci]||null}));}
-  if(n.type==='heading'){const content=plain(result).toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu,'').trim().replace(/\s+/g,'-');const seen=headingCounts.get(content)||0;headingCounts.set(content,seen+1);result.anchor=content+(seen?'-'+seen:'');result.wordStyle='Heading'+n.depth}
+  if(n.type==='heading'){const slug=githubSlug(shown(result).trim());if(slug){const name=bookmarkName(nameHeading(slug),usedNames);usedNames.add(name);result.anchor=name}result.wordStyle='Heading'+n.depth}
   if(n.type==='paragraph')result.wordStyle='Normal';if(n.type==='blockquote')result.wordStyle='Quote';if(n.type==='listItem')result.wordStyle='ListParagraph';if(n.type==='code')result.wordStyle='SourceCode';
+  if(aliasSink.length)result.aliases=aliasSink;aliasSink=outerSink;
   if(!result.children.length)result.children=[{text:''}];
   if(['p','h1','h2','h3','h4','h5','h6','code_block','li','td','th','table','tr','footnote'].includes(result.type))blocks.push(result);
   return result;
  }
  for(const n of tree.children)if(n.type==='definition')definitions.set(n.identifier,n);
- let value=tree.children.filter(n=>n.type!=='definition'&&!commentOnly(n)).map(n=>make(n));
+ let value=siblings(tree.children).map(n=>make(n));
  function visibleLeaves(n){if(typeof n.text==='string')return words(n.text)?[n]:[];return(n.children||[]).flatMap(visibleLeaves)}
  function structural(block){const ls=visibleLeaves(block);if(!ls.length)return null;let candidates=ls[0].criticChanges||[];candidates=candidates.filter(c=>ls.every(l=>(l.criticChanges||[]).some(x=>x.id===c.id)));return candidates.length?{kind:candidates.at(-1).kind,changeIds:[candidates.at(-1).id],wholeBlock:true,includesParagraphMark:!['td','th'].includes(block.type)}:null}
  for(const block of blocks)if(!['table','tr'].includes(block.type)){const s=structural(block);if(s)block.structuralChange=s;}
@@ -150,4 +174,6 @@ export function projectDialect(tree, critic, document){
  for(const foot of blocks.filter(b=>b.type==='footnote')){const ref=refs.find(r=>r.identifier===foot.identifier&&(r.criticChanges||[]).length);if(ref)foot.referenceChange={changeIds:ref.criticChanges.map(c=>c.id),kind:ref.criticChanges.at(-1).kind,wholeFootnote:true};}
  return {value:value.length?value:[{type:'p',children:[{text:''}]}],paragraphMarks,warnings,blocks};
 }
+// The text the engine names a heading by: deleted text and note marks are no part of it.
+function shown(node){if(typeof node.text==='string')return node.criticDeletion?'':node.text;if(node.type==='footnote_ref')return '';return(node.children||[]).map(shown).join('')}
 export function plain(node){return typeof node.text==='string'?node.text:(node.children||[]).map(plain).join('')}
