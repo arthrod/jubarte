@@ -273,6 +273,89 @@ def test_view_listing_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert listed.structured_content["truncated"] is True
 
 
+def test_view_listing_does_not_follow_a_folder_swapped_for_a_link(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#12: a folder replaced by a link between its lstat and its scan stays shut."""
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "inside.docx").write_bytes(make_document("x"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "private.docx").write_bytes(make_document("x"))
+
+    def swap(target: Any) -> None:
+        if str(target).endswith("sub") and not (root / "sub").is_symlink():
+            (root / "sub" / "inside.docx").unlink()
+            (root / "sub").rmdir()
+            os.symlink(outside, root / "sub", target_is_directory=True)
+
+    real_scandir, real_open = os.scandir, os.open
+
+    def scandir(target: Any = ".") -> Any:
+        swap(target)
+        return real_scandir(target)
+
+    def opener(target: Any, *args: Any, **kwargs: Any) -> int:
+        swap(target)
+        return real_open(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(os, "open", opener)
+    files, _ = server.list_documents(root.resolve())
+    assert [f["path"] for f in files] == []
+
+
+def test_view_listing_does_not_read_past_its_entry_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#13: a wide folder is read only as far as the budget, not read whole and sorted."""
+    for i in range(50):
+        (tmp_path / f"f{i:02}.txt").write_text("x")
+    seen = 0
+    real_scandir = os.scandir
+
+    class Counting:
+        def __init__(self, it: Any) -> None:
+            self.it = it
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self.it.close()
+
+        def __iter__(self) -> Any:
+            nonlocal seen
+            for entry in self.it:
+                seen += 1
+                yield entry
+
+    monkeypatch.setattr(os, "scandir", lambda target=".": Counting(real_scandir(target)))
+    monkeypatch.setattr(server, "_LIST_VISITS", 5)
+    _, truncated = server.list_documents(tmp_path.resolve())
+    assert truncated is True
+    assert seen <= 6
+
+
+def test_moves_in_two_stories_with_one_name_count_twice() -> None:
+    """#14: Word names moves per story; a body move1 and a footnote move1 are two moves."""
+
+    class Change:
+        def __init__(self, ident: str, name: str) -> None:
+            self.kind, self.id, self.move_name = "move", ident, name
+            self.story = ident.split(".")[0] if "." in ident else "body"
+
+    changes = [Change("r7", "move1"), Change("r8", "move1"), Change("footnotes.r7", "move1"), Change("footnotes.r8", "move1")]
+    assert server.change_counts(changes)["moved"] == 2
+
+
+def test_move_kinds_ignore_moves_inside_xml_comments() -> None:
+    """#15: a commented-out w:moveTo does not reclassify a real move."""
+    body = MOVE + '<!-- <w:moveTo w:id="7"/> -->'
+    kinds = server.move_kinds(package(body))
+    assert kinds == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+    # One pass: many unclosed openers cost a linear scan, not a quadratic one.
+    assert server._without_comments("a<!--b" + "<!--" * 200_000) == "a"
+    assert server._without_comments("x<!--c-->y<!--d-->z") == "xyz"
+
+
 # -- what does not change -------------------------------------------------
 
 
@@ -325,7 +408,8 @@ def test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path: Path) -> None:
             reply = json.loads(line) if line.strip() else {}
             if "id" in reply:
                 replies[reply["id"]] = reply
-            if 3 in replies:
+            # The server answers concurrently: tools/list can overtake the read.
+            if {2, 3} <= replies.keys():
                 break
         proc.stdin.close()
         stderr = proc.stderr.read()
