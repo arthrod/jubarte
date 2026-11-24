@@ -37,6 +37,8 @@ TOOLS = {
     "docx_validate",
     "docx_comments",
     "docx_audit",
+    "docx_view",
+    "docx_preview",
 }
 READ_ONLY = {
     "docx_capabilities",
@@ -46,6 +48,8 @@ READ_ONLY = {
     "docx_validate",
     "docx_comments",
     "docx_audit",
+    "docx_view",
+    "docx_preview",
 }
 
 

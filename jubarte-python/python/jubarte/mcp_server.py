@@ -15,17 +15,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import stat
 import sys
+import zipfile
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import datetime, timezone
+from importlib import resources
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 try:
     from mcp.server import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
-    from mcp.types import ToolAnnotations
+    from mcp.types import CallToolResult, TextContent, ToolAnnotations
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
         "jubarte-mcp needs the MCP SDK: pip install 'jubarte-docx[mcp]'"
@@ -48,13 +54,47 @@ INSTRUCTIONS = (
     "docx_compare (two files into a tracked-changes redline), docx_accept and "
     "docx_reject (resolve tracked changes by id, author or kind), "
     "docx_capabilities (what this build supports), docx_validate, "
-    "docx_comments and docx_audit (available when the engine build has them)."
+    "docx_comments and docx_audit (available when the engine build has them). "
+    "docx_view shows a document, or lists the root's documents, in hosts that "
+    "draw MCP Apps."
 )
 
 _READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False, open_world_hint=False)
 _RESOLVE_ACTIONS = frozenset({"accept", "reject"})
 _PLAN_LIMIT = 1024 * 1024
+
+# The MCP Apps card (SEP-1865): one self-contained HTML file built by
+# jubarte-mcp-ui into this package. Hosts that draw MCP Apps show it for the
+# tools whose `_meta.ui.resourceUri` names it; others ignore the metadata and
+# read the tools' text as before.
+UI_URI = "ui://jubarte/document.html"
+UI_MIME = "text/html;profile=mcp-app"
+_CARD = {"ui": {"resourceUri": UI_URI}}
+# Tools that write: a view never calls them, only the model (#5, R1).
+_MODEL_ONLY = {"ui": {"visibility": ["model"]}}
+_CARD_MODEL_ONLY = {"ui": {"resourceUri": UI_URI, "visibility": ["model"]}}
+# docx_preview is the card's own read; hosts hide it from the model.
+_APP_ONLY = {"ui": {"visibility": ["app"]}}
+# Antigravity also offers docx_view as a side-panel tab and a full page; a
+# manual launch passes `{}`, which lists the root's documents.
+_VIEW_META = {
+    "ui": {"resourceUri": UI_URI},
+    "com.google.antigravity/ui": {"entrypoints": ["aux_pane", "global"], "title": "Jubarte"},
+}
+# The serialized UTF-8 JSON of one preview; hosts persist tool results of a
+# few MiB at most.
+_PREVIEW_LIMIT = 2 * 1024 * 1024
+# docx_view's listing: files returned, directory entries visited, depth.
+_LIST_FILES = 200
+_LIST_VISITS = 5000
+_LIST_DEPTH = 6
+_LIST_SKIP = frozenset({".scratch", "node_modules", "target", "__pycache__"})
+# A story's moved runs, as jubarte-app's desk keys them for the reader.
+_STORIES = (("body", None), ("footnotes", "word/footnotes.xml"), ("endnotes", "word/endnotes.xml"))
+_MOVE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(moveTo|moveFrom)(?=[\s/>])([^>]*)>")
+_ID = re.compile(r"""(?:^|\s)(?:[A-Za-z_][\w.-]*:)?id\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_PART_LIMIT = 64 * 1024 * 1024
 
 
 def resolve_action(action: str) -> str:
@@ -71,6 +111,75 @@ def _plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_plain(v) for v in value]
     return value
+
+
+def _main_part(package: zipfile.ZipFile) -> str:
+    """The officeDocument part named by the package relationships."""
+    try:
+        rels = package.read("_rels/.rels").decode("utf-8", "replace")
+    except KeyError:
+        return "word/document.xml"
+    for rel in re.findall(r"<(?:[\w.-]+:)?Relationship\b[^>]*>", rels):
+        if "/officeDocument" in rel:
+            target = re.search(r"""Target\s*=\s*["']([^"']+)""", rel)
+            if target:
+                return target.group(1).lstrip("/")
+    return "word/document.xml"
+
+
+def move_kinds(docx: bytes) -> dict[str, str]:
+    """`{story}:rev:{w:id}` to `moveins`/`movedel` for every w:moveTo and
+    w:moveFrom in the body, footnotes and endnotes: the map jubarte-app's
+    desk gives its reader, which renders moves as plain ins/del without it.
+    A scan of the raw XML, so no entity is ever expanded; a part larger than
+    64 MiB uncompressed is skipped."""
+    kinds: dict[str, str] = {}
+    try:
+        with zipfile.ZipFile(BytesIO(docx)) as package:
+            for story, name in _STORIES:
+                part = name or _main_part(package)
+                try:
+                    info = package.getinfo(part)
+                except KeyError:
+                    continue
+                if info.file_size > _PART_LIMIT:
+                    continue
+                xml = package.read(info).decode("utf-8", "replace")
+                for m in _MOVE.finditer(xml):
+                    ident = _ID.search(m.group(2))
+                    if ident:
+                        value = ident.group(1) if ident.group(1) is not None else ident.group(2)
+                        kinds[f"{story}:rev:{value}"] = "moveins" if m.group(1) == "moveTo" else "movedel"
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return {}
+    return kinds
+
+
+def change_counts(changes: Sequence[Any]) -> dict[str, int]:
+    """The desk's four chips from docx_changes: a replacement is one
+    insertion and one deletion; both sides of a move count once."""
+    counts = {"inserted": 0, "deleted": 0, "moved": 0, "formatted": 0}
+    moves: set[str] = set()
+    for change in changes:
+        kind = change.kind
+        if kind in ("insertion", "replacement"):
+            counts["inserted"] += 1
+        if kind in ("deletion", "replacement"):
+            counts["deleted"] += 1
+        if kind == "formatting":
+            counts["formatted"] += 1
+        if kind == "move":
+            moves.add(change.move_name or change.id)
+    counts["moved"] = len(moves)
+    return counts
+
+
+def _card_html() -> str:
+    """The built card; a source checkout that never ran the UI build says so."""
+    try:
+        return resources.files("jubarte").joinpath("ui/document.html").read_text(encoding="utf-8")
+    except FileNotFoundError:  # pragma: no cover - the wheel always ships it
+        return "<!doctype html><title>Jubarte</title><p>The document card was not built (jubarte-mcp-ui).</p>"
 
 
 def build_server(*, root: Path) -> MCPServer:
@@ -144,7 +253,7 @@ def build_server(*, root: Path) -> MCPServer:
         """What this engine build can do: operations, edit kinds, limits, runtime."""
         return capabilities()
 
-    @mcp.tool(annotations=_READ)
+    @mcp.tool(annotations=_READ, meta=_CARD)
     def docx_text(path: str) -> str:
         """The agent view `jubarte read` prints: a header (sha256, counts, page
         setup), then Markdown with a <!-- pN --> id line before each paragraph
@@ -165,7 +274,7 @@ def build_server(*, root: Path) -> MCPServer:
         doc = load(path)
         return json.loads(engine(doc.inspect_json))
 
-    @mcp.tool(annotations=_WRITE)
+    @mcp.tool(annotations=_WRITE, meta=_CARD_MODEL_ONLY)
     def docx_edit(
         path: str,
         plan: dict[str, Any],
@@ -237,7 +346,7 @@ def build_server(*, root: Path) -> MCPServer:
         publish(files, overwrite)
         return written
 
-    @mcp.tool(annotations=_WRITE)
+    @mcp.tool(annotations=_WRITE, meta=_MODEL_ONLY)
     def docx_render(
         path: str,
         out_dir: str,
@@ -275,7 +384,7 @@ def build_server(*, root: Path) -> MCPServer:
         publish(files, overwrite)
         return result
 
-    @mcp.tool(annotations=_WRITE)
+    @mcp.tool(annotations=_WRITE, meta=_CARD_MODEL_ONLY)
     def docx_compare(
         original: str,
         modified: str,
@@ -317,7 +426,7 @@ def build_server(*, root: Path) -> MCPServer:
         result = engine(lambda: method(ids=ids, authors=authors, kinds=kinds))
         return {"out": write(target, result.to_bytes(), overwrite), "remaining": len(engine(result.changes))}
 
-    @mcp.tool(annotations=_WRITE)
+    @mcp.tool(annotations=_WRITE, meta=_MODEL_ONLY)
     def docx_accept(
         path: str,
         out: str,
@@ -334,7 +443,7 @@ def build_server(*, root: Path) -> MCPServer:
         """
         return resolve("accept", path, out, ids, authors, kinds, overwrite)
 
-    @mcp.tool(annotations=_WRITE)
+    @mcp.tool(annotations=_WRITE, meta=_MODEL_ONLY)
     def docx_reject(
         path: str,
         out: str,
@@ -386,6 +495,119 @@ def build_server(*, root: Path) -> MCPServer:
         if not hasattr(Document, "audit"):
             raise missing("audit")
         return _plain(engine(lambda: doc.audit(rules=rules)))
+
+    # -- the MCP Apps card ------------------------------------------------
+
+    @mcp.resource(
+        UI_URI,
+        name="jubarte-document",
+        title="Jubarte document",
+        description="The document card: paginated pages with tracked changes, the Tracked/Original/Accepted views and discussions.",
+        mime_type=UI_MIME,
+        meta={"ui": {"csp": {}, "prefersBorder": True}},
+    )
+    def document_card() -> str:
+        return _card_html()
+
+    def relative(p: Path) -> str:
+        return p.relative_to(root).as_posix()
+
+    def listing() -> tuple[list[dict[str, Any]], bool]:
+        """The .docx files under root, sorted, within the listing's budgets.
+        Directory links are never followed and file links are skipped, so the
+        walk cannot leave root; unreadable folders are passed over."""
+        files: list[dict[str, Any]] = []
+        visits = 0
+        truncated = False
+        pending: list[tuple[Path, int]] = [(root, 0)]
+        while pending:
+            folder, depth = pending.pop(0)
+            try:
+                with os.scandir(folder) as it:
+                    entries = sorted(it, key=lambda e: e.name)
+            except OSError:
+                continue
+            subfolders: list[tuple[Path, int]] = []
+            for entry in entries:
+                visits += 1
+                if visits > _LIST_VISITS:
+                    return sorted(files, key=lambda f: f["path"]), True
+                name = entry.name
+                if name.startswith((".", "~$")) or name in _LIST_SKIP:
+                    continue
+                try:
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    if depth + 1 < _LIST_DEPTH:
+                        subfolders.append((Path(entry.path), depth + 1))
+                    else:
+                        truncated = True
+                elif stat.S_ISREG(st.st_mode) and name.lower().endswith(".docx"):
+                    if len(files) >= _LIST_FILES:
+                        return sorted(files, key=lambda f: f["path"]), True
+                    files.append(
+                        {
+                            "path": relative(Path(entry.path)),
+                            "size": st.st_size,
+                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                    )
+            pending[:0] = subfolders
+        files.sort(key=lambda f: f["path"])
+        return files, truncated
+
+    @mcp.tool(annotations=_READ, meta=_VIEW_META)
+    def docx_view(path: str | None = None) -> CallToolResult:
+        """Show a .docx file as pages, with its tracked changes and comments, in hosts that draw MCP Apps.
+
+        With no path, list the .docx files under the root (at most 200) so the
+        user can pick one. Hosts without MCP Apps get the same as text; read
+        a document's content with docx_text.
+        """
+        if path is None or path == "":
+            files, truncated = listing()
+            lines = [f["path"] for f in files]
+            more = " (more files exist; name one with path)" if truncated else ""
+            text = f"{len(files)} .docx files under the root{more}:\n" + "\n".join(lines) if files else "No .docx files under the root."
+            return CallToolResult(
+                content=[TextContent(type="text", text=text)],
+                structured_content={"files": files, "truncated": truncated},
+            )
+        doc = load(path)
+        p = contained(path)
+        changes = engine(doc.changes)
+        counts = change_counts(changes)
+        summary = ", ".join(f"{n} {k}" for k, n in counts.items() if n) or "no tracked changes"
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"Showing {relative(p)}: {summary}. Read it with docx_text.")],
+            structured_content={"path": relative(p)},
+        )
+
+    @mcp.tool(annotations=_READ, meta=_APP_ONLY)
+    def docx_preview(path: str) -> CallToolResult:
+        """The document card's own read (hidden from the model in MCP Apps hosts): Markdown for the paginated reader, move kinds and change counts. A model should call docx_text instead."""
+        from . import _native
+
+        doc = load(path)
+        p = contained(path)
+        data = doc.to_bytes()
+        markdown, warnings = engine(lambda: _native.read_view(data, page_markers=False))
+        preview = {
+            "path": relative(p),
+            "name": p.name,
+            "sha256": engine(lambda: _native.source_sha256(data)),
+            "markdown": markdown,
+            "warnings": list(warnings),
+            "revision_kinds": move_kinds(data),
+            "counts": change_counts(engine(doc.changes)),
+        }
+        if len(json.dumps(preview, ensure_ascii=False).encode()) > _PREVIEW_LIMIT:
+            raise ToolError(f"{p.name} is too large to preview; read it with docx_text")
+        c = preview["counts"]
+        text = f"{p.name}: {c['inserted']} inserted, {c['deleted']} deleted, {c['moved']} moved, {c['formatted']} formatted."
+        return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=preview)
 
     return mcp
 
