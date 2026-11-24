@@ -269,3 +269,11 @@ body.fixed {
     background: #000;
     color: #fff;
 }
+
+/* A focused link drawn in pieces (formatting, line wraps): every piece shows
+   the focus ring, as the reader's a:focus-visible draws it on the one that
+   holds focus (#57). */
+.premirror-run a.link-focus {
+    outline: 2px solid var(--ink);
+    outline-offset: 3px;
+}

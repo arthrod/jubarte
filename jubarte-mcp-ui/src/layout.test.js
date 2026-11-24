@@ -19,10 +19,10 @@ beforeAll(async () => {
   ({ mountPagination } = await import("../reader/pagination.js"));
 });
 
-const compose = (markdown) => {
+const compose = (markdown, options) => {
   const container = document.createElement("div");
   document.body.append(container);
-  const view = mountPagination(container, parseJubarte(markdown));
+  const view = mountPagination(container, parseJubarte(markdown), options);
   const out = { composed: view.composed, text: container.textContent, container };
   return { ...out, done: () => (view.destroy(), container.remove()) };
 };
@@ -365,5 +365,60 @@ describe("separators and signs belong to their number in right-to-left text (#56
       expect(visual(composed, "0123456789.,$%"), source).toBe(number);
       done();
     }
+  });
+});
+
+describe("links are one control, never swallowed by a comment (#57)", () => {
+  const focusable = (container) =>
+    [...container.querySelectorAll("a")].filter(
+      (a) => a.tabIndex >= 0 && a.getAttribute("aria-hidden") !== "true",
+    );
+  it("Enter and a click on a commented link reach the link, not the discussion", () => {
+    const opened = [];
+    const { container, done } = compose(
+      `${header()}<!-- p0 -->\nBefore {==[link](https://example.com)==}{>>c0 @A: comment<<} after\n`,
+      { onSelect: (id) => opened.push(id) },
+    );
+    const [link] = focusable(container);
+    expect(link.getAttribute("href")).toBe("https://example.com");
+    const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    link.dispatchEvent(key);
+    expect(key.defaultPrevented).toBe(false);
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.addEventListener("click", (e) => e.preventDefault(), { once: true });
+    link.dispatchEvent(click);
+    expect(opened).toEqual([]);
+    const button = link.closest("[role=button]");
+    button.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(opened.length).toBe(1);
+    done();
+  });
+  it("a link with formatting inside is one focus stop named by its whole text", () => {
+    const { container, done } = compose(
+      `${header()}<!-- p0 -->\n[one **two** three](https://example.com)\n`,
+    );
+    const links = focusable(container);
+    expect(links.length).toBe(1);
+    expect(links[0].getAttribute("aria-label") ?? links[0].textContent).toBe("one two three");
+    expect(container.querySelectorAll("a").length).toBe(3);
+    links[0].dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    links[0].focus();
+    expect(container.querySelectorAll("a.link-focus").length).toBe(3);
+    links[0].blur();
+    expect(container.querySelectorAll("a.link-focus").length).toBe(0);
+    done();
+  });
+  it("a link that wraps across lines is one focus stop", () => {
+    const words = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
+    const { container, done } = compose(
+      `${header()}<!-- p0 -->\n[${words}](https://example.com)\n`,
+    );
+    expect(container.querySelectorAll("a").length).toBeGreaterThan(1);
+    const links = focusable(container);
+    expect(links.length).toBe(1);
+    expect(links[0].getAttribute("aria-label")).toBe(words);
+    done();
   });
 });
