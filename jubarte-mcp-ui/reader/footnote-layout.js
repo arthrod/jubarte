@@ -87,6 +87,9 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  }
  // Allocate whole measured lines. Reserve one line per newly referenced note
  // first when possible, so a large earlier note cannot hide a short later one.
+ // Where a note's content ends: its trailing spacer is drawn when there is room but never
+ // continues the note onto another page (#58).
+ function contentEnd(note) { let end = note.lines.length; while (end > 0 && !(note.lines[end - 1].runs || []).length) end--; return Math.max(end, 1); }
  function allocate(items, budget, preferred = []) {
   const result = [], counts = new Map(); let used = 0;
   function addLine(item) {
@@ -137,7 +140,7 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  // Once the body is finished, spend remaining page space on pending definitions.
  function fillRemainder(bodyBottom = 0) {
   const old = new Map(allocations.map(item => [item.id, item.count]));
-  const left = requests.map(item => ({...item, offset: item.offset + (old.get(item.id) || 0)})).filter(item => item.offset < notes.get(item.id).lines.length);
+  const left = requests.map(item => ({...item, offset: item.offset + (old.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
   if (!allocations.length) { allocations = allocate(left, height - bodyBottom); active = true; return; }
   let budget = height - bodyBottom - footprint(allocations);
   for (const item of left) {
@@ -153,13 +156,13 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   const total = footprint(allocations), band = total ? {pageIndex, frameIndex: 0, x: 0, y: height - total, width, height: total} : null;
   let y = height - total + separator;
   const fragments = allocations.map(item => {
-   const note = notes.get(item.id), continuedBefore = item.offset > 0, continuedAfter = item.offset + item.count < note.lines.length;
+   const note = notes.get(item.id), continuedBefore = item.offset > 0, continuedAfter = item.offset + item.count < contentEnd(note);
    const lines = note.lines.slice(item.offset, item.offset + item.count).map((line, index) => ({...line, y: labelHeight + index * lineHeight}));
    const fragment = {footnoteId: note.id, identifier: note.identifier, pageIndex, frameIndex: 0, x: 0, y, width, height: labelHeight + item.count * lineHeight, lines, continuedBefore, continuedAfter, orphan: note.orphan};
    y += fragment.height + between; return fragment;
   });
   const emitted = new Map(allocations.map(item => [item.id, item.count]));
-  pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < notes.get(item.id).lines.length);
+  pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
   return {band, fragments};
  }
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,

@@ -422,3 +422,27 @@ describe("links are one control, never swallowed by a comment (#57)", () => {
     done();
   });
 });
+
+describe("a complete footnote never continues onto another page (#58)", () => {
+  it("the spacer after a one-word note on a short page makes no continued page", () => {
+    const { composed, container, done } = compose(
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 1in\nsections:\n  2: {p2-p2, page: 6x2in landscape, margins 0.5in, header/footer 0.5in}\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\nBREAK\n\n<!-- p2 -->\nSECOND[^1]\n\n<!-- footnotes.p0 -->\n[^1]: NOTE\n`,
+    );
+    expect(composed.layout.pages.length).toBe(2);
+    expect(container.textContent).not.toContain("(continued)");
+    expect(container.textContent).toContain("NOTE");
+    done();
+  });
+  it("a page the text fills exactly starts the next page with text, not a spacer", () => {
+    // 6x2in with 0.5in margins: a 96px frame holds three 29px lines.
+    const paras = ["A1", "A2", "A3", "B1"].map((t, i) => `<!-- p${i} -->\n${t}`).join("\n\n");
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: 6x2in landscape, margins 0.5in, header/footer 0.5in\n---\n\n${paras}\n`,
+    );
+    for (const page of composed.layout.pages.slice(1)) {
+      const first = page.frames[0].fragments[0];
+      expect(first.blockId.startsWith("space-"), first.blockId).toBe(false);
+    }
+    done();
+  });
+});
