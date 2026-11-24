@@ -59,11 +59,7 @@ export function composeWithTables(snapshot,runtime,input){
  function ensurePage(){if(y>=notes.bodyLimit-0.001)newPage();}
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
- // Upstream's word-boundary repair may exceed the slot for long unbroken words.
- // Emergency wrap those lines only, preserving code points, marks and PM spans.
- function constrain(lines,w){const out=[];for(const line of lines){if(line.runs.every(r=>r.x+r.width<=w+0.01)){out.push(line);continue;}let runs=[],used=0;const flush=()=>{if(runs.length){out.push({...line,runs,pmRange:{from:Math.min(...runs.map(r=>r.pmRange.from)),to:Math.max(...runs.map(r=>r.pmRange.to))}});runs=[];used=0;}};
-  for(const run of line.runs){let offset=0;for(const ch of (typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(run.text)].map(s=>s.segment):Array.from(run.text))){const cw=glyphWidth(ch,run.font);if(used&&used+cw>w+0.01)flush();const span=run.pmRange.to-run.pmRange.from,from=run.pmRange.from+Math.floor(offset*span/run.text.length),to=run.pmRange.from+Math.floor((offset+ch.length)*span/run.text.length);const previous=runs.at(-1);if(previous&&previous.runId===run.runId&&previous.pmRange.to===from){previous.text+=ch;previous.width+=cw;previous.pmRange.to=to;}else runs.push({...run,text:ch,x:used,width:cw,pmRange:{from,to}});used+=cw;offset+=ch.length;}}
-  flush();}return out.map((line,i)=>({...line,y:i*lh,height:lh}));}
+ const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
   for(const block of blocks){const indent=Math.min(Math.max(0,block.attrs?.indentPx||0),Math.max(0,w-1)),inner=Math.max(1,w-indent);const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
@@ -155,4 +151,35 @@ export function composeWithTables(snapshot,runtime,input){
  const mapping={pmPosToLayout(pos){const r=refs.find(r=>r.line.pmRange.from<=pos&&r.line.pmRange.to>=pos);return r?{pageIndex:r.pageIndex,frameIndex:r.frameIndex,fragmentIndex:r.fragmentIndex,lineIndex:r.lineIndex,offsetInLine:pos-r.line.pmRange.from}:null;},layoutToPmPos(point){const l=pages[point.pageIndex]?.frames[point.frameIndex]?.fragments[point.fragmentIndex]?.lines[point.lineIndex];return l?Math.min(l.pmRange.to,l.pmRange.from+point.offsetInLine):null;}};
  const layout={pages,mapping,metrics:{extractionMs:0,measurementMs:0,composeMs:performance.now()-started,pages:pages.length,blocks:allBlocks.length},tableFragments,footnoteFragments,footnoteBands};
  return {layout,measured,fallback,tableFragments,footnoteFragments,footnoteBands,diagnostics};
+}
+
+const graphemes=text=>typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text)].map(s=>s.segment):Array.from(text);
+
+/** Upstream's word-boundary repair may exceed the slot for long unbroken
+ * words, and a line can end a hair past it on a trailing space. Wrap only
+ * those lines, preserving code points, marks and PM spans. Spaces hang past
+ * the edge as Word lets them, a line breaks after its last space, and only a
+ * word wider than the slot is cut by grapheme (b106: "(i" / "f "). */
+export function constrainLines(lines,w,lh,glyphWidth){
+  const space=ch=>ch===' '||ch==='\t';
+  const out=[];
+  for(const line of lines){
+    if(line.runs.every(r=>r.x+r.width<=w+0.01)){out.push(line);continue;}
+    const chars=[];
+    for(const run of line.runs){let offset=0;const span=run.pmRange.to-run.pmRange.from;for(const ch of graphemes(run.text)){chars.push({run,ch,cw:glyphWidth(ch,run.font),from:run.pmRange.from+Math.floor(offset*span/run.text.length),to:run.pmRange.from+Math.floor((offset+ch.length)*span/run.text.length)});offset+=ch.length;}}
+    const pieces=[];
+    for(let start=0;start<chars.length;){
+      let end=start,used=0,lastBreak=-1;
+      while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>w+0.01)break;used+=c.cw;end++;if(space(c.ch))lastBreak=end;}
+      if(end<chars.length&&lastBreak>start)end=lastBreak;
+      pieces.push(chars.slice(start,end));start=end;
+    }
+    if(pieces.length<=1){out.push(line);continue;}
+    for(const piece of pieces){
+      const runs=[];let used=0;
+      for(const c of piece){const previous=runs.at(-1);if(previous&&previous.runId===c.run.runId&&previous.pmRange.to===c.from){previous.text+=c.ch;previous.width+=c.cw;previous.pmRange.to=c.to;}else runs.push({...c.run,text:c.ch,x:used,width:c.cw,pmRange:{from:c.from,to:c.to}});used+=c.cw;}
+      out.push({...line,runs,pmRange:{from:Math.min(...runs.map(r=>r.pmRange.from)),to:Math.max(...runs.map(r=>r.pmRange.to))}});
+    }
+  }
+  return out.map((line,i)=>({...line,y:i*lh,height:lh}));
 }
