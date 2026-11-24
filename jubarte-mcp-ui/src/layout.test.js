@@ -774,9 +774,36 @@ describe("a table's first row is a header only when Word says so (#78)", () => {
     expect(composed.tableFragments[0].rows[0].header).toBe(false);
     done();
   });
-  it("a repeating header row is still a header", () => {
+  it("a repeating header row is still a header, drawn with its own formatting (#80)", () => {
     const { composed, done } = compose(table(", header row repeats"));
     expect(composed.tableFragments[0].rows[0].header).toBe(true);
+    expect(runOf(composed, "FIRST").font).toContain(" 400 ");
+    // Word adds no bold and no shading to a header row; neither does the page's stylesheet.
+    const css = globalThis.process
+      .getBuiltinModule("node:fs")
+      .readFileSync("reader/style.css", "utf8");
+    expect(css).not.toMatch(/\.paged-grid-table thead\{[^}]*background/);
+    expect(css).not.toMatch(/\.paged-grid-table th\{[^}]*font-weight:\s*[6-9]00/);
     done();
+  });
+});
+
+describe("a heading stays with a table whose first row has a footnote (#79)", () => {
+  it("holds at every page offset", () => {
+    const fill = (n) => Array.from({ length: n }, (_, i) => `BEFORE_${i}`).join("\\\n");
+    const note = Array.from({ length: 30 }, (_, i) => `N${String(i).padStart(3, "0")}`).join(" ");
+    for (let n = 14; n <= 30; n++) {
+      const { composed, done } = compose(
+        `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\n${fill(n)}\n\n# HEADING\n\n<!-- t0 2x1, cells p2-p3 by row -->\n|ROW_ONE[^1]|\n|-|\n|ROW_TWO|\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n`,
+      );
+      const pageOf = (tag) =>
+        composed.layout.pages.findIndex((p) =>
+          p.frames[0].fragments.some((f) =>
+            (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))),
+          ),
+        );
+      expect({ n, heading: pageOf("HEADING") }).toEqual({ n, heading: pageOf("ROW_ONE") });
+      done();
+    }
   });
 });

@@ -201,13 +201,14 @@ export function composeWithTables(snapshot,runtime,input){
   while(p){const chained=chainsOn(p.block);items.push({gap,lines:chained||p.block.attrs?.keepLines?p.lines:p.lines.slice(0,Math.max(1,input.policies.orphanLinesMin||1))});
    if(!chained)break;let n=p.end;gap=0;while(snapshot.blocks[n]?.attrs?.spacer){gap+=lh;n++;}
    const next=snapshot.blocks[n];if(!next)break;
-   if(next.type==='table'){items.push({gap,height:grids.get(next.id)?.rowHeights?.[0]||0});break;}
+   if(next.type==='table'){const g=grids.get(next.id),row=g?.rowHeights?.[0]||0;items.push({gap,height:row,lines:(g?.cells||[]).flatMap(c=>c.lines.filter(l=>c.y+l.y<row-0.001))});break;}
    p=paragraphAt(n);}
   if(items.length===1&&!first.attrs?.keepLines)return;
-  const need=items.reduce((sum,item)=>sum+item.gap+(item.lines?item.lines.length*lh:item.height),0);
+  const need=items.reduce((sum,item)=>sum+item.gap+(item.height??item.lines.length*lh),0);
   if(need>height+0.001)return;
   const checkpoint=notes.checkpoint();let at=y,fits=true;
-  for(const item of items){at+=item.gap;if(item.lines){for(const line of item.lines){if(!notes.accept([line],at+lh,at)){fits=false;break;}at+=lh;}}else{at+=item.height;if(at>notes.bodyLimit+0.001)fits=false;}if(!fits)break;}
+  // A table's first row is tried whole, with the notes its cells reference (#79).
+  for(const item of items){at+=item.gap;if(item.height==null){for(const line of item.lines){if(!notes.accept([line],at+lh,at)){fits=false;break;}at+=lh;}}else{if(!notes.accept(item.lines,at+item.height,at))fits=false;at+=item.height;}if(!fits)break;}
   notes.restore(checkpoint);if(!fits)newPage();}
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];for(const section of block.attrs?.sectionStarts||[])startSection(section);
   // A paragraph's space after is cut at the foot of a page, as in Word: a spacer that does not
