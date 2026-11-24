@@ -740,6 +740,19 @@ def test_image_stand_ins_leave_code_blocks_as_written(tmp_path: Path) -> None:
     assert preview.structured_content["markdown"] == view
 
 
+def test_image_stand_ins_split_lines_at_newlines_only() -> None:
+    # #91: str.splitlines also ends a line at U+2028, U+2029 and U+0085, so a
+    # fence looked closed inside a code line and its literal text was rewritten.
+    from jubarte.mcp_server import _image_stand_ins
+
+    for sep in ("\u2028", "\u2029", "\x85"):
+        literal = "[image1]: <data:image/png;base64,QUJD>"
+        code = f"```\nhello{sep}```{sep}{literal}\n```\n"
+        assert _image_stand_ins(code) == code, repr(sep)
+    outside = "[image1]: <data:image/png;base64,QUJD>\n"
+    assert _image_stand_ins(outside) == "[image1]: <image/png, 0 KB>\n"
+
+
 def test_preview_serves_the_engines_accepted_and_original_views(tmp_path: Path) -> None:
     # #40: the card's Accepted and Original are the engine's accept and
     # reject, not a client rebuild: a joined break, renumbered items.

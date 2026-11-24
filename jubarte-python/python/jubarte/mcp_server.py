@@ -103,7 +103,9 @@ def _image_stand_ins(markdown: str) -> str:
 
     out: list[str] = []
     fence: str | None = None
-    for line in markdown.splitlines(keepends=True):
+    # Lines end at \n only, as the Markdown reader reads them; str.splitlines would
+    # also end one at U+2028, U+2029 or U+0085 inside a code line (#91).
+    for line in re.split(r"(?<=\n)", markdown):
         opener = _FENCE.match(line.rstrip("\r\n"))
         if fence is None:
             if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
