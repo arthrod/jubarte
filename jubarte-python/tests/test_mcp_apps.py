@@ -227,6 +227,15 @@ def test_move_kinds_read_every_story_and_ignore_range_marks() -> None:
     }
 
 
+def test_move_kinds_decode_character_references_in_the_id() -> None:
+    # #41: w:id="&#55;" is id 7 to every XML reader, the engine included.
+    body = MOVE.replace('w:id="7"', 'w:id="&#55;"').replace('w:id="8"', 'w:id="&#x38;"')
+    assert body != MOVE
+    kinds = server.move_kinds(package(body))
+    assert kinds == {"body:rev:7": "movedel", "body:rev:8": "moveins"}
+    assert server.move_kinds(package(MOVE.replace('w:id="7"', 'w:id="&amp;7"'))).get("body:rev:&7") == "movedel"
+
+
 def test_preview_refuses_a_path_outside_root_and_a_preview_too_big(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -132,6 +132,23 @@ _LIST_SKIP = frozenset({".scratch", "node_modules", "target", "__pycache__"})
 _STORIES = (("body", None), ("footnotes", "word/footnotes.xml"), ("endnotes", "word/endnotes.xml"))
 _MOVE = re.compile(r"<(?:[A-Za-z_][\w.-]*:)?(moveTo|moveFrom)(?=[\s/>])([^>]*)>")
 _ID = re.compile(r"""(?:^|\s)(?:[A-Za-z_][\w.-]*:)?id\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+_XML_REF = re.compile(r"&(?:#x([0-9A-Fa-f]+)|#([0-9]+)|(amp|lt|gt|quot|apos));")
+_XML_NAMED = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'"}
+
+
+def _xml_text(value: str) -> str:
+    """An attribute's value as an XML reader sees it: the five named
+    entities and numeric character references decoded (#41)."""
+
+    def one(m: re.Match[str]) -> str:
+        if m.group(3):
+            return _XML_NAMED[m.group(3)]
+        code = int(m.group(1), 16) if m.group(1) else int(m.group(2))
+        return chr(code) if 0 < code <= 0x10FFFF else m.group(0)
+
+    return _XML_REF.sub(one, value)
+
+
 _PART_LIMIT = 64 * 1024 * 1024
 
 
@@ -211,7 +228,8 @@ def move_kinds(docx: bytes) -> dict[str, str]:
                 for m in _MOVE.finditer(xml):
                     ident = _ID.search(m.group(2))
                     if ident:
-                        value = ident.group(1) if ident.group(1) is not None else ident.group(2)
+                        raw = ident.group(1) if ident.group(1) is not None else ident.group(2)
+                        value = _xml_text(raw)
                         kinds[f"{story}:rev:{value}"] = "moveins" if m.group(1) == "moveTo" else "movedel"
     except (zipfile.BadZipFile, OSError, ValueError):
         return {}
