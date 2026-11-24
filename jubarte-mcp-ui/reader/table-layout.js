@@ -218,10 +218,12 @@ export function composeWithTables(snapshot,runtime,input){
    if(end<=start+0.001){notes.restore(checkpoint);nextTablePage();continue;}
    const boundaries=g.rowTops.filter(v=>v>start+0.001&&v<=end+0.001);
    const nextBoundary=g.rowTops.find(v=>v>start+0.001),rowRemainder=nextBoundary-start;
-   let selected=boundaries.length?boundaries.at(-1):end;
-   // A short row is moved intact to a fresh page when possible. A note-bearing
-   // row that cannot fit there is split into measured line slices instead.
-   if(!boundaries.length&&y>repeatedHeight+0.001&&rowRemainder<=height-(repeat&&start>=g.headerHeight?g.headerHeight:0)){
+   // A row splits at a line, as Word's rows do (#70); a cut inside the header rows falls back to
+   // their last whole row.
+   let selected=boundaries.length&&end<g.headerHeight-0.001?boundaries.at(-1):end;
+   // A row splits across pages, as Word's rows do unless w:cantSplit, which the
+   // engine view does not write (#70, #71). A repeated header row still moves whole.
+   if(!boundaries.length&&y>repeatedHeight+0.001&&start<g.headerHeight-0.001&&rowRemainder<=height){
     notes.restore(checkpoint);nextTablePage();continue;
    }
    if(selected<end-0.001){notes.restore(checkpoint);let pos=start,offset=0;while(pos<selected-0.001){if(!notes.accept(sliceLines(pos,pos+lh),y+offset+lh,Math.max(0,y+offset-repeatedHeight)))throw new Error('Footnote row rollback lost a previously accepted line.');pos+=lh;offset+=lh;}}

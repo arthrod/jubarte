@@ -636,3 +636,23 @@ describe("a table's layout and place are Word's (#67, #68, #69)", () => {
     expect(Math.round(indented.t.x - left.t.x)).toBe(48);
   });
 });
+
+describe("a table row splits across pages, as Word's rows do by default (#70)", () => {
+  it("a tall row starts under the rows before it and continues on the next page", () => {
+    const cell = Array.from({ length: 6 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
+    const { composed, done } = compose(
+      `---\nview: tracked\npage: A4 portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p1-p3, page: 6x4in landscape, margins 1in, header/footer 0.5in}\n---\n\n<!-- p0 section-break -->\nFIRST\n\n<!-- t0 2x1, cells p1-p2 by row, width auto -->\n|ROW1|\n|-|\n|${cell}|\n\n<!-- p3 empty -->\n`,
+    );
+    const onPage = (i) =>
+      composed.layout.pages[i].frames[0].fragments
+        .flatMap((f) => (f.lines || []).flatMap((l) => l.runs.map((r) => r.text)))
+        .join(" ");
+    expect(onPage(1)).toContain("ROW1");
+    expect(onPage(1)).toContain("ROW2_LINE_0");
+    // Nothing repeats and nothing is lost: the row continues where page 2 ended.
+    const all = composed.layout.pages.map((_, i) => onPage(i)).join(" ");
+    for (let i = 0; i < 6; i++) expect(all.split(`ROW2_LINE_${i}`).length - 1).toBe(1);
+    expect(onPage(2)).toContain("ROW2_LINE_5");
+    done();
+  });
+});
