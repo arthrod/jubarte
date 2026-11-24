@@ -188,16 +188,34 @@ export function composeWithTables(snapshot,runtime,input){
    const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x+colX+(g.offsetX||0)}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
   }const previous=tableFragments.at(-1);if(previous&&previous.tableId===fragment.tableId&&previous.pageIndex===fragment.pageIndex&&Math.abs(previous.y+previous.height-fragment.y)<0.001){const offset=previous.height;previous.cells.push(...fragment.cells.map(c=>({...c,y:c.y+offset})));previous.rows.push(...fragment.rows.map(r=>({...r,y:r.y+offset})));previous.height+=fragment.height;previous.repeated=previous.repeated&&fragment.repeated;}else tableFragments.push(fragment);y+=fragment.height;
  }
+ // Keep-with-next chains and keep-lines paragraphs (#62, #75-#77). The group runs from a paragraph
+ // through every keep-with-next one after it, to the paragraph that ends the chain: its first
+ // lines (all of them when it keeps its lines) or a table's first row. A paragraph's manual
+ // breaks made it several blocks; they count together. When the group fits a page but not what
+ // is left of this one, with the note band its own lines reserve, the page breaks before it.
+ function paragraphAt(k){const b=snapshot.blocks[k];if(!b||b.type==='table'||b.attrs?.spacer)return null;const lines=[];let j=k;do{lines.push(...composeLines([snapshot.blocks[j]],width));j++;}while(b.attrs?.paragraph!=null&&snapshot.blocks[j]?.attrs?.paragraph===b.attrs.paragraph&&!snapshot.blocks[j].attrs?.spacer);return{block:b,lines,end:j};}
+ function keepTogether(k){
+  const chainsOn=b=>!!(b.attrs?.keepWithNext&&input.policies.keepWithNextEnabled);
+  let p=paragraphAt(k);if(!p)return;const first=p.block;if(!chainsOn(first)&&!first.attrs?.keepLines)return;
+  const items=[];let gap=0;
+  while(p){const chained=chainsOn(p.block);items.push({gap,lines:chained||p.block.attrs?.keepLines?p.lines:p.lines.slice(0,Math.max(1,input.policies.orphanLinesMin||1))});
+   if(!chained)break;let n=p.end;gap=0;while(snapshot.blocks[n]?.attrs?.spacer){gap+=lh;n++;}
+   const next=snapshot.blocks[n];if(!next)break;
+   if(next.type==='table'){items.push({gap,height:grids.get(next.id)?.rowHeights?.[0]||0});break;}
+   p=paragraphAt(n);}
+  if(items.length===1&&!first.attrs?.keepLines)return;
+  const need=items.reduce((sum,item)=>sum+item.gap+(item.lines?item.lines.length*lh:item.height),0);
+  if(need>height+0.001)return;
+  const checkpoint=notes.checkpoint();let at=y,fits=true;
+  for(const item of items){at+=item.gap;if(item.lines){for(const line of item.lines){if(!notes.accept([line],at+lh,at)){fits=false;break;}at+=lh;}}else{at+=item.height;if(at>notes.bodyLimit+0.001)fits=false;}if(!fits)break;}
+  notes.restore(checkpoint);if(!fits)newPage();}
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];for(const section of block.attrs?.sectionStarts||[])startSection(section);
   // A paragraph's space after is cut at the foot of a page, as in Word: a spacer that does not
   // fit makes no page of its own and never leads the next one (#58).
   if(block.attrs?.spacer&&(y===0&&page.index>0&&!page.frames[0].fragments.length||notes.bodyLimit-y<lh-0.001))continue;
   ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
-  // Keep lines together (#75): a paragraph that fits a page starts on a fresh one rather than
-  // split. Its manual breaks made it several blocks; they count together.
-  if(block.type!=='table'&&block.attrs?.keepLines&&block.attrs.first&&y>0){let need=0;for(let k=bi;k<snapshot.blocks.length&&snapshot.blocks[k].attrs?.paragraph===block.attrs.paragraph&&!snapshot.blocks[k].attrs?.spacer;k++)need+=composeLines([snapshot.blocks[k]],width).length*lh;if(need<=height&&notes.bodyLimit-y<need)newPage();}
-  if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;let ni=bi+1,gap=0;while(snapshot.blocks[ni]?.attrs?.spacer){gap+=lh;ni++;}const next=snapshot.blocks[ni];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){// The spacers between them count, but the test is the next real paragraph (#62).
-    const need=lines.length*lh+gap+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
+  if(block.type!=='table'&&block.attrs?.first!==false&&y>0)keepTogether(bi);
+  if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;
    while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
     const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;
     if(!accepted){notes.restore(checkpoint);newPage();continue;}

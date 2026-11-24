@@ -720,3 +720,43 @@ describe("a keep-lines paragraph is not split across pages (#75)", () => {
     done();
   });
 });
+
+describe("keep constraints hold wherever the page ends (#76, #77)", () => {
+  const fill = (n) => Array.from({ length: n }, (_, i) => `BEFORE_${i}`).join("\\\n");
+  const pagesWith = (composed, tag) =>
+    new Set(
+      composed.layout.pages.flatMap((p, i) =>
+        p.frames[0].fragments.some((f) =>
+          (f.lines || []).some((l) => l.runs.some((r) => r.text?.startsWith(tag))),
+        )
+          ? [i]
+          : [],
+      ),
+    );
+  const head = `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n`;
+
+  it("a chain of headings stays with the paragraph after it (#76)", () => {
+    for (let n = 14; n <= 30; n++) {
+      const { composed, done } = compose(
+        `${head}<!-- p0 -->\n${fill(n)}\n\n# HEADING_A\n\n# HEADING_B\n\n# HEADING_C\n\nFINAL_BODY\n`,
+      );
+      const pages = new Set(["HEADING_", "FINAL_BODY"].flatMap((t) => [...pagesWith(composed, t)]));
+      expect({ n, pages: [...pages] }).toEqual({ n, pages: [[...pages][0]] });
+      done();
+    }
+  });
+
+  it("a kept paragraph makes room for the footnote it references (#77)", () => {
+    const note = Array.from({ length: 30 }, (_, i) => `N${String(i).padStart(3, "0")}`).join(" ");
+    for (let n = 14; n <= 30; n++) {
+      const { composed, done } = compose(
+        `${head}<!-- p0 -->\n${fill(n)}\n\n<!-- p1 KeepAll -->\nLINE_ONE\\\nLINE_TWO\\\nLINE_THREE[^1]\\\nLINE_FOUR\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n`,
+      );
+      expect({ n, pages: [...pagesWith(composed, "LINE_")] }).toEqual({
+        n,
+        pages: [[...pagesWith(composed, "LINE_")][0]],
+      });
+      done();
+    }
+  });
+});
