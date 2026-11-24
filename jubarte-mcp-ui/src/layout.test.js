@@ -191,3 +191,61 @@ describe("sections and their notes (#49)", () => {
     done();
   });
 });
+
+const bodyRuns = (composed, pageIndex) =>
+  composed.layout.pages[pageIndex].frames[0].fragments.flatMap((f) =>
+    (f.lines || []).flatMap((l) => l.runs.filter((r) => r.text?.trim())),
+  );
+const contentWidth = (page) => page.spec.widthPx - page.margins.leftPx - page.margins.rightPx;
+
+describe("continued notes, continuous margins and alignment (#50)", () => {
+  it("a note continued across a width change draws each word once", () => {
+    const words = Array.from({ length: 1800 }, (_, i) => `N${String(i).padStart(4, "0")}`);
+    const { composed, done } = compose(
+      "---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p2-p2, page: Letter landscape, margins 1in, header/footer 0.5in}\n---\n\n" +
+        `<!-- p0 -->\nFIRST[^1]\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND\n\n<!-- footnotes.p0 Normal -->\n[^1]: ${words.join(" ")}\n`,
+    );
+    const drawn = composed.footnoteFragments
+      .flatMap((f) => f.lines.flatMap((l) => l.runs.map((r) => r.text)))
+      .join("")
+      .split(/\s+/)
+      .filter(Boolean);
+    expect(drawn.length).toBe(1800);
+    expect(new Set(drawn).size).toBe(1800);
+    done();
+  });
+  it("a continuous section's left and right margins apply at the break", () => {
+    const words = Array.from({ length: 1200 }, (_, i) => `P${String(i).padStart(4, "0")}`).join(
+      " ",
+    );
+    const { composed, done } = compose(
+      "---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top 1in, right 2in, bottom 1in, left 2in, header/footer 0.5in, starts continuous}\n---\n\n" +
+        `<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\n${words}\n`,
+    );
+    const first = composed.layout.pages[0];
+    // On page 1 the section's text column starts 96px further right and is 432px wide.
+    const runs = bodyRuns(composed, 0).filter((r) => r.text.startsWith("P"));
+    expect(runs.length).toBeGreaterThan(0);
+    expect(Math.min(...runs.map((r) => r.x))).toBeGreaterThanOrEqual(96 - 0.5);
+    expect(Math.max(...runs.map((r) => r.x + r.width))).toBeLessThanOrEqual(96 + 432 + 8);
+    for (const [i, page] of composed.layout.pages.entries()) {
+      const right = Math.max(...bodyRuns(composed, i).map((r) => r.x + r.width));
+      expect(right, `page ${i + 1}`).toBeLessThanOrEqual(contentWidth(i ? page : first) + 8);
+    }
+    done();
+  });
+  it("right and centre alignment place the line against the edge or the middle", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 right -->\nRIGHTWORD\n\n<!-- p1 center -->\nCENTREWORD\n\n<!-- p2 -->\nLEFTWORD\n`,
+    );
+    const width = contentWidth(composed.layout.pages[0]);
+    const run = (word) => bodyRuns(composed, 0).find((r) => r.text.includes(word));
+    const right = run("RIGHTWORD"),
+      centre = run("CENTREWORD"),
+      left = run("LEFTWORD");
+    expect(right.x + right.width).toBeCloseTo(width, 0);
+    expect(centre.x + centre.width / 2).toBeCloseTo(width / 2, 0);
+    expect(left.x).toBe(0);
+    done();
+  });
+});

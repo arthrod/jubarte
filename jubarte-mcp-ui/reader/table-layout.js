@@ -55,30 +55,36 @@ export function composeWithTables(snapshot,runtime,input){
  const measured=runtime.measureSnapshot({...snapshot,blocks:allBlocks});
  const fallback=Object.values(measured.measuredRuns).some(m=>m.prepared?.kind==='premirror-measurement-fallback');
  const pages=[];let frameBounds={x:margins.leftPx,y:margins.topPx,width,height};
- let page,y=0,notes,finished=false,pending=null,held=false;
+ let page,y=0,notes,finished=false,pending=null,held=false,colX=0;
  function applyPending(){if(!pending)return;const g=pending.geometry;spec=g.page;margins=g.margins;label=g.label;width=spec.widthPx-margins.leftPx-margins.rightPx;height=spec.heightPx-margins.topPx-margins.bottomPx;frameBounds={x:margins.leftPx,y:margins.topPx,width,height};notes.setGeometry({width,height});pending=null;}
  // Word's w:type: nextPage (the default) breaks, oddPage/evenPage may leave a blank
  // page, and a continuous section of the same size flows on (its setup takes the next page).
  function startSection(section){pending=section;const kind=String(section.starts).toLowerCase(),g=section.geometry.page;
-  if((kind==='continuous'||kind==='nextcolumn')&&Math.abs(g.widthPx-spec.widthPx)<0.5&&Math.abs(g.heightPx-spec.heightPx)<0.5)return;
+  // A continuous section takes its left and right margins at the break (#50); the rest waits for the next page.
+  if((kind==='continuous'||kind==='nextcolumn')&&Math.abs(g.widthPx-spec.widthPx)<0.5&&Math.abs(g.heightPx-spec.heightPx)<0.5){if(page&&(y>0||page.frames[0].fragments.length)){const m=section.geometry.margins;colX=m.leftPx-margins.leftPx;width=Math.max(1,spec.widthPx-m.leftPx-m.rightPx);}else{applyPending();Object.assign(page,{spec,margins,label});page.frames[0].bounds={...frameBounds};}return;}
   if(y>0||held||page.frames[0].fragments.length){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='section_break';newPage();}
   else{applyPending();Object.assign(page,{spec,margins,label});page.frames[0].bounds={...frameBounds};}
   const parity=kind==='oddpage'?0:kind==='evenpage'?1:null;if(parity!=null&&page.index%2!==parity)newPage();
   // An empty section's page stays, blank, for the next section to break from.
   held=!!section.empty;}
  function finishPage(){if(!page||finished)return;const result=notes.finishPage(page.index);if(result.band)footnoteBands.push(result.band);for(const fragment of result.fragments){footnoteFragments.push(fragment);const byBlock=new Map();for(const line of fragment.lines){if(!byBlock.has(line.blockId))byBlock.set(line.blockId,[]);byBlock.get(line.blockId).push({...line,y:fragment.y+line.y});}for(const [blockId,lines] of byBlock)addFragment(blockId,lines,{footnote:true,footnoteId:fragment.footnoteId,continuedBefore:fragment.continuedBefore,continuedAfter:fragment.continuedAfter,orphan:fragment.orphan});}finished=true;}
- function newPage(){finishPage();applyPending();held=false;page={index:pages.length,spec,margins,label,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;notes.beginPage();}
+ function newPage(){finishPage();applyPending();held=false;if(colX){colX=0;width=spec.widthPx-margins.leftPx-margins.rightPx;}page={index:pages.length,spec,margins,label,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;notes.beginPage();}
  function ensurePage(){if(y>=notes.bodyLimit-0.001)newPage();}
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
  const constrain=(lines,w)=>constrainLines(lines,w,lh,glyphWidth);
- function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
+ // The room left on a line, its trailing spaces hanging as in Word.
+ function alignShift(line,inner){const runs=line.runs.filter(r=>r.text?.trim());const last=runs.at(-1);if(!last)return 0;const text=last.text,kept=text.trimEnd().length;const right=last.x+(last.width||0)*(text.length?kept/text.length:1);return Math.max(0,inner-right);}
+ function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[];
   for(const block of blocks){const indent=Math.min(Math.max(0,block.attrs?.indentPx||0),Math.max(0,w-1)),inner=Math.max(1,w-indent);const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
    const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:[]});
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});
-   lines=constrain(lines,inner);for(const line of lines)result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent}))});
+   lines=constrain(lines,inner);
+   // Word's w:jc right and center: each line against the right edge or about the middle (#50).
+   const data=block.attrs?.sourceData,align=data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
+   for(const line of lines){const shift=align==='right'||align==='center'?alignShift(line,inner)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
   }
   lineCache.set(key,result);return result;
  }
@@ -113,10 +119,10 @@ export function composeWithTables(snapshot,runtime,input){
  // A table's grid is measured on the width of the section it falls in.
  const grids={cache:new Map(),get(id){const b=tableBlocks.get(id);if(!b)return undefined;const key=id+'@'+width;if(!this.cache.has(key))this.cache.set(key,grid(b));return this.cache.get(key);}};const tableBlocks=new Map(snapshot.blocks.filter(b=>b.type==='table').map(b=>[b.id,b]));
  notes=createFootnoteAllocator({snapshot,composeLines,width,height,lineHeight:lh,warn});newPage();
- function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:0,y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
+ function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:colX,y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
   for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y+lh<=end+0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
    const cell={cellId:c.id,sourceCellIds:c.sourceCellIds,rowIndex:Math.max(c.rowIndex,fragment.rowStart),originalRowIndex:c.rowIndex,columnIndex:c.columnIndex,colspan:c.colspan,rowspan:fragment.rows.filter(r=>r.rowIndex>=c.rowIndex&&r.rowIndex<c.rowIndex+c.rowspan).length,originalRowspan:c.rowspan,pmRange:c.pmRange,x:c.x,y:top-start,width:c.width,height:bottom-top,lines,header:c.header,repeated,continuedBefore:top>c.y,continuedAfter:bottom<c.y+c.height,paddingX:c.paddingX};fragment.cells.push(cell);
-   const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
+   const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x+colX}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
   }const previous=tableFragments.at(-1);if(previous&&previous.tableId===fragment.tableId&&previous.pageIndex===fragment.pageIndex&&Math.abs(previous.y+previous.height-fragment.y)<0.001){const offset=previous.height;previous.cells.push(...fragment.cells.map(c=>({...c,y:c.y+offset})));previous.rows.push(...fragment.rows.map(r=>({...r,y:r.y+offset})));previous.height+=fragment.height;previous.repeated=previous.repeated&&fragment.repeated;}else tableFragments.push(fragment);y+=fragment.height;
  }
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];for(const section of block.attrs?.sectionStarts||[])startSection(section);ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
@@ -126,7 +132,7 @@ export function composeWithTables(snapshot,runtime,input){
     if(!accepted){notes.restore(checkpoint);newPage();continue;}
     if(accepted<remaining&&accepted<orphan&&y>0){notes.restore(checkpoint);newPage();continue;}
     if(remaining>accepted&&remaining-accepted<widow&&accepted-(widow-(remaining-accepted))>=orphan){const reduced=accepted-(widow-(remaining-accepted));notes.restore(checkpoint);accepted=0;while(accepted<reduced&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;}
-    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
+    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh,runs:colX?l.runs.map(r=>({...r,x:r.x+colX})):l.runs}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
    continue;}
   const g=grids.get(block.id);if(!g.total)continue;
   if(y>0&&g.headerCount>0&&g.headerCount<g.rowHeights.length){const initialGroup=g.rowTops[g.headerCount+1];if(initialGroup<=height&&initialGroup>notes.bodyLimit-y)newPage();}

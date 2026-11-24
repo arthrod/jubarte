@@ -45,6 +45,18 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   const id = String(target); nestedReferences.add(id);
   if (!notes.has(id)) warn('missing-footnote-definition', `Footnote reference ${id} inside note ${note.identifier} has no visible definition.`, id);
  }
+ // A note's blocks from position `from` on: a run cut at `from` keeps its tail.
+ const clipBlocks = (blocks, from) => blocks.flatMap(block => {
+  const runs = (block.runs || []).flatMap(run => {
+   const r = run.pmRange;
+   if (!r || r.from >= from) return [run];
+   if (r.to <= from || typeof run.text !== 'string') return [];
+   const cut = from - r.from;
+   return [{...run, text: run.text.slice(cut), pmRange: {from, to: r.to}}];
+  });
+  if (!runs.length) return [];
+  return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
+ });
  const wrap = note => {
   note.lines = composeLines(note.blocks, width);
   // An empty definition is still a visible labelled note.
@@ -155,14 +167,19 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  // A section's pages bring their own content area (#47).
  // Notes are rewrapped to its width (#49); a note continued from the previous
  // page resumes at the new line holding the first text it had not shown.
+ // The lines already drawn stay as they were; only the text not yet shown is
+ // wrapped again, from its first character (#50), so nothing repeats.
  setGeometry(geometry) {
   const rewrap = Math.abs(geometry.width - width) > 0.001;
   width = geometry.width; height = geometry.height;
   if (!rewrap) return;
   for (const note of notes.values()) {
-   const carried = pending.filter(item => item.id === note.id), from = carried.map(item => note.lines[item.offset]?.pmRange?.from);
-   wrap(note);
-   carried.forEach((item, i) => { let at = 0; note.lines.forEach((line, li) => { if ((line.pmRange?.from ?? 0) <= from[i]) at = li; }); item.offset = at; });
+   const carried = pending.find(item => item.id === note.id && item.offset > 0);
+   if (!carried) { wrap(note); continue; }
+   const from = note.lines[carried.offset]?.pmRange?.from;
+   if (!Number.isFinite(from)) continue;
+   const rest = composeLines(clipBlocks(note.blocks, from), width);
+   note.lines = [...note.lines.slice(0, carried.offset), ...rest];
   }
  },
   get hasPending() { return pending.length > 0; },
