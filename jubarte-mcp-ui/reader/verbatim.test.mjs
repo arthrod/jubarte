@@ -112,3 +112,11 @@ test('a change opens after a backslash inside a fence, as the engine reads it', 
   assert.deepEqual(fenced('\\{++x++}'), ['\\x', 1]);
   assert.deepEqual(fenced('\\{==h==}'), ['\\h', 0]);
 });
+
+// codex's review of the fence port: a tag stops only at an unescaped new
+// line (critic.rs attribution_tag), so an escaped one continues it.
+test('a fenced tag may continue past an escaped new line', () => {
+  const [text, n] = fenced('\\{r1 A\\\n\\{++x++}}');
+  assert.equal(n, 0);
+  assert.equal(text, '{r1 A\\\n\\{++x++}}');
+});

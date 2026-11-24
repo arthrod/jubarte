@@ -353,8 +353,10 @@ export function readNote(note) {
  * The complete attribution brace opening at `at` (stopping before `until`):
  * `{ note, tags, end }`, or null when the brace is document text.
  */
-export function attributionTag(source, at, until) {
-  if (source[at] !== '{' || escaped(source, at)) return null;
+export function attributionTag(source, at, until, { afterEscape = false } = {}) {
+  // `afterEscape`: a fence escape's tag, read past the backslash run before
+  // it, as critic.rs fence_escape_at slices the source.
+  if (source[at] !== '{' || (!afterEscape && escaped(source, at))) return null;
   for (let i = at + 1; i < until; i++) {
     const c = source[i];
     if ((c === '}' || c === '{' || c === '\n') && !escaped(source, i)) {

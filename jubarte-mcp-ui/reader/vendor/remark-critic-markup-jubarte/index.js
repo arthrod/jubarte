@@ -192,9 +192,11 @@ export function prepareCritic(input, options = {}) {
   const inVerbatim = verbatimEnd(verbatimRanges(source, indentedCode(source)));
   const inFence = verbatimEnd(codeFences(source));
   const findCloser = closerIndex(source, inVerbatim, inFence);
+  // A tag ends at its first unescaped `}`, `{` or new line, so the scan is
+  // bounded (critic.rs attribution_tag).
   const tagWidth = (s, i) => {
-    const line = s.indexOf('\n', i) < 0 ? s.length : s.indexOf('\n', i);
-    return attributionTag(s.slice(i, line), 0, line - i)?.end ?? null;
+    const tag = attributionTag(s, i, s.length, { afterEscape: true });
+    return tag ? tag.end - i : null;
   };
   const storyAt = (offset) => options.storyAt?.(offset) || options.story || 'body';
   const defaultAuthor = () => ({ author: options.planAuthor || 'Modified User', ...(options.date ? { date: options.date } : {}), isNew: true });
