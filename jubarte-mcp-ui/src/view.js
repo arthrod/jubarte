@@ -65,6 +65,7 @@ const DOC_GLYPH =
   '<svg class="docglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M15 2v5h5"/></svg>';
 
 function showFiles(files, truncated) {
+  generation++; // a preview still on its way no longer answers anything (#32)
   listing = { files, truncated };
   clearPages();
   $("empty").hidden = true;
@@ -237,6 +238,7 @@ async function open(path, { fromList = false } = {}) {
 // ---------- the bridge ----------
 
 app.ontoolinput = (params) => {
+  generation++; // a new call retires every preview still on its way (#32)
   input = params?.arguments;
   showEmpty("Working on the document…", "", { busy: true });
 };
