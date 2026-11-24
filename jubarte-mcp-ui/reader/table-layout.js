@@ -135,7 +135,7 @@ export function composeWithTables(snapshot,runtime,input){
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});
    lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
-   const data=block.attrs?.sourceData,align=data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
+   const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
    for(const drawn of lines){const line=bidi?reorder(drawn,base):drawn;const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});}
   }
@@ -170,7 +170,9 @@ export function composeWithTables(snapshot,runtime,input){
   const offsetX=Math.min(hi,Math.max(src.tableAlignment?0:lo,want));
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
   const rowHeights=rows.map(()=>lh);
-  for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(fit.pad,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);c.lines=composeLines(c.blocks,c.innerWidth);const align=c.sourceData?.align||c.align;if(align==='center'||align==='right')c.lines=c.lines.map(l=>{const used=l.runs.reduce((n,r)=>Math.max(n,r.x+r.width),0),shift=Math.max(0,c.innerWidth-used)*(align==='center'?0.5:1);return {...l,runs:l.runs.map(r=>({...r,x:r.x+shift}))};});if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
+  for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(fit.pad,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);// The engine writes a cell's alignment as its column's GFM marker; when present it is the
+  // paragraph's alignment, applied once by composeLines (#81).
+  const align=c.sourceData?.align||c.align;c.lines=composeLines(align?c.blocks.map(b=>({...b,attrs:{...b.attrs,cellAlign:align}})):c.blocks,c.innerWidth);if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
   for(const c of cells.filter(c=>c.rowspan>1)){const current=rowHeights.slice(c.rowIndex,c.rowIndex+c.rowspan).reduce((a,b)=>a+b,0);if(current<c.naturalHeight)rowHeights[c.rowIndex+c.rowspan-1]+=Math.ceil((c.naturalHeight-current)/lh)*lh;}
   const rowTops=[0];for(const h of rowHeights)rowTops.push(rowTops.at(-1)+h);
   for(const c of cells){c.y=rowTops[c.rowIndex];c.height=rowTops[c.rowIndex+c.rowspan]-c.y;}

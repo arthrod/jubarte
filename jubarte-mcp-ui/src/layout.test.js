@@ -807,3 +807,26 @@ describe("a heading stays with a table whose first row has a footnote (#79)", ()
     }
   });
 });
+
+describe("a cell is aligned once (#81)", () => {
+  const doc = (normal, column) =>
+    `---\nview: tracked\nstyles:\n  Normal: Calibri 11pt, ${normal}\n---\n\n<!-- t0 1x1, cells p0-p0 by row, widths 6in, width auto -->\n|CENTER|\n|${column}|\n`;
+  const xOf = (composed) =>
+    composed.layout.pages[0].frames[0].fragments
+      .flatMap((f) => (f.lines || []).flatMap((l) => l.runs))
+      .find((r) => r.text === "CENTER").x;
+  it("a centred Normal and a centred column centre the text once", () => {
+    const control = compose(doc("left", ":-:"));
+    const centred = compose(doc("center", ":-:"));
+    expect(xOf(centred.composed)).toBeCloseTo(xOf(control.composed), 1);
+    control.done();
+    centred.done();
+  });
+  it("a column left-aligned in a centred Normal stays left", () => {
+    const left = compose(doc("left", "-"));
+    const forced = compose(doc("center", ":-"));
+    expect(xOf(forced.composed)).toBeCloseTo(xOf(left.composed), 1);
+    left.done();
+    forced.done();
+  });
+});
