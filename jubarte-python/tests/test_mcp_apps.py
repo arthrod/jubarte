@@ -524,3 +524,38 @@ def test_hidden_sections_are_stripped_in_linear_time() -> None:
     assert time.perf_counter() - started < 2.0
     assert server._without_comments("a<!-- <![CDATA[ -->b<![CDATA[ <!-- ]]>c") == "abc"
     assert server._without_comments("a<![CDATA[open") == "a"
+
+
+def _png(side: int) -> bytes:
+    """A solid `side`-pixel square PNG, its pixels incompressible enough to weigh."""
+    import os
+    import struct
+    import zlib
+
+    raw = b"".join(b"\x00" + os.urandom(3 * side) for _ in range(side))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    head = struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+def test_preview_sends_an_images_type_and_size_not_its_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The card draws a picture as a chip whose tooltip is its address; the
+    # bytes the engine inlines (5 MB of b106's 5.3) only made a document with
+    # pictures too large to preview.
+    import base64
+
+    picture = _png(300)
+    uri = "data:image/png;base64," + base64.b64encode(picture).decode()
+    docx = _native.markdown_to_docx(f"Before ![logo]({uri}) after\n")
+    (tmp_path / "p.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    monkeypatch.setattr(server, "_PREVIEW_LIMIT", 64 * 1024)
+    (preview,) = call(tmp_path, ("docx_preview", {"path": "p.docx"}))
+    assert not preview.is_error, preview.content[0].text
+    markdown = preview.structured_content["markdown"]
+    assert "base64" not in markdown
+    kb = round(len(picture) / 1024)
+    assert f"[image1]: <image/png, {kb} KB>" in markdown, markdown
+    assert "Before ![logo][image1] after" in markdown

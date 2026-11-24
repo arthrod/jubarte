@@ -86,6 +86,21 @@ _VIEW_META = {
 # The serialized UTF-8 JSON of one preview; hosts persist tool results of a
 # few MiB at most.
 _PREVIEW_LIMIT = 2 * 1024 * 1024
+# A picture's reference definition as the engine writes it. The card draws a
+# picture as a chip whose tooltip is this address, so it is sent its type and
+# size, not its bytes (a document's pictures can pass the limit alone).
+_IMAGE_DEFINITION = re.compile(r"^(\[[^\]\n]+\]: )<data:([\w.+-]+/[\w.+-]+);base64,([A-Za-z0-9+/=]*)>", re.M)
+
+
+def _image_stand_ins(markdown: str) -> str:
+    """`[image1]: <data:image/png;base64,…>` as `[image1]: <image/png, 412 KB>`."""
+
+    def stand_in(found: re.Match[str]) -> str:
+        payload = found.group(3)
+        size = len(payload) * 3 // 4 - payload[-2:].count("=")
+        return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB>"
+
+    return _IMAGE_DEFINITION.sub(stand_in, markdown)
 # docx_view's listing: files returned, directory entries visited, depth.
 _LIST_FILES = 200
 _LIST_VISITS = 5000
@@ -704,6 +719,7 @@ def build_server(*, root: Path) -> MCPServer:
         p = contained(path)
         data = doc.to_bytes()
         markdown, warnings = engine(lambda: _native.read_view(data, page_markers=False))
+        markdown = _image_stand_ins(markdown)
         preview = {
             "path": relative(p),
             "name": p.name,
