@@ -13,6 +13,13 @@
  * mark there. Offsets are UTF-16 code units; every delimiter is ASCII.
  */
 
+// Rust's `char::is_whitespace` (Unicode White_Space), which `trim` uses.
+const WHITE = '\\t\\n\\v\\f\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const LEADING = new RegExp(`^[${WHITE}]+`), TRAILING = new RegExp(`[${WHITE}]+$`), SPACE = new RegExp(`[${WHITE}<>]`);
+const trim = (s) => s.replace(LEADING, '').replace(TRAILING, '');
+/** UTF-8 length: the engine measures an indent in bytes. */
+const bytes = (s) => new TextEncoder().encode(s).length;
+
 const escaped = (s, at) => {
   let n = 0;
   while (at > 0 && s[--at] === '\\') n++;
@@ -84,13 +91,23 @@ function autolinkEnd(s, at) {
   const rest = s.slice(at + 1, at + 1 + 4096);
   const scheme = rest.match(/^[A-Za-z0-9+.-]*/)[0].length;
   if (scheme < 2 || scheme > 32 || rest[scheme] !== ':') return null;
-  const close = rest.search(/[<>\s]/);
+  const close = rest.search(SPACE);
   return close >= 0 && rest[close] === '>' ? at + 1 + close + 1 : null;
 }
 
 /** Sorted, disjoint `[start, end)` ranges of `s` that open nothing. */
 export function verbatimRanges(s, indented = []) {
-  const verbatim = [];
+  return scan(s, indented).verbatim;
+}
+
+/** The fenced code blocks of `s`, front matter aside (`in_code_fence`):
+ * where the reader's fence escapes are unwound. */
+export function codeFences(s) {
+  return scan(s, []).fences;
+}
+
+function scan(s, indented) {
+  const verbatim = [], fences = [];
   const destinations = destinationEnds(s);
   let fence = null, canDefine = true, lineStart = 0;
   if (s.startsWith('---\n') || s.startsWith('---\r\n')) {
@@ -107,21 +124,24 @@ export function verbatimRanges(s, indented = []) {
     if (at === lineStart) {
       const lineEnd = s.indexOf('\n', at) < 0 ? s.length : s.indexOf('\n', at);
       const line = s.slice(at, lineEnd);
-      const indent = line.length - line.trimStart().length;
-      const run = (b) => { let n = 0; while (line[indent + n] === b) n++; return n; };
+      const lead = line.length - line.replace(LEADING, '').length, indent = bytes(line.slice(0, lead));
+      const run = (b) => { let n = 0; while (line[lead + n] === b) n++; return n; };
       if (fence) {
-        if (indent < 4 && run(fence.b) >= fence.width && !line.slice(indent + run(fence.b)).trim()) fence = null;
+        if (indent < 4 && run(fence.b) >= fence.width && !trim(line.slice(lead + run(fence.b)))) {
+          fences.push([fence.start, lineEnd]);
+          fence = null;
+        }
         canDefine = true;
         at = lineEnd + 1;
         lineStart = at;
         continue;
       }
       for (const b of '`~') {
-        const width = run(b), info = line.slice(indent + width);
-        if (indent < 4 && width >= 3 && !(b === '`' && info.includes('`'))) fence = { b, width };
+        const width = run(b), info = line.slice(lead + width);
+        if (indent < 4 && width >= 3 && !(b === '`' && info.includes('`'))) fence = { b, width, start: at };
       }
       const destination = canDefine ? definitionDestination(line) : null;
-      canDefine = !!fence || destination !== null || !line.trim() || line.trimStart().startsWith('#');
+      canDefine = !!fence || destination !== null || !trim(line) || line.replace(LEADING, '').startsWith('#');
       if (destination !== null) verbatim.push([at + destination, lineEnd]);
       if (fence || destination !== null) {
         at = lineEnd + 1;
@@ -139,10 +159,47 @@ export function verbatimRanges(s, indented = []) {
       at = end;
     } else if (s[at] === '`') while (s[at] === '`') at++;
     else at++;
-    const newline = s.lastIndexOf('\n', at - 1);
-    if (newline >= from) lineStart = newline + 1;
+    // Only the span just consumed can hold a new line start.
+    for (let i = at - 1; i >= from; i--) if (s[i] === '\n') { lineStart = i + 1; break; }
   }
-  return [...verbatim, ...indented].sort((a, b) => a[0] - b[0]);
+  if (fence) fences.push([fence.start, s.length]);
+  return { verbatim: [...verbatim, ...indented].sort((a, b) => a[0] - b[0]), fences };
+}
+
+const OPENER = ['++', '--', '~~', '>>', '=='];
+const CLOSER = ['++', '--', '~~', '<<', '=='];
+
+/**
+ * The reader's fence escape at `at`, if one sits there (critic.rs
+ * `fence_escape_at`): `{ text, length }`. A delimiter shape with an odd
+ * backslash run at its break point names the run halved and the delimiter
+ * as text; an even run cannot come from the reader and stays as written.
+ * `tagWidth(s, at)` is the width of a complete attribution tag at `at`.
+ */
+export function fenceEscapeAt(s, at, tagWidth = () => null) {
+  if (s[at] === '\\') {
+    let run = 0;
+    while (s[at + run] === '\\') run++;
+    const width = tagWidth(s, at + run);
+    if (width) {
+      const kept = run % 2 === 1 ? (run - 1) / 2 : run;
+      return { text: '\\'.repeat(kept) + s.slice(at + run, at + run + width), length: run + width };
+    }
+  }
+  const shape = (head, tails) => {
+    let run = at + head;
+    while (s[run] === '\\') run++;
+    const tail = tails.find((t) => s.startsWith(t, run));
+    return tail === undefined ? null : [head, run - (at + head), tail.length];
+  };
+  const found = s[at] === '{' ? shape(1, OPENER)
+    : CLOSER.some((h) => s.startsWith(h, at)) ? shape(2, ['}'])
+    : s[at] === '~' ? shape(1, ['>'])
+    : null;
+  if (!found || found[1] === 0) return null;
+  const [head, run, tail] = found, whole = head + run + tail;
+  if (run % 2 === 0) return { text: s.slice(at, at + whole), length: whole };
+  return { text: s.slice(at, at + head) + '\\'.repeat((run - 1) / 2) + s.slice(at + head + run, at + whole), length: whole };
 }
 
 /** `at`'s verbatim range end, or null: a lookup over `verbatimRanges`. */

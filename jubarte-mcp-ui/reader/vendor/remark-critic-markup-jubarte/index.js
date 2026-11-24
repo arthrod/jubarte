@@ -12,7 +12,7 @@
 
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { attributionTag, isDate, readNote } from '../../attribution-tags.js';
-import { verbatimEnd, verbatimRanges } from '../../verbatim.js';
+import { codeFences, fenceEscapeAt, verbatimEnd, verbatimRanges } from '../../verbatim.js';
 
 const FORMS = [
   { open: '{++', close: '++}', kind: 'insertion', bit: 1 },
@@ -42,7 +42,7 @@ function lowerBound(values, target) {
   return lo;
 }
 
-function closerIndex(source, inVerbatim = () => null) {
+function closerIndex(source, inVerbatim = () => null, inFence = () => null) {
   const index = new Map();
   for (const pattern of [...FORMS.map((form) => form.close), '~>']) {
     const positions = [];
@@ -50,7 +50,9 @@ function closerIndex(source, inVerbatim = () => null) {
     while (from < source.length) {
       const at = source.indexOf(pattern, from);
       if (at < 0) break;
-      if (!isEscaped(source, at) && inVerbatim(at) === null) positions.push(at);
+      // In a code fence a closer behind a backslash still closes: the
+      // reader breaks every literal delimiter there itself (critic.rs).
+      if ((inFence(at) !== null || !isEscaped(source, at)) && inVerbatim(at) === null) positions.push(at);
       from = at + 1;
     }
     index.set(pattern, positions);
@@ -68,7 +70,8 @@ function indentedCode(source) {
   if (!/^(?: {4}|\t)/m.test(source)) return [];
   const out = [];
   const visit = (node) => {
-    if (node.type === 'code' && !/^[ \t]*(```|~~~)/.test(source.slice(node.position.start.offset - node.position.start.column + 1))) out.push([node.position.start.offset, node.position.end.offset]);
+    // A fenced block starts at its fence; indented code at its indent.
+    if (node.type === 'code' && !/^(```|~~~)/.test(source.slice(node.position.start.offset))) out.push([node.position.start.offset, node.position.end.offset]);
     else for (const child of node.children || []) visit(child);
   };
   visit(fromMarkdown(source));
@@ -187,13 +190,29 @@ export function prepareCritic(input, options = {}) {
   const nextId = (kind) => `critic-${kind}-${++sequence}`;
   // Where Markdown reads literally nothing opens or closes (verbatim.js).
   const inVerbatim = verbatimEnd(verbatimRanges(source, indentedCode(source)));
-  const findCloser = closerIndex(source, inVerbatim);
+  const inFence = verbatimEnd(codeFences(source));
+  const findCloser = closerIndex(source, inVerbatim, inFence);
+  const tagWidth = (s, i) => {
+    const line = s.indexOf('\n', i) < 0 ? s.length : s.indexOf('\n', i);
+    return attributionTag(s.slice(i, line), 0, line - i)?.end ?? null;
+  };
   const storyAt = (offset) => options.storyAt?.(offset) || options.story || 'body';
   const defaultAuthor = () => ({ author: options.planAuthor || 'Modified User', ...(options.date ? { date: options.date } : {}), isNew: true });
 
   function warn(code, message, sourceStart, sourceEnd) {
     warnings.push(message);
     diagnostics.push({ code, message, sourceStart, sourceEnd });
+  }
+
+  /** Text the source names but does not hold (a fence escape), mapped to
+   * the escape's source range. */
+  function appendText(text, from, until) {
+    if (!text) return;
+    chunks.push(text);
+    for (let i = 0; i < text.length; i++) sourceMap.push(Math.min(from + i, until - 1));
+    length += text.length;
+    lastCharacter = text[text.length - 1];
+    if (tagAnchor) tagGap += text;
   }
 
   function append(from, until) {
@@ -356,6 +375,14 @@ export function prepareCritic(input, options = {}) {
         append(at, end);
         previous = null;
         at = end;
+        continue;
+      }
+      const unescaped = inFence(at) !== null ? fenceEscapeAt(source, at, tagWidth) : null;
+      if (unescaped && at + unescaped.length <= until) {
+        appendText(unescaped.text, at, at + unescaped.length);
+        previous = null;
+        tagAnchor = null;
+        at += unescaped.length;
         continue;
       }
       const possibleForm = source[at] === '{' && !isEscaped(source, at)

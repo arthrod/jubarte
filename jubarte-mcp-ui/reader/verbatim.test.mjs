@@ -41,3 +41,60 @@ test('verbatimRanges ports the engine scanner', () => {
   const got = verbatimRanges(s).map(([a, b]) => s.slice(a, b));
   assert.deepEqual(got, ['`c`', '(u (v)', '<ab:c>', ' dest']);
 });
+
+// The reader breaks CriticMarkup shapes in a code block's text with a
+// backslash run (from_docx escape_code); the engine unwinds an odd run
+// inside a fenced block only (critic.rs fence_escape_at). #25, codex re-review.
+const fenced = (body) => read('```\n' + body + '\n```\n');
+
+test('a fence escape names the delimiter as text, as the engine reads it', () => {
+  assert.deepEqual(fenced('{\\++x++\\}'), ['{++x++}', 0]);
+  assert.deepEqual(fenced('{\\--x--\\}'), ['{--x--}', 0]);
+  assert.deepEqual(fenced('{\\~~a~\\>b~~\\}'), ['{~~a~>b~~}', 0]);
+  assert.deepEqual(fenced('{\\>>n<<\\}'), ['{>>n<<}', 0]);
+  assert.deepEqual(fenced('{\\==h==\\}'), ['{==h==}', 0]);
+  // A run of three names one backslash kept before the delimiter.
+  assert.deepEqual(fenced('{\\\\\\++x++\\\\\\}'), ['{\\++x++\\}', 0]);
+  // An even run cannot come from the reader: kept as written, opening nothing.
+  assert.deepEqual(fenced('{\\\\++x'), ['{\\\\++x', 0]);
+});
+
+test('outside a fence the escapes are Markdown\'s own', () => {
+  assert.deepEqual(read('a {\\++x++\\} b'), ['a {++x++} b', 0]);
+});
+
+test('a change still marks inside a fence, closing even after a backslash', () => {
+  assert.deepEqual(fenced('{++a\\++}'), ['a\\', 1]);
+});
+
+test('a highlight still marks inside a fence, as markdown_to_docx writes it', () => {
+  assert.deepEqual(fenced('{==h==}'), ['h', 0]);
+});
+
+test('the scanner is linear on one long line', async () => {
+  const { verbatimRanges, codeFences } = await import('./verbatim.js');
+  const s = 'word `x` [l](u) '.repeat(40000);
+  const start = performance.now();
+  verbatimRanges(s);
+  codeFences(s);
+  assert.ok(performance.now() - start < 500, `${performance.now() - start}ms`);
+});
+
+// codex's re-review inputs, each with what markdown_to_docx writes (#25).
+test('indented code holding a fence shape is still indented code', () => {
+  assert.equal(read('    ```\n    {++x++}\n')[1], 0);
+  assert.equal(read('    ~~~\n    {++x++}\n')[1], 0);
+});
+
+test('a fence inside a block quote is not indented code: its change marks', () => {
+  assert.equal(read('> ~~~\n> {++x++}\n> ~~~\n\n    other\n')[1], 1);
+});
+
+test('indent counts UTF-8 bytes of Unicode white space, as the engine does', () => {
+  // Two em spaces are six bytes: no fence, so the backticks open a code span.
+  assert.equal(read('  ```\n{++x++}\n```')[1], 0);
+});
+
+test('an autolink ends at any Unicode white space', () => {
+  assert.equal(read('<https://a/\u0085{++x++}>')[1], 1);
+});
