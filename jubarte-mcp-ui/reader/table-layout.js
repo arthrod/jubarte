@@ -85,10 +85,10 @@ export function composeWithTables(snapshot,runtime,input){
  // give the levels (a number at 2); L2 orders the runs. The browser orders the text inside
  // each run.
  const RTL=/[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/,STRONG=/[\p{L}]/u,DIGIT=/\p{Nd}/u;
- const SEPARATOR=/^[,.\/:\u00a0\u060c\u202f\u2044+\-\u2212]$/u,TERMINATOR=/^[#%\u00b0\u00b1\u2030-\u2034\p{Sc}]+$/u;
+ const SEPARATOR=/^[,./:\u00a0\u060c\u202f\u2044+\-\u2212]$/u,TERMINATOR=/^[#%\u00b0\u00b1\u2030-\u2034\p{Sc}]+$/u;
  // Arabic-Indic digits and the Arabic decimal and thousands separators are Arabic numbers
  // (AN): W7 leaves them, N1 counts them as R, and W4 joins only common separators (#60).
- const ARABIC_NUMBER=/[\u0660-\u0669\u066b\u066c\u0600-\u0605\u06dd\u08e2]/u,COMMON_SEPARATOR=/^[,.\/:\u00a0\u060c\u202f\u2044]$/u;
+ const ARABIC_NUMBER=/[\u0660-\u0669\u066b\u066c\u0600-\u0605\u06dd\u08e2]/u,COMMON_SEPARATOR=/^[,./:\u00a0\u060c\u202f\u2044]$/u;
  function charClass(ch){if(ARABIC_NUMBER.test(ch))return 'AN';if(STRONG.test(ch))return RTL.test(ch)?'R':'L';return DIGIT.test(ch)?'EN':null;}
  // W4 and W5 on characters: a separator between two digits, and terminators beside one,
  // are part of the number.
@@ -116,7 +116,7 @@ export function composeWithTables(snapshot,runtime,input){
   const resolved=typed.map((c,i)=>{if(c)return c;let before=sos,after=sos;for(let j=i-1;j>=0;j--)if(typed[j]){before=asStrong(typed[j]);break;}for(let j=i+1;j<typed.length;j++)if(typed[j]){after=asStrong(typed[j]);break;}return before===after?before:sos;});
   const levels=resolved.map(c=>c==='EN'||c==='AN'?2:base===1?(c==='R'?1:2):(c==='R'?1:0)),order=runs.map((_,i)=>i);
   for(let level=Math.max(...levels);level>=1;level--)for(let i=0;i<order.length;){if(levels[order[i]]<level){i++;continue;}let j=i;while(j<order.length&&levels[order[j]]>=level)j++;order.splice(i,j-i,...order.slice(i,j).reverse());i=j;}
-  let x=Math.min(...runs.map(r=>r.x));const placed=new Array(runs.length);
+  let x=Math.min(...runs.map(r=>r.x));const placed=Array.from({length:runs.length});
   for(const i of order){const r=runs[i];placed[i]={...r,x,dir:levels[i]%2?'rtl':base===1?'ltr':undefined};x+=r.width||0;}
   return {...line,runs:placed};}
  // Word's w:ind on a paragraph (the engine's left, right, first-line and hanging clauses):
