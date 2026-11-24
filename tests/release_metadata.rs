@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Meta tests for convert packaging: bundled Carlito/Liberation font assets,
-//! their OFL license files, `REUSE.toml` annotations, `Cargo.toml` `include`
-//! globs, and cross-file version/changelog consistency.
+//! their OFL license files, the render crate's `THIRD_PARTY_NOTICES.md`,
+//! `Cargo.toml` `include` globs, and cross-file version/changelog consistency.
 //!
 //! These do not re-test `convert::docx_to_pdf` itself (unchanged in this
-//! diff) — only the new/edited files: fonts, licenses, `REUSE.toml`,
+//! diff) — only the new/edited files: fonts, licenses, notices,
 //! `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`. The desktop app's version
 //! and CHANGELOG are its own repository's (arthrod/jubarte-app), checked by
 //! its scripts/release-engine.sh before an engine release publishes.
@@ -213,54 +213,81 @@ fn liberation_license_file_is_ofl_and_credits_red_hat() {
 }
 
 // ---------------------------------------------------------------------------
-// REUSE.toml — SPDX annotations for the new font assets
+// THIRD_PARTY_NOTICES.md — the render crate's notice covers its fonts
 // ---------------------------------------------------------------------------
 
-#[test]
-fn reuse_toml_covers_carlito_fonts_with_ofl() {
-    let text = read("REUSE.toml");
-    assert!(
-        text.contains("crates/jubarte-render/assets/fonts/Carlito-*.ttf"),
-        "REUSE.toml missing a glob annotation for Carlito-*.ttf"
-    );
-    // The Carlito glob annotation and its license text should both declare OFL-1.1.
-    let carlito_block_idx = text
-        .find("crates/jubarte-render/assets/fonts/Carlito-*.ttf")
-        .expect("Carlito annotation present");
-    let tail = &text[carlito_block_idx..];
-    assert!(
-        tail[..tail.len().min(400)].contains("OFL-1.1"),
-        "Carlito annotation block does not declare SPDX-License-Identifier = \"OFL-1.1\""
-    );
+/// The row of the render crate's notice table that lists `files`.
+fn render_notice_row(files: &str) -> String {
+    read("crates/jubarte-render/THIRD_PARTY_NOTICES.md")
+        .lines()
+        .find(|line| line.starts_with('|') && line.contains(files))
+        .unwrap_or_else(|| panic!("THIRD_PARTY_NOTICES.md has no row for {files}"))
+        .to_string()
 }
 
 #[test]
-fn reuse_toml_covers_liberation_fonts_with_ofl() {
-    let text = read("REUSE.toml");
-    assert!(
-        text.contains("crates/jubarte-render/assets/fonts/Liberation*.ttf"),
-        "REUSE.toml missing a glob annotation for Liberation*.ttf"
-    );
-    let idx = text
-        .find("crates/jubarte-render/assets/fonts/Liberation*.ttf")
-        .expect("Liberation annotation present");
-    let tail = &text[idx..];
-    assert!(
-        tail[..tail.len().min(400)].contains("OFL-1.1"),
-        "Liberation annotation block does not declare SPDX-License-Identifier = \"OFL-1.1\""
-    );
-}
-
-#[test]
-fn reuse_toml_covers_both_font_license_files() {
-    let text = read("REUSE.toml");
-    for path in [
+fn render_notices_cover_carlito_fonts_with_ofl() {
+    let row = render_notice_row("`assets/fonts/Carlito-*.ttf`");
+    for want in [
+        "OFL-1.1",
+        "tyPoland Lukasz Dziedzic",
         "assets/fonts/LICENSE-Carlito",
+    ] {
+        assert!(
+            row.contains(want),
+            "the Carlito row does not name {want}: {row}"
+        );
+    }
+}
+
+#[test]
+fn render_notices_cover_liberation_fonts_with_ofl() {
+    let row = render_notice_row("`assets/fonts/Liberation*.ttf`");
+    for want in [
+        "OFL-1.1",
+        "Red Hat, Inc.",
         "assets/fonts/LICENSE-Liberation",
     ] {
         assert!(
-            text.contains(path),
-            "REUSE.toml is missing an annotation for {path}"
+            row.contains(want),
+            "the Liberation row does not name {want}: {row}"
+        );
+    }
+}
+
+#[test]
+fn the_render_crate_ships_its_notices() {
+    let manifest = read("crates/jubarte-render/Cargo.toml");
+    let package = manifest.split("[dependencies]").next().unwrap_or_default();
+    assert!(
+        package.contains("\"/THIRD_PARTY_NOTICES.md\""),
+        "crates/jubarte-render/Cargo.toml `include` must ship THIRD_PARTY_NOTICES.md beside the fonts"
+    );
+}
+
+#[test]
+fn the_installable_fonts_carry_their_licence_texts() {
+    // scripts/install.sh and the release archives copy these beside the fonts
+    for (file, licence, holder) in [
+        (
+            "LICENSE-Selawik",
+            "SIL OPEN FONT LICENSE",
+            "Microsoft Corporation",
+        ),
+        ("LICENSE-RobotoCondensed", "Apache License", "Google Inc."),
+    ] {
+        let text = read(&format!("assets/fonts/extra/{file}"));
+        assert!(
+            text.contains(licence),
+            "{file} does not carry the {licence} text"
+        );
+        assert!(text.contains(holder), "{file} does not name {holder}");
+    }
+    let notice = read("assets/fonts/extra/THIRD_PARTY_NOTICES.md");
+    for glob in ["`RobotoCondensed-*.ttf`", "`Selawik-*.ttf`"] {
+        assert!(
+            notice.contains(glob),
+            "assets/fonts/extra/THIRD_PARTY_NOTICES.md has no row for {glob}"
         );
     }
 }

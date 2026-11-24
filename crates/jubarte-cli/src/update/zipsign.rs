@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 // SPDX-FileCopyrightText: 2023-2025 René Kijewski
 //
-// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-zipsign-MIT
+// SPDX-License-Identifier: Apache-2.0 AND MIT
 
 //! zipsign signature check for downloaded release archives (#1705).
 //!
 //! Adapted from zipsign-api 0.2.2 (`verify/`, `verify_unsign_tar.rs` and
 //! `constants.rs`), Copyright (c) 2023-2025 René Kijewski, licensed
 //! `MIT OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception` and used here under
-//! MIT; the preserved notice is `LICENSES/LicenseRef-zipsign-MIT.txt`.
+//! MIT; zipsign's notice is in this crate's `THIRD_PARTY_NOTICES.md`.
 //! zipsign-api pins ed25519-dalek 2, whose digest 0.10 brings block-buffer
 //! 0.10.4 (GHSA-qwgh-2vcv-g2f7); this port checks the same bytes with
 //! ed25519-dalek 3.

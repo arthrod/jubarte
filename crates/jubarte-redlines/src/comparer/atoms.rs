@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Microsoft Corporation
 // SPDX-FileCopyrightText: 2025-2026 John Scrudato IV
 //
-// SPDX-License-Identifier: Apache-2.0 AND LicenseRef-Docxodus-MIT
+// SPDX-License-Identifier: Apache-2.0 AND MIT
 
 //! Comparison-unit types (M4.0/M4.2). Port of the `ComparisonUnit*` hierarchy.
 //!

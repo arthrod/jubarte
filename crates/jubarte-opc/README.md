@@ -102,8 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-opc/LICENSE). [NOTICE](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-opc/NOTICE) carries the attributions of the
-projects this code derives from.
+[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-opc/LICENSE). Some of its files are adapted from Docxodus and Microsoft's PPCC25-ALM sample under
+the MIT License; `THIRD_PARTY_NOTICES.md`, which ships with the crate,
+names them and carries their notices.
 
 ## Links
 

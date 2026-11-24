@@ -32,7 +32,7 @@ class PrepublishCheck(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="npm_prepublish_"))
         shutil.copy(NPM / "prepublish-check.mjs", self.tmp)
         shutil.copy(NPM / "package.json", self.tmp)
-        for name in ("LICENSE", "NOTICE", "LICENSE-OFL-1.1.txt", "README.md"):
+        for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md"):
             (self.tmp / name).write_text("text\n")
         (self.tmp / "ENGINE_COMMIT.txt").write_text("0123456789abcdef0123456789abcdef01234567\n")
         for target in TARGETS:
@@ -84,7 +84,7 @@ class PrepublishCheck(unittest.TestCase):
         self.assertIn('does not list web-pdf/', r.stderr)
 
     def test_the_license_files_are_required(self) -> None:
-        for name in ("LICENSE", "NOTICE", "LICENSE-OFL-1.1.txt"):
+        for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
             with self.subTest(name=name):
                 (self.tmp / name).unlink()
                 r = self.check()

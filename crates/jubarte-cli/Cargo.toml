@@ -16,7 +16,7 @@ description = "The jubarte engine's command line: every operation of the library
 readme = "README.md"
 keywords = ["docx", "cli", "redline", "word", "convert"]
 categories = ["command-line-utilities", "text-processing"]
-include = ["/src/**", "/build.rs", "/README.md", "/LICENSE", "/NOTICE"]
+include = ["/src/**", "/build.rs", "/README.md", "/LICENSE", "/NOTICE", "/THIRD_PARTY_NOTICES.md"]
 [lib]
 name = "jubarte_cli"
 

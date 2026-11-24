@@ -32,5 +32,5 @@ fi
 
 mkdir -p "$dest"
 cp "$repo"/assets/fonts/extra/*.ttf "$dest"/
-cp "$repo"/LICENSES/OFL-1.1.txt "$repo"/LICENSES/Apache-2.0.txt "$dest"/
+cp "$repo"/assets/fonts/extra/LICENSE-* "$repo"/assets/fonts/extra/THIRD_PARTY_NOTICES.md "$dest"/
 echo "fonts installed in $dest"

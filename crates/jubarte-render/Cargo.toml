@@ -16,7 +16,7 @@ description = "The render product of the jubarte engine: DOCX to PDF and PNG, wi
 readme = "README.md"
 keywords = ["docx", "pdf", "render", "word", "png"]
 categories = ["text-processing", "rendering"]
-include = ["/src/**", "/assets/**", "/README.md", "/LICENSE", "/NOTICE"]
+include = ["/src/**", "/assets/**", "/README.md", "/LICENSE", "/NOTICE", "/THIRD_PARTY_NOTICES.md"]
 [lib]
 name = "jubarte_render"
 

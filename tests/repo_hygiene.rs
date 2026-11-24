@@ -34,17 +34,13 @@ const TOP_LEVEL: &[&str] = &[
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "Cargo.lock",
-    "Cargo.lock.license",
     "Cargo.toml",
     "GEMINI.md",
     "KNOWN_ISSUES.md",
     "LICENSE",
-    "LICENSES",
-    "LICENSES.md",
     "NOTICE",
     "README.crates.md",
     "README.md",
-    "REUSE.toml",
     "SECURITY.md",
     "SUPPORT.md",
     "assets",
@@ -99,11 +95,10 @@ const NAMES_A_HOME: &[&str] = &[
 const NAMES_THE_RETIRED_NAME: &[&str] = &["AGENTS.md", "CHANGELOG.md", "tests/repo_hygiene.rs"];
 
 /// Files that may name the license the project left at 0.19.0: the
-/// history of the change, the notices that state it, another license's
-/// text, and tests and review rules about licenses.
+/// history of the change, the notices that state it, and tests and review
+/// rules about licenses.
 const NAMES_THE_FORMER_LICENSE: &[&str] = &[
     "CHANGELOG.md",
-    "LICENSES/MPL-2.0.txt",
     "README.crates.md",
     "README.md",
     "docs/adoption/README.md",

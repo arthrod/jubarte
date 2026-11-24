@@ -113,8 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-edit/LICENSE). [NOTICE](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-edit/NOTICE) carries the attributions of the
-projects this code derives from.
+[Apache-2.0](https://github.com/jandira-tech/jubarte/blob/v0.20.0/crates/jubarte-edit/LICENSE).
 
 ## Links
 

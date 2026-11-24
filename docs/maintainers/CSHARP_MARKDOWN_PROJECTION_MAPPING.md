@@ -658,10 +658,11 @@ attribution.
   XDocument annotations → explicit reader context; (7) regex class → a
   char-class predicate fn; (8) lazy IEnumerable with mutating closures →
   explicit loops over materialized Vecs.
-- Licensing: extend the existing `LICENSES/LicenseRef-Docxodus-MIT.txt` +
-  REUSE.toml coverage to projection goldens; "Port of Docxodus
-  `WmlToMarkdownConverter` (MIT)" notes in each new file's SPDX header; run
-  `uv tool run --from 'reuse[charset-normalizer]' reuse lint`.
+- Licensing: list each new ported file, and the projection goldens, in the
+  `THIRD_PARTY_NOTICES.md` of the crate or folder that holds them, under
+  Docxodus (MIT); "Port of Docxodus `WmlToMarkdownConverter` (MIT)" notes
+  in each new file's SPDX header; run
+  `python3 scripts/sync_license_files.py --check`.
 
 ---
 

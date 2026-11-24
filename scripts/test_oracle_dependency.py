@@ -69,7 +69,6 @@ class OracleDependency(unittest.TestCase):
     def test_vendored_oracle_is_removed(self) -> None:
         self.assertFalse((ROOT / "vendor" / "ooxmlsdk").exists())
         self.assertNotIn("vendor/ooxmlsdk", (ROOT / "Cargo.toml").read_text())
-        self.assertNotIn("vendor/", (ROOT / "REUSE.toml").read_text())
 
 
 class SecurityAdvisoryRecord(unittest.TestCase):

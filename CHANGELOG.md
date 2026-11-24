@@ -15,6 +15,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 ## [Unreleased]
 
+### Changed
+
+- **One licence file, and each third-party notice beside what it covers.** The repository root keeps `LICENSE` (Apache-2.0) and a `NOTICE` that is Jandira's alone; `LICENSES/`, `LICENSES.md`, `REUSE.toml` and the 43 `.license` sidecars are gone. A `THIRD_PARTY_NOTICES.md` now sits beside what came from another project: in jubarte-dom, jubarte-opc and jubarte-redlines (Docxodus and Open-Xml-PowerTools, and Microsoft's default Word theme), jubarte-markdown (anymd, Word's table styles), jubarte-render (markdown2pdf, Carlito, Liberation) and jubarte-cli (zipsign), each shipped in its crate; in `assets/fonts/extra/`, with new licence texts for Selawik and Roboto Condensed; and in `tests/` for the test documents. The Python wheel (inside the `jubarte` package), the npm library and the release archives carry one `THIRD_PARTY_NOTICES.md` with every crate's notices and the embedded fonts' licence texts, in place of `LICENSE-OFL-1.1.txt`/`OFL-1.1.txt`. Adapted files' SPDX headers read `Apache-2.0 AND MIT`. `scripts/sync_license_files.py --check` replaces `reuse lint` in CI and release step 5: it fails on a file whose header names another licence or holder that no notice lists.
+
 ## [0.20.0] - 2026-11-23
 
 > **Summary.** jubarte 0.20.0: drawing ids are unique across the whole document, so the redlines Windows Word 2024 refused as corrupt for repeated or shared drawing ids now open, and jubarte validate reports and repairs both shapes; dependencies refreshed. On the 600-pair and 860-document sets, scored against Word's own output: redlines mean 74.11 (Docxodus 71.67), counting as 0 the 3 redlines without a scored PDF, the same three as 0.19.0; PDFs mean 78.02 (LibreOffice 58.07) with no failed document. Every redline and reference was exported to PDF by Mac Word 16.115, as for 0.19.0. These notes first gave 60.60, from a Windows Word 2024 export on a server with no printer, where Word lays pages out at 96 dpi.

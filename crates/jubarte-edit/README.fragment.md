@@ -103,5 +103,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## License
 
-[Apache-2.0](LICENSE). [NOTICE](NOTICE) carries the attributions of the
-projects this code derives from.
+[Apache-2.0](LICENSE).

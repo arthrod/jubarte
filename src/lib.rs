@@ -90,8 +90,9 @@
 //! The comparer is a Rust port of the `WmlComparer`/`DocumentComparer` engine
 //! from [Docxodus](https://github.com/JSv4/Docxodus) (MIT), itself a fork of
 //! Microsoft's [Open-Xml-PowerTools](https://github.com/OfficeDev/Open-Xml-PowerTools)
-//! (MIT). The repository itself is Apache-2.0; `NOTICE` and `LICENSES/` preserve
-//! those upstream attribution texts.
+//! (MIT). The repository itself is Apache-2.0; the `THIRD_PARTY_NOTICES.md` of
+//! jubarte-redlines and of each crate that ports their code preserves their
+//! notices.
 
 #[cfg(feature = "cli")]
 #[doc(inline)]
