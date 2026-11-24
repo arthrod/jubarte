@@ -127,6 +127,21 @@ def _main_part(package: zipfile.ZipFile) -> str:
     return "word/document.xml"
 
 
+def _without_comments(xml: str) -> str:
+    """`xml` without its comments, in one pass: an unclosed `<!--` drops
+    the rest, as a parser would refuse it."""
+    out: list[str] = []
+    at = 0
+    while (start := xml.find("<!--", at)) >= 0:
+        out.append(xml[at:start])
+        end = xml.find("-->", start + 4)
+        if end < 0:
+            return "".join(out)
+        at = end + 3
+    out.append(xml[at:])
+    return "".join(out)
+
+
 def move_kinds(docx: bytes) -> dict[str, str]:
     """`{story}:rev:{w:id}` to `moveins`/`movedel` for every w:moveTo and
     w:moveFrom in the body, footnotes and endnotes: the map jubarte-app's
@@ -144,7 +159,8 @@ def move_kinds(docx: bytes) -> dict[str, str]:
                     continue
                 if info.file_size > _PART_LIMIT:
                     continue
-                xml = package.read(info).decode("utf-8", "replace")
+                # A commented-out element is no move: drop comments first.
+                xml = _without_comments(package.read(info).decode("utf-8", "replace"))
                 for m in _MOVE.finditer(xml):
                     ident = _ID.search(m.group(2))
                     if ident:
@@ -169,9 +185,115 @@ def change_counts(changes: Sequence[Any]) -> dict[str, int]:
         if kind == "formatting":
             counts["formatted"] += 1
         if kind == "move":
-            moves.add(change.move_name or change.id)
+            # Word names moves per story: a body move1 and a footnote move1
+            # are two moves. A change id carries its story (`footnotes.r7`).
+            story = change.id.rsplit(".", 1)[0] if "." in change.id else "body"
+            moves.add(f"{story}\0{change.move_name}" if change.move_name else change.id)
     counts["moved"] = len(moves)
     return counts
+
+
+# Whether a folder can be opened below another by descriptor, refusing links.
+_FD_WALK = os.open in os.supports_dir_fd and os.scandir in os.supports_fd and hasattr(os, "O_NOFOLLOW")
+
+
+def _open_below(top: int, rel: str) -> int | None:
+    """A descriptor for `rel` under the folder `top`, opened one component
+    at a time without following a link; None when any step fails."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    current = os.dup(top)
+    for part in rel.split("/") if rel else []:
+        try:
+            child = os.open(part, flags, dir_fd=current)
+        except OSError:
+            os.close(current)
+            return None
+        os.close(current)
+        current = child
+    return current
+
+
+def _scan(root: Path, top: int | None, rel: str) -> Any:
+    """os.scandir of folder `rel`: by descriptor where the platform allows,
+    otherwise by path after checking the folder's real path is inside root."""
+    if top is None:
+        folder = root / rel
+        real = folder.resolve()
+        if real != root and root not in real.parents:
+            raise NotADirectoryError(rel)
+        return os.scandir(folder)
+    fd = _open_below(top, rel)
+    if fd is None:
+        raise NotADirectoryError(rel)
+    try:
+        return os.scandir(fd)
+    except OSError:
+        os.close(fd)
+        raise
+
+
+def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
+    """The .docx files under root, sorted, within the listing's budgets.
+
+    root is opened once, refusing a link, and every folder below it is
+    reopened from that descriptor one component at a time with
+    O_NOFOLLOW, so a folder swapped for a link after it was listed stays
+    shut and the walk cannot leave root. Entries are counted as they are
+    read, so a wide folder is read only up to the budget. File links are
+    skipped; unreadable folders are passed over. Where folders cannot be
+    opened by descriptor (Windows), each folder's real path is checked
+    against root just before it is read."""
+    files: list[dict[str, Any]] = []
+    visits = 0
+    truncated = False
+    top: int | None = None
+    if _FD_WALK:
+        try:
+            top = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW)
+        except OSError:
+            return files, False
+    try:
+        pending: list[tuple[str, int]] = [("", 0)]
+        while pending:
+            rel, depth = pending.pop(0)
+            entries: list[Any] = []
+            try:
+                with _scan(root, top, rel) as it:
+                    for entry in it:
+                        visits += 1
+                        if visits > _LIST_VISITS:
+                            files.sort(key=lambda f: f["path"])
+                            return files, True
+                        entries.append((entry.name, entry.stat(follow_symlinks=False)))
+            except OSError:
+                continue
+            subfolders: list[tuple[str, int]] = []
+            for name, st in sorted(entries, key=lambda e: e[0]):
+                if name.startswith((".", "~$")) or name in _LIST_SKIP:
+                    continue
+                path = f"{rel}/{name}" if rel else name
+                if stat.S_ISDIR(st.st_mode):
+                    if depth + 1 < _LIST_DEPTH:
+                        subfolders.append((path, depth + 1))
+                    else:
+                        truncated = True
+                elif stat.S_ISREG(st.st_mode) and name.lower().endswith(".docx"):
+                    if len(files) >= _LIST_FILES:
+                        files.sort(key=lambda f: f["path"])
+                        return files, True
+                    files.append(
+                        {
+                            "path": path,
+                            "size": st.st_size,
+                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                    )
+            pending[:0] = subfolders
+    finally:
+        if top is not None:
+            os.close(top)
+    files.sort(key=lambda f: f["path"])
+    return files, truncated
 
 
 def _card_html() -> str:
@@ -512,51 +634,6 @@ def build_server(*, root: Path) -> MCPServer:
     def relative(p: Path) -> str:
         return p.relative_to(root).as_posix()
 
-    def listing() -> tuple[list[dict[str, Any]], bool]:
-        """The .docx files under root, sorted, within the listing's budgets.
-        Directory links are never followed and file links are skipped, so the
-        walk cannot leave root; unreadable folders are passed over."""
-        files: list[dict[str, Any]] = []
-        visits = 0
-        truncated = False
-        pending: list[tuple[Path, int]] = [(root, 0)]
-        while pending:
-            folder, depth = pending.pop(0)
-            try:
-                with os.scandir(folder) as it:
-                    entries = sorted(it, key=lambda e: e.name)
-            except OSError:
-                continue
-            subfolders: list[tuple[Path, int]] = []
-            for entry in entries:
-                visits += 1
-                if visits > _LIST_VISITS:
-                    return sorted(files, key=lambda f: f["path"]), True
-                name = entry.name
-                if name.startswith((".", "~$")) or name in _LIST_SKIP:
-                    continue
-                try:
-                    st = entry.stat(follow_symlinks=False)
-                except OSError:
-                    continue
-                if stat.S_ISDIR(st.st_mode):
-                    if depth + 1 < _LIST_DEPTH:
-                        subfolders.append((Path(entry.path), depth + 1))
-                    else:
-                        truncated = True
-                elif stat.S_ISREG(st.st_mode) and name.lower().endswith(".docx"):
-                    if len(files) >= _LIST_FILES:
-                        return sorted(files, key=lambda f: f["path"]), True
-                    files.append(
-                        {
-                            "path": relative(Path(entry.path)),
-                            "size": st.st_size,
-                            "modified": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        }
-                    )
-            pending[:0] = subfolders
-        files.sort(key=lambda f: f["path"])
-        return files, truncated
 
     @mcp.tool(annotations=_READ, meta=_VIEW_META)
     def docx_view(path: str | None = None) -> CallToolResult:
@@ -567,7 +644,7 @@ def build_server(*, root: Path) -> MCPServer:
         a document's content with docx_text.
         """
         if path is None or path == "":
-            files, truncated = listing()
+            files, truncated = list_documents(root)
             lines = [f["path"] for f in files]
             more = " (more files exist; name one with path)" if truncated else ""
             text = f"{len(files)} .docx files under the root{more}:\n" + "\n".join(lines) if files else "No .docx files under the root."
