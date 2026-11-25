@@ -1694,6 +1694,34 @@ fn short_residual_splice_majority_and_length_boundaries_do_not_invent_reordering
     assert_eq!(dom.serialize_element(root), once);
 }
 
+/// #165: behind a kept paragraph the deleted run is a tail, and the
+/// numbered heading leaves its short title in the block. Only a whole-body
+/// replacement, with nothing of base ahead of the deleted run, nests the
+/// title (the first case of
+/// `short_residual_splice_prefers_tip_then_toc_and_moves_only_the_short_numbered_title`).
+#[test]
+fn short_title_splice_leaves_a_replaced_tail_whole_behind_kept_paragraphs() {
+    let mut fragment = live("Earlier original text").repeat(20);
+    for i in 20..40 {
+        fragment.push_str(&para(
+            "ins",
+            if i == 24 {
+                "1. First section"
+            } else {
+                "New body"
+            },
+            "",
+        ));
+    }
+    fragment.push_str(&para("del", "Old", ""));
+    fragment.push_str(&para(
+        "del",
+        "Much longer original deleted body paragraph",
+        "",
+    ));
+    unchanged(&fragment, splice_trailing_short_pure_dels_midstream);
+}
+
 #[test]
 fn revised_internal_hyperlink_fields_preserve_result_text_and_revision_attribution() {
     for kind in ["ins", "del"] {

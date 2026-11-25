@@ -150,6 +150,14 @@ pub fn mark_fully_revised_rows(
 /// not at the very end. The pass detects a short trailing pure-D
 /// after a wholesale insert run and moves it to the next anchor
 /// position inside a TOC / section break / heading paragraph.
+///
+/// The numbered-heading anchor moves the short title alone, out of a
+/// block of deleted paragraphs. That is a whole-body replacement's
+/// layout, so it asks that nothing of base stands ahead of the deleted
+/// run: behind a kept title the deleted paragraphs are a tail, and Word
+/// writes the block whole (#165, file_145 × file_146: the heading beside
+/// next's first numbered heading, the other two paragraphs at the end).
+/// The Tip and TOC anchors move the whole run and keep the block.
 pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -229,9 +237,38 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     if insert_after >= del_start {
         return;
     }
+    // Crossing any original content changes the rejected source order.
+    // A table disappears with its structurally inserted direct rows, including
+    // all nested payload owned by those rows. Revised cell text alone cannot
+    // establish that ownership: an existing row may still survive rejection.
+    let disappears_on_rejection = |node| {
+        if dom.name_is(node, &W::p()) {
+            return para_replacement_class(dom, node) == Some(true);
+        }
+        if !dom.name_is(node, &W::tbl()) {
+            return false;
+        }
+        let rows = dom.elements(node, Some(&W::tr()));
+        !rows.is_empty()
+            && rows.iter().all(|&row| {
+                dom.element(row, &W::tr_pr()).is_some_and(|properties| {
+                    dom.element(properties, &W::ins()).is_some()
+                        && dom.element(properties, &W::del()).is_none()
+                })
+            })
+    };
     let to_move: Vec<NodeId> = if tip_toc.is_some() {
         kids[del_start..del_end].to_vec()
     } else {
+        // The numbered heading takes the short title out of its block only
+        // when next replaces base's whole body: everything ahead of the
+        // deleted run is then the revision's (double_spacing × eigenpal).
+        // Behind a kept title the deleted paragraphs are a tail, and Word
+        // writes the block whole: at the end on the Mac, right after the
+        // title on Windows (#165: file_145 × file_146, file_13 × file_14).
+        if prefix.iter().any(|&node| !disappears_on_rejection(node)) {
+            return;
+        }
         let first = kids[del_start];
         if !para_is_pure_deleted(dom, first) {
             return;
@@ -255,26 +292,6 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
                 return; // sales_report equal-length lines
             }
         }
-    };
-    // Crossing any original content changes the rejected source order.
-    // A table disappears with its structurally inserted direct rows, including
-    // all nested payload owned by those rows. Revised cell text alone cannot
-    // establish that ownership: an existing row may still survive rejection.
-    let disappears_on_rejection = |node| {
-        if dom.name_is(node, &W::p()) {
-            return para_replacement_class(dom, node) == Some(true);
-        }
-        if !dom.name_is(node, &W::tbl()) {
-            return false;
-        }
-        let rows = dom.elements(node, Some(&W::tr()));
-        !rows.is_empty()
-            && rows.iter().all(|&row| {
-                dom.element(row, &W::tr_pr()).is_some_and(|properties| {
-                    dom.element(properties, &W::ins()).is_some()
-                        && dom.element(properties, &W::del()).is_none()
-                })
-            })
     };
     if prefix[insert_after + 1..]
         .iter()
