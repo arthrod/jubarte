@@ -128,9 +128,44 @@ def _image_stand_ins(markdown: str) -> str:
     def stand_in(found: re.Match[str]) -> str:
         payload = found.group(3)
         size = len(payload) * 3 // 4 - payload[-2:].count("=")
-        return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB>"
+        pixels = _raster_size(found.group(2), payload)
+        extent = f", {pixels[0]}x{pixels[1]} px" if pixels else ""
+        return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB{extent}>"
 
     return "".join(_IMAGE_DEFINITION.sub(stand_in, line) if live else line for line, live in _outside_code(markdown))
+
+
+def _raster_size(mime: str, payload: str) -> tuple[int, int] | None:
+    """A PNG, GIF, BMP or JPEG's pixel width and height from its header (#122).
+
+    A picture the engine regenerates carries no drawing comment; the card
+    sizes it as the engine writes it, one pixel to a px, from this.
+    """
+    import base64
+    import struct
+
+    try:
+        raw = base64.b64decode(payload if mime == "image/jpeg" else payload[:64], validate=False)
+    except ValueError:
+        return None
+    size: tuple[int, int] | None = None
+    if mime == "image/png" and raw[:8] == b"\x89PNG\r\n\x1a\n" and raw[12:16] == b"IHDR" and len(raw) >= 24:
+        size = struct.unpack(">II", raw[16:24])
+    elif mime == "image/gif" and raw[:4] == b"GIF8" and len(raw) >= 10:
+        size = struct.unpack("<HH", raw[6:10])
+    elif mime == "image/bmp" and raw[:2] == b"BM" and len(raw) >= 26:
+        width, height = struct.unpack("<ii", raw[18:26])
+        size = (abs(width), abs(height))
+    elif mime == "image/jpeg" and raw[:2] == b"\xff\xd8":
+        at = 2
+        while at + 9 <= len(raw) and raw[at] == 0xFF:
+            marker, length = raw[at + 1], struct.unpack(">H", raw[at + 2 : at + 4])[0]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                height, width = struct.unpack(">HH", raw[at + 5 : at + 9])
+                size = (width, height)
+                break
+            at += 2 + length
+    return size if size and size[0] > 0 and size[1] > 0 else None
 
 
 def _image_definition(markdown: str, label: str) -> tuple[str, str] | None:
@@ -751,11 +786,18 @@ def build_server(*, root: Path) -> MCPServer:
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=preview)
 
     @mcp.tool(annotations=_READ, meta=_APP_ONLY)
-    def docx_image(path: str, id: str, view: Literal["tracked", "accepted", "original"] = "tracked") -> CallToolResult:
-        """The document card's picture fetch (hidden from the model in MCP Apps hosts): the bytes of picture `id` (the label docx_preview's stand-in keeps, such as image1) as image content."""
+    def docx_image(
+        path: str,
+        id: str,
+        view: Literal["tracked", "accepted", "original"] = "tracked",
+        sha256: str | None = None,
+    ) -> CallToolResult:
+        """The document card's picture fetch (hidden from the model in MCP Apps hosts): the bytes of picture `id` (the label docx_preview's stand-in keeps, such as image1) as image content. With `sha256`, the preview's, a document changed since is refused."""
         from . import _native
 
         data = load(path).to_bytes()
+        if sha256 is not None and engine(lambda: _native.source_sha256(data)) != sha256:
+            raise ToolError(f"{Path(path).name} changed since its preview")
         track = {"tracked": None, "accepted": "accept", "original": "reject"}[view]
         markdown, _ = engine(lambda: _native.read_view(data, track_changes=track, page_markers=False))
         found = _image_definition(markdown, id)
