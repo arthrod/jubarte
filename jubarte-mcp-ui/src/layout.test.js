@@ -1419,6 +1419,24 @@ describe("pictures take their extent on the page (#95)", () => {
     expect(() => (view = compose(md))).not.toThrow();
     view.done();
   });
+  // Two sections: margins `a`in, then `b`in, the note's FIRST reference in the first.
+  const twoSections = (a, b, note, extra = "") => `---\nview: tracked\npage: Letter portrait, margins top ${a}in, right 1in, bottom ${a}in, left 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top ${b}in, right 1in, bottom ${b}in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left${extra}\n---\n\n<!-- p0 -->\nFIRST[^1]\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 400)}\n`;
+  const words = Array.from({ length: 900 }, (_, i) => `N${String(i).padStart(4, "0")}`).join(" ");
+  it("a picture line already drawn leaves the continued label its room in a shorter frame (#126)", () => {
+    const { composed, done } = compose(twoSections(1, 4, `![PIC][image1]\n\n    ${words}`));
+    const picture = (f) => f.lines.some((l) => l.runs.some((r) => r.picture));
+    expect(picture(composed.footnoteFragments[0])).toBe(true);
+    const continued = composed.footnoteFragments.filter((f) => f.continuedBefore && !picture(f));
+    expect(continued.length).toBeGreaterThan(0);
+    for (const f of continued) expect(f.lines[0].y).toBeGreaterThanOrEqual(18);
+    done();
+  });
+  it("a rewrap keeps a later note paragraph's first-line indent (#126)", () => {
+    const { composed, done } = compose(twoSections(1, 3, `${words}\n\n    LATERPARAGRAPH`, ", first-line 0.5in"));
+    const run = composed.footnoteFragments.flatMap((f) => f.lines.flatMap((l) => l.runs)).find((r) => r.text.includes("LATERPARAGRAPH"));
+    expect(run.x).toBe(48);
+    done();
+  });
   it("a commented picture still opens its discussion by mouse and keyboard (#122)", () => {
     const md = doc("<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
     const { container, done } = compose(md);

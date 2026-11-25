@@ -56,6 +56,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    return [{...run, text: run.text.slice(cut), pmRange: {from, to: r.to}}];
   });
   if (!runs.length) return [];
+  // A paragraph that starts at or after the cut is whole: it keeps its first line and indent (#126).
+  if ((block.pmRange?.from ?? runs[0].pmRange?.from ?? -Infinity) >= from) return [block];
   return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
  });
  const wrap = note => {
@@ -66,13 +68,19 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  for (const note of notes.values()) wrap(note);
  // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119),
  // and is fitted again when a section brings another frame (#125).
+ let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const fitDecoration = () => {
-  const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
+  // Only lines still to place count: one already drawn stays on its page (#126).
+  const unplaced = note => {
+   if (!scheduled.has(note.id)) return note.lines;
+   const item = pending.find(part => part.id === note.id);
+   return item ? note.lines.slice(item.offset) : [];
+  };
+  const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => unplaced(note).map(line => line.advance ?? lineHeight)));
   labelHeight = Math.min(20, Math.max(0, height - lineHeight), Math.max(0, height - tallest));
   separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight), Math.max(0, height - tallest - labelHeight));
  };
  fitDecoration();
- let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
  // A note's lines take their own heights (#102): Word sets footnote text in its own style.
  const lineAt = (id, index) => notes.get(id).lines[index]?.advance ?? lineHeight;
