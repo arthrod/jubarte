@@ -1945,28 +1945,33 @@ fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) 
 /// ([`finalize::reorder_deleted_paragraphs_before_inserted`]) trades only
 /// whole-deleted and whole-inserted paragraphs.
 ///
-/// The reorder is by sequence, not by paragraph. While every sequence is a
-/// whole block, Accept All and Reject All read as before. Where the
-/// shortcut pairs words inside a paragraph (the stamped demos of
-/// `stamp_confetti_then_replace`), a `Deleted` sequence here passes a
-/// paired one and that paragraph's words come out in another order, and
-/// the two no longer read as the two documents. A `Deleted` sequence that
-/// would pass a paired one should stay put.
+/// The reorder never moves a `Deleted` sequence past a kept one: it runs
+/// inside each stretch of `Inserted` and `Deleted` sequences that no
+/// `Equal` sequence splits. Where the shortcut pairs words inside a
+/// paragraph (two demos whose sentences share a few words), Windows Word
+/// keeps each paragraph's shared words in place, and only the changes
+/// between two kept words trade places. Accept All and Reject All read as
+/// the two documents, as they do in Mac Word's order.
 fn whole_replacement_deletions_first(
-    mut seqs: Vec<atoms::CorrelatedSequence>,
+    seqs: Vec<atoms::CorrelatedSequence>,
 ) -> Vec<atoms::CorrelatedSequence> {
-    if let Some(first_inserted) = seqs
-        .iter()
-        .position(|s| s.correlation_status == CorrelationStatus::Inserted)
-    {
-        let tail = seqs.split_off(first_inserted);
-        let (deleted, rest): (Vec<_>, Vec<_>) = tail
-            .into_iter()
-            .partition(|s| s.correlation_status == CorrelationStatus::Deleted);
-        seqs.extend(deleted);
-        seqs.extend(rest);
+    let mut out = Vec::with_capacity(seqs.len());
+    let mut deleted = Vec::new();
+    let mut inserted = Vec::new();
+    for seq in seqs {
+        match seq.correlation_status {
+            CorrelationStatus::Deleted => deleted.push(seq),
+            CorrelationStatus::Inserted => inserted.push(seq),
+            _ => {
+                out.append(&mut deleted);
+                out.append(&mut inserted);
+                out.push(seq);
+            }
+        }
     }
-    seqs
+    out.append(&mut deleted);
+    out.append(&mut inserted);
+    out
 }
 
 #[cfg(test)]
