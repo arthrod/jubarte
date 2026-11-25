@@ -77,6 +77,21 @@ checks. Rustfmt defines formatting; Clippy warnings must be fixed without
 suppressing them. See [.github/workflows/ci.yml](.github/workflows/ci.yml) for
 cross-platform, bindings, MSRV and coverage checks.
 
+The Criterion benchmarks in [benches/](benches) time compare, DOCX to PDF,
+DOCX to Markdown, and listing, accepting and rejecting tracked changes, on
+documents from `tests/` (run `scripts/fetch_fixtures.py` first; a missing
+document is skipped). `cargo bench` runs them locally. The
+[CodSpeed workflow](.github/workflows/codspeed.yml) runs them on every pull
+request and push to `main` with CodSpeed's CPU simulation, and its report on
+the pull request flags speed regressions against `main`. To run them the way
+CI does, install the [CodSpeed CLI](https://codspeed.io/docs/cli) and
+`cargo install cargo-codspeed --locked`, then:
+
+```sh
+cargo codspeed build -m simulation
+codspeed run -m simulation -- cargo codspeed run
+```
+
 Every major new behavior requires automated tests; fixes require regression
 tests. Keep tests beside the protected behavior, use pure functions and
 upstream test utilities before fakes, and mock only as a last resort. Unit tests
