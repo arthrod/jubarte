@@ -153,7 +153,7 @@ export function composeWithTables(snapshot,runtime,input){
  // narrows it, and an obstacle carves the first line (first-line) or the lines after it
  // (hanging). A note continued from another page, and the text after a manual line break (#66), has no first line here. List paragraphs
  // keep the list's own geometry (#63).
- function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list)return none;const own=block.attrs?.sourceData?.paragraphProperties?.indents||{},style=block.attrs?.sourceData?.documentStyle?.indents||{};
+ function paragraphIndent(block){const none={shift:0,right:0,first:0,rest:0};if(block.attrs?.context?.list){const li=block.attrs.listIndent;if(!li)return none;const first=block.attrs?.clipFrom!=null||block.attrs?.first===false?li.rest:li.first,shift=Math.min(first,li.rest);return {shift,right:li.right,first:first-shift,rest:li.rest-shift};}const own=block.attrs?.sourceData?.paragraphProperties?.indents||{},style=block.attrs?.sourceData?.documentStyle?.indents||{};
   // The style's indents stand where the paragraph states none (#96). first-line and hanging are one property in w:ind, so the
   // paragraph's own either one replaces the style's pair.
   const firstOwn=own['first-line']!=null||own.hanging!=null,p={left:own.left??style.left,right:own.right??style.right,'first-line':firstOwn?own['first-line']:style['first-line'],hanging:firstOwn?own.hanging:style.hanging};

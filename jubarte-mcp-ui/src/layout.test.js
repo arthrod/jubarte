@@ -587,6 +587,22 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     expect(first[1]).toBe(0);
     done();
   });
+  it("a list paragraph's own indents place its label and lines as Word does (#138)", () => {
+    // b081 p31: Word draws the label at the first-line indent, the text at the next 0.5in tab
+    // stop, and the following lines at the left indent.
+    const { container, composed, done } = compose(
+      `${header()}<!-- p0 justify, first-line 0.4924in, left 0in, num "2." -->\n2. ${words("lst")}\n\n<!-- p1 hanging 0.25in, left 0.5in, num "3." -->\n3. ${words("hng")}\n`,
+    );
+    const [list, hang] = [lines(composed, "lst"), lines(composed, "hng")];
+    expect(list[0]).toBeCloseTo(96, 0);
+    expect(list[1]).toBeCloseTo(0, 0);
+    expect(hang[0]).toBeCloseTo(48, 0);
+    expect(hang[1]).toBeCloseTo(48, 0);
+    const markers = [...container.querySelectorAll(".paged-marker")].map((m) => parseFloat(m.style.left));
+    expect(markers[0]).toBeCloseTo(0.4924 * 96, 0);
+    expect(markers[1]).toBeCloseTo(24, 0);
+    done();
+  });
   it("a manual line break continues the paragraph: the first-line indent applies once (#66)", () => {
     const { composed, done } = compose(
       `${header()}<!-- p0 first-line 1in -->\nFIRST\\\nSECOND\n\n<!-- p1 hanging 0.5in, left 1in -->\nHFIRST\\\nHSECOND\n`,
