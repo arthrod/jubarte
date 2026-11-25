@@ -3054,6 +3054,10 @@ pub(super) fn add_rpr_child_in_order(dom: &mut Dom, rpr: NodeId, child: NodeId, 
 /// (see [`ensure_factory_package_chrome`]).
 /// Full docDefaults swap regressed sales_report×sample_document — leave
 /// docDefaults to the Normal merge path; only fill **missing** chrome parts.
+///
+/// Mac Word 16's redline (`word`) is what this describes. Windows Word 2024's
+/// (`word-windows`) does take the revised theme and `w:docDefaults`, and the
+/// layout settings: [`adopt_revised_package_defaults`], which runs last.
 pub(super) fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
     // people.xml: Word redlines always carry author identity when B has comments
     // (C2 residual layout for document_100×lots_of_comments).
@@ -3183,7 +3187,8 @@ pub(super) fn ensure_factory_package_chrome(out: &mut PartFs, out_main: &str) {
     }
     // theme: Word gives an original without a referenced theme its own
     // default theme, never the revision's (an unreferenced theme part does
-    // not count).
+    // not count). Windows Word 2024 then ships the revision's in its place
+    // (`adopt_revised_package_defaults`).
     if referenced_theme_part(out, out_main).is_none() {
         const THEME_PART: &str = "word/theme/theme1.xml";
         out.set_part(
@@ -3225,6 +3230,163 @@ pub(super) fn referenced_theme_part(out: &PartFs, main: &str) -> Option<String> 
         .filter(|r| r.rel_type.ends_with("/relationships/theme"))
         .map(|r| out.resolve_rel_target(main, &r.target))
         .find(|part| out.part_bytes(part).is_some())
+}
+
+/// #153: Windows Word 2024's Compare builds its result on the revised
+/// package. The redline carries the revised document's theme, its
+/// `w:docDefaults` and the layout settings in [`REVISED_SETTINGS_CHILDREN`].
+/// Mac Word 16's redline (`word`) keeps the original's, as every pass above
+/// wrote them; this runs after those, on the parts as they ship.
+///
+/// A setting the revised document lacks removes the original's, except
+/// `w:compat`: that one is written at compatibility mode 12 when the revision
+/// has none. The theme and `w:docDefaults` are replaced only when both
+/// packages have them.
+pub(super) fn adopt_revised_package_defaults(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+    adopt_revised_settings(out, pkg2);
+    adopt_revised_doc_defaults(out, pkg2);
+    adopt_revised_theme(out, pkg2, out_main);
+}
+
+/// The `w:settings` children the redline takes from the revised document.
+const REVISED_SETTINGS_CHILDREN: [&str; 8] = [
+    "defaultTabStop",
+    "hyphenationZone",
+    "autoHyphenation",
+    "consecutiveHyphenLimit",
+    "doNotHyphenateCaps",
+    "characterSpacingControl",
+    "themeFontLang",
+    "compat",
+];
+
+/// Replace, add or drop the [`REVISED_SETTINGS_CHILDREN`] of the output's
+/// `word/settings.xml` as the revised document's settings have them.
+fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs) {
+    let Some(out_xml) = out.part_string("word/settings.xml") else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let out_doc = dom.parse_xdocument(&out_xml);
+    let revised_doc = pkg2
+        .part_string("word/settings.xml")
+        .map(|xml| dom.parse_xdocument(&xml));
+    let settings = W::name("settings");
+    let Some(out_root) = dom.root(out_doc).filter(|&r| dom.name_is(r, &settings)) else {
+        return;
+    };
+    // A revision without a settings part lacks every one of them.
+    let revised_root = revised_doc.and_then(|d| dom.root(d));
+    let mut changed = false;
+    for local in REVISED_SETTINGS_CHILDREN {
+        let name = W::name(local);
+        let current = dom.element(out_root, &name);
+        let mut source = revised_root.and_then(|r| dom.element(r, &name));
+        if source.is_none() && local == "compat" {
+            source = Some(default_compat(&mut dom));
+        }
+        match (source, current) {
+            (Some(source), Some(current)) => dom.replace_with(current, &[source]),
+            (Some(source), None) => insert_settings_child(&mut dom, out_root, source),
+            (None, Some(current)) => dom.remove(current),
+            (None, None) => continue,
+        }
+        changed = true;
+    }
+    if changed {
+        out.set_part(
+            "word/settings.xml",
+            dom.serialize_element(out_root).into_bytes(),
+        );
+    }
+}
+
+/// The `w:compat` Windows Word writes for a revision that has none:
+/// compatibility mode 12.
+fn default_compat(dom: &mut Dom) -> NodeId {
+    let compat = dom.new_element(W::name("compat"));
+    let setting = dom.new_element(W::name("compatSetting"));
+    for (local, value) in [
+        ("name", "compatibilityMode"),
+        ("uri", "http://schemas.microsoft.com/office/word"),
+        ("val", "12"),
+    ] {
+        dom.set_attribute_value(setting, &W::name(local), Some(value));
+    }
+    dom.add(compat, setting);
+    compat
+}
+
+/// The rank of the `w:settings` child `node` of `dom` in the `CT_Settings`
+/// sequence (`crate::settings::SETTINGS_ORDER`); `None` for one the sequence
+/// does not name.
+fn settings_rank(dom: &Dom, node: NodeId) -> Option<usize> {
+    let name = dom.name(node)?;
+    crate::settings::SETTINGS_ORDER
+        .iter()
+        .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
+}
+
+/// Put `child` under the `w:settings` `root` where the `CT_Settings`
+/// sequence has it: before the first child that sorts after it, else last.
+/// A child the sequence does not name is neither moved for it nor displaced
+/// by it.
+fn insert_settings_child(dom: &mut Dom, root: NodeId, child: NodeId) {
+    let ours = settings_rank(dom, child).unwrap_or(usize::MAX);
+    let next = dom
+        .elements(root, None)
+        .into_iter()
+        .find(|&c| settings_rank(dom, c).is_some_and(|rank| rank > ours));
+    match next {
+        Some(next) => dom.add_before_self(next, child),
+        None => dom.add(root, child),
+    }
+}
+
+/// Replace the output stylesheet's `w:docDefaults` with the revised
+/// document's, when both have them.
+fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs) {
+    let (Some(out_xml), Some(revised_xml)) = (
+        out.part_string("word/styles.xml"),
+        pkg2.part_string("word/styles.xml"),
+    ) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let out_doc = dom.parse_xdocument(&out_xml);
+    let revised_doc = dom.parse_xdocument(&revised_xml);
+    let defaults = W::name("docDefaults");
+    let (Some(out_root), Some(revised_root)) = (dom.root(out_doc), dom.root(revised_doc)) else {
+        return;
+    };
+    if let (Some(current), Some(revised)) = (
+        dom.element(out_root, &defaults),
+        dom.element(revised_root, &defaults),
+    ) {
+        dom.replace_with(current, &[revised]);
+        out.set_part(
+            "word/styles.xml",
+            dom.serialize_element(out_root).into_bytes(),
+        );
+    }
+}
+
+/// Replace the theme the output's main document references with the one the
+/// revised document's does, wherever each package keeps it, when both have
+/// one.
+fn adopt_revised_theme(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+    let Some(out_theme) = referenced_theme_part(out, out_main) else {
+        return;
+    };
+    let revised_main = pkg2
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    let Some(revised_theme) = referenced_theme_part(pkg2, &revised_main) else {
+        return;
+    };
+    if let Some(bytes) = pkg2.part_bytes(&revised_theme).map(<[u8]>::to_vec) {
+        out.set_part(&out_theme, bytes);
+    }
 }
 
 /// Word-canonical `w:styleId` for a human-readable `w:name` (C3 / C5).
