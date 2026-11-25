@@ -5,6 +5,7 @@
 //! Style-sheet reconciliation: Normal spacing, style chains and records.
 
 use super::*;
+use crate::namespaces::MC;
 
 /// The `w:style[@w:type='paragraph' @w:styleId='Normal']` element under a
 /// styles root, falling back to the `w:default="1"` paragraph style.
@@ -3241,11 +3242,15 @@ pub(super) fn referenced_theme_part(out: &PartFs, main: &str) -> Option<String> 
 /// A setting the revised document lacks removes the original's, except
 /// `w:compat`: that one is written at compatibility mode 12 when the revision
 /// has none. The theme and `w:docDefaults` are replaced only when both
-/// packages have them.
+/// packages have them. The revision's parts are the ones its main document
+/// relates, wherever it keeps them.
 pub(super) fn adopt_revised_package_defaults(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
-    adopt_revised_settings(out, pkg2);
-    adopt_revised_doc_defaults(out, pkg2);
-    adopt_revised_theme(out, pkg2, out_main);
+    let revised_main = pkg2
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    adopt_revised_settings(out, pkg2, &revised_main);
+    adopt_revised_doc_defaults(out, pkg2, &revised_main);
+    adopt_revised_theme(out, pkg2, out_main, &revised_main);
 }
 
 /// The `w:settings` children the redline takes from the revised document.
@@ -3261,15 +3266,19 @@ const REVISED_SETTINGS_CHILDREN: [&str; 8] = [
 ];
 
 /// Replace, add or drop the [`REVISED_SETTINGS_CHILDREN`] of the output's
-/// `word/settings.xml` as the revised document's settings have them.
-fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs) {
-    let Some(out_xml) = out.part_string("word/settings.xml") else {
+/// `word/settings.xml` as the revised document's settings have them. A
+/// setting the original holds inside an `mc:AlternateContent` is replaced or
+/// removed where it is, in each branch; the revision's is read from the first
+/// branch that holds it.
+fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs, revised_main: &str) {
+    const SETTINGS: &str = "word/settings.xml";
+    let Some(out_xml) = out.part_string(SETTINGS) else {
         return;
     };
     let mut dom = Dom::new();
     let out_doc = dom.parse_xdocument(&out_xml);
-    let revised_doc = pkg2
-        .part_string("word/settings.xml")
+    let revised_doc = revised_part(pkg2, revised_main, "/settings", SETTINGS)
+        .and_then(|part| pkg2.part_string(&part))
         .map(|xml| dom.parse_xdocument(&xml));
     let settings = W::name("settings");
     let Some(out_root) = dom.root(out_doc).filter(|&r| dom.name_is(r, &settings)) else {
@@ -3280,24 +3289,30 @@ fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs) {
     let mut changed = false;
     for local in REVISED_SETTINGS_CHILDREN {
         let name = W::name(local);
-        let current = dom.element(out_root, &name);
-        let mut source = revised_root.and_then(|r| dom.element(r, &name));
+        let current = settings_seats(&dom, out_root, &name);
+        let mut source = revised_root
+            .and_then(|r| settings_seats(&dom, r, &name).into_iter().next())
+            .map(|(_, element)| element);
         if source.is_none() && local == "compat" {
             source = Some(default_compat(&mut dom));
         }
-        match (source, current) {
-            (Some(source), Some(current)) => dom.replace_with(current, &[source]),
-            (Some(source), None) => insert_settings_child(&mut dom, out_root, source),
-            (None, Some(current)) => dom.remove(current),
-            (None, None) => continue,
+        match (source, current.as_slice()) {
+            (Some(source), []) => insert_settings_child(&mut dom, out_root, source),
+            (Some(source), _) => {
+                for &(_, at) in &current {
+                    dom.replace_with(at, &[source]);
+                }
+            }
+            (None, _) => {
+                for &(_, at) in &current {
+                    dom.remove(at);
+                }
+            }
         }
-        changed = true;
+        changed |= source.is_some() || !current.is_empty();
     }
     if changed {
-        out.set_part(
-            "word/settings.xml",
-            dom.serialize_element(out_root).into_bytes(),
-        );
+        out.set_part(SETTINGS, dom.serialize_element(out_root).into_bytes());
     }
 }
 
@@ -3317,6 +3332,36 @@ fn default_compat(dom: &mut Dom) -> NodeId {
     compat
 }
 
+/// Whether `node` is an `mc:AlternateContent`: one place in a sequence whose
+/// content depends on the consumer, so that what its `mc:Choice` and
+/// `mc:Fallback` branches hold stands where it does.
+fn is_alternate_content(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &MC::name("AlternateContent"))
+}
+
+/// Where a `w:settings` root holds its child `name`: under itself, and in
+/// each branch of an `mc:AlternateContent` that stands in for it there. Each
+/// is the container the element is replaced in or removed from, and the
+/// element.
+fn settings_seats(dom: &Dom, root: NodeId, name: &XName) -> Vec<(NodeId, NodeId)> {
+    let mut seats: Vec<(NodeId, NodeId)> = dom
+        .elements(root, Some(name))
+        .into_iter()
+        .map(|element| (root, element))
+        .collect();
+    let wrapper = MC::name("AlternateContent");
+    for alternate in dom.elements(root, Some(&wrapper)) {
+        for branch in dom.elements(alternate, None) {
+            seats.extend(
+                dom.elements(branch, Some(name))
+                    .into_iter()
+                    .map(|element| (branch, element)),
+            );
+        }
+    }
+    seats
+}
+
 /// The rank of the `w:settings` child `node` of `dom` in the `CT_Settings`
 /// sequence (`crate::settings::SETTINGS_ORDER`); `None` for one the sequence
 /// does not name.
@@ -3327,28 +3372,60 @@ fn settings_rank(dom: &Dom, node: NodeId) -> Option<usize> {
         .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
 }
 
+/// The ranks in the `CT_Settings` sequence that the `w:settings` child `node`
+/// stands for, in order: its own ([`settings_rank`]); for an
+/// `mc:AlternateContent`, of every child its branches hold, a nested one
+/// included. Empty for a child the sequence does not name.
+fn settings_ranks(dom: &Dom, node: NodeId) -> Vec<usize> {
+    if !is_alternate_content(dom, node) {
+        return settings_rank(dom, node).into_iter().collect();
+    }
+    let mut ranks = Vec::new();
+    for branch in dom.elements(node, None) {
+        for held in dom.elements(branch, None) {
+            ranks.extend(settings_ranks(dom, held));
+        }
+    }
+    ranks.sort_unstable();
+    ranks.dedup();
+    ranks
+}
+
 /// Put `child` under the `w:settings` `root` where the `CT_Settings`
-/// sequence has it: before the first child that sorts after it, else last.
-/// A child the sequence does not name is neither moved for it nor displaced
-/// by it.
+/// sequence has it: before the first child that must follow it, else last.
+/// An `mc:AlternateContent` counts as what its branches hold. One whose
+/// branches disagree about the place, a child there having to follow `child`
+/// and another to precede it, takes `child` in each branch instead, where
+/// each branch has it. A child the sequence does not name is neither moved
+/// for it nor displaced by it.
 fn insert_settings_child(dom: &mut Dom, root: NodeId, child: NodeId) {
     let ours = settings_rank(dom, child).unwrap_or(usize::MAX);
-    let next = dom
-        .elements(root, None)
-        .into_iter()
-        .find(|&c| settings_rank(dom, c).is_some_and(|rank| rank > ours));
-    match next {
-        Some(next) => dom.add_before_self(next, child),
-        None => dom.add(root, child),
+    for at in dom.elements(root, None) {
+        let ranks = settings_ranks(dom, at);
+        let Some(latest) = ranks.last().copied() else {
+            continue;
+        };
+        if ranks[0] > ours {
+            return dom.add_before_self(at, child);
+        }
+        if latest > ours {
+            for branch in dom.elements(at, None) {
+                insert_settings_child(dom, branch, child);
+            }
+            return;
+        }
     }
+    dom.add(root, child);
 }
 
 /// Replace the output stylesheet's `w:docDefaults` with the revised
 /// document's, when both have them.
-fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs) {
+fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs, revised_main: &str) {
+    const STYLES: &str = "word/styles.xml";
     let (Some(out_xml), Some(revised_xml)) = (
-        out.part_string("word/styles.xml"),
-        pkg2.part_string("word/styles.xml"),
+        out.part_string(STYLES),
+        revised_part(pkg2, revised_main, "/styles", STYLES)
+            .and_then(|part| pkg2.part_string(&part)),
     ) else {
         return;
     };
@@ -3364,29 +3441,73 @@ fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs) {
         dom.element(revised_root, &defaults),
     ) {
         dom.replace_with(current, &[revised]);
-        out.set_part(
-            "word/styles.xml",
-            dom.serialize_element(out_root).into_bytes(),
-        );
+        out.set_part(STYLES, dom.serialize_element(out_root).into_bytes());
     }
+}
+
+/// The part the revised document's main part `revised_main` relates by a
+/// relationship of type `…/suffix`, wherever the package keeps it; else the
+/// conventional `conventional` part, for a package that keeps it there
+/// without the relationship.
+fn revised_part(
+    pkg2: &PartFs,
+    revised_main: &str,
+    suffix: &str,
+    conventional: &str,
+) -> Option<String> {
+    pkg2.read_rels_for(revised_main)
+        .into_iter()
+        .flat_map(|rels| rels.items.iter())
+        .filter(|r| r.rel_type.ends_with(suffix) && r.target_mode.as_deref() != Some("External"))
+        .map(|r| pkg2.resolve_rel_target(revised_main, &r.target))
+        .find(|part| pkg2.part_bytes(part).is_some())
+        .or_else(|| {
+            pkg2.part_bytes(conventional)
+                .is_some()
+                .then(|| conventional.to_string())
+        })
 }
 
 /// Replace the theme the output's main document references with the one the
 /// revised document's does, wherever each package keeps it, when both have
-/// one.
-fn adopt_revised_theme(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
+/// one. The theme's own relationships come along: the picture it names by
+/// `r:embed` is the revised package's, carried under the output theme part's
+/// relationships, not whatever the output's resolves that id to. A theme
+/// whose references already resolve to the same targets in the output is
+/// copied untouched.
+fn adopt_revised_theme(out: &mut PartFs, pkg2: &PartFs, out_main: &str, revised_main: &str) {
     let Some(out_theme) = referenced_theme_part(out, out_main) else {
         return;
     };
-    let revised_main = pkg2
-        .main_document_part()
-        .unwrap_or_else(|| "word/document.xml".to_string());
-    let Some(revised_theme) = referenced_theme_part(pkg2, &revised_main) else {
+    let Some(revised_theme) = referenced_theme_part(pkg2, revised_main) else {
         return;
     };
-    if let Some(bytes) = pkg2.part_bytes(&revised_theme).map(<[u8]>::to_vec) {
-        out.set_part(&out_theme, bytes);
-    }
+    let Some(bytes) = pkg2.part_bytes(&revised_theme) else {
+        return;
+    };
+    let theme = if part_rels_agree(
+        (&*out, &out_theme),
+        (pkg2, &revised_theme),
+        &String::from_utf8_lossy(bytes),
+    ) {
+        bytes.to_vec()
+    } else {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&String::from_utf8_lossy(bytes));
+        let Some(root) = dom.root(doc) else {
+            return;
+        };
+        crate::comparer::parts::carry_part_relationships(
+            out,
+            &out_theme,
+            pkg2,
+            &revised_theme,
+            &mut dom,
+            root,
+        );
+        dom.serialize_document(doc).into_bytes()
+    };
+    out.set_part(&out_theme, theme);
 }
 
 /// Word-canonical `w:styleId` for a human-readable `w:name` (C3 / C5).

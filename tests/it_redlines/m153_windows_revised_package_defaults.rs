@@ -31,6 +31,11 @@ const SETTINGS_CT: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml";
 const STYLES: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 const THEME: &str = "application/vnd.openxmlformats-officedocument.theme+xml";
+const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const W14_NS: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+const IMAGE_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const PACKAGE_RELS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const RELATIONSHIPS_CT: &str = "application/vnd.openxmlformats-package.relationships+xml";
 
 const RSIDS: &str =
     r#"<w:rsids><w:rsidRoot w:val="00A1B2C3"/><w:rsid w:val="00A1B2C3"/></w:rsids>"#;
@@ -241,25 +246,155 @@ fn settings_children(xml: &str) -> Vec<String> {
         .collect()
 }
 
-/// The `w:settings` children follow the `CT_Settings` sequence.
+/// Whether `node` is an `mc:AlternateContent`.
+fn is_alternate_content(dom: &Dom, node: NodeId) -> bool {
+    dom.name(node).is_some_and(|name| {
+        name.namespace_name() == MC_NS && name.local_name() == "AlternateContent"
+    })
+}
+
+/// The ranks in the `CT_Settings` sequence that a `w:settings` child stands
+/// for, in order: its own; for an `mc:AlternateContent`, of every child its
+/// branches hold. None for a child the sequence does not name.
+fn settings_ranks(dom: &Dom, node: NodeId) -> Vec<usize> {
+    let rank = |node: NodeId| {
+        dom.name(node).and_then(|name| {
+            SETTINGS_ORDER
+                .iter()
+                .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
+        })
+    };
+    if !is_alternate_content(dom, node) {
+        return rank(node).into_iter().collect();
+    }
+    dom.elements(node, None)
+        .into_iter()
+        .flat_map(|branch| dom.elements(branch, None))
+        .flat_map(|held| settings_ranks(dom, held))
+        .collect()
+}
+
+/// The `w:settings` children follow the `CT_Settings` sequence, whichever
+/// branch of an `mc:AlternateContent` the consumer takes: each child stands
+/// where the ranks it holds put it, and each branch is in order on its own.
 fn assert_settings_in_schema_order(xml: &str, label: &str) {
     let (dom, root) = parse(xml);
-    let children: Vec<(String, usize)> = dom
+    let children: Vec<(String, Vec<usize>)> = dom
         .elements(root, None)
         .into_iter()
-        .filter_map(|c| {
-            let name = dom.name(c)?;
-            let local = name.local_name().to_string();
-            let rank = SETTINGS_ORDER.iter().position(|&(ns, local)| {
-                name.namespace_name() == ns && name.local_name() == local
-            })?;
-            Some((local, rank))
+        .map(|c| {
+            (
+                dom.name(c)
+                    .map_or_else(String::new, |n| n.local_name().to_string()),
+                settings_ranks(&dom, c),
+            )
+        })
+        .collect();
+    let placed: Vec<(&String, usize, usize)> = children
+        .iter()
+        .filter_map(|(name, ranks)| {
+            let (first, rest) = ranks.split_first()?;
+            Some((name, *first, *rest.last().unwrap_or(first)))
         })
         .collect();
     assert!(
-        children.iter().map(|(_, rank)| *rank).is_sorted(),
+        placed.windows(2).all(|pair| pair[0].2 <= pair[1].1),
         "{label}: w:settings children out of CT_Settings order: {children:?}"
     );
+    for child in dom.elements(root, None) {
+        if !is_alternate_content(&dom, child) {
+            continue;
+        }
+        for branch in dom.elements(child, None) {
+            let ranks: Vec<usize> = dom
+                .elements(branch, None)
+                .into_iter()
+                .flat_map(|held| settings_ranks(&dom, held))
+                .collect();
+            assert!(
+                ranks.is_sorted(),
+                "{label}: a branch of mc:AlternateContent is out of CT_Settings order: {ranks:?}"
+            );
+        }
+    }
+}
+
+/// An `mc:AlternateContent` whose `mc:Choice` (it requires `w14`) holds
+/// `choice` and whose `mc:Fallback` holds `fallback`: one place in a
+/// sequence whose content depends on the consumer.
+fn alternate(choice: &str, fallback: &str) -> String {
+    format!(
+        r#"<mc:AlternateContent xmlns:mc="{MC_NS}" xmlns:w14="{W14_NS}"><mc:Choice Requires="w14">{choice}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"#
+    )
+}
+
+/// A `w:settings` child as these tests compare it: a bare element by its
+/// local name, or an `mc:AlternateContent` by the local names each of its
+/// branches holds.
+#[derive(Clone, Debug, PartialEq)]
+enum Shape {
+    Bare(String),
+    Wrapped(Vec<Vec<String>>),
+}
+
+/// The local names of the elements `names`, as bare `w:settings` children.
+fn bare(names: &[&str]) -> Vec<Shape> {
+    names
+        .iter()
+        .map(|name| Shape::Bare((*name).to_string()))
+        .collect()
+}
+
+/// An `mc:AlternateContent` holding `branches`, each by its elements' local
+/// names.
+fn wrapped(branches: &[&[&str]]) -> Shape {
+    Shape::Wrapped(
+        branches
+            .iter()
+            .map(|branch| branch.iter().map(|name| (*name).to_string()).collect())
+            .collect(),
+    )
+}
+
+/// The `w:settings` children of `xml`, in order.
+fn shapes(xml: &str) -> Vec<Shape> {
+    let (dom, root) = parse(xml);
+    dom.elements(root, None)
+        .into_iter()
+        .map(|child| {
+            if !is_alternate_content(&dom, child) {
+                return Shape::Bare(
+                    dom.name(child)
+                        .map_or_else(String::new, |n| n.local_name().to_string()),
+                );
+            }
+            Shape::Wrapped(
+                dom.elements(child, None)
+                    .into_iter()
+                    .map(|branch| {
+                        dom.elements(branch, None)
+                            .into_iter()
+                            .map(|held| {
+                                dom.name(held)
+                                    .map_or_else(String::new, |n| n.local_name().to_string())
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// The compatibility modes the `w:settings` `xml` holds, in document order,
+/// wherever its `w:compat` elements are.
+fn compat_modes(xml: &str) -> Vec<String> {
+    let (dom, root) = parse(xml);
+    dom.descendants(root, Some(&W::name("compatSetting")))
+        .into_iter()
+        .filter(|&s| attr(&dom, s, W::URI, "name") == "compatibilityMode")
+        .map(|s| attr(&dom, s, W::URI, "val").to_string())
+        .collect()
 }
 
 #[test]
@@ -693,5 +828,583 @@ fn a_revision_without_a_settings_part_still_leaves_word_valid_settings() {
         ["zoom", "compat", "rsids"]
     );
     assert_settings_in_schema_order(&settings_xml, "word-windows");
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+const ZOOM: &str = r#"<w:zoom w:percent="100"/>"#;
+/// Two settings the redline does not take from the revision, one on each
+/// side of `w:compat` in the `CT_Settings` sequence.
+const UPDATE_FIELDS: &str = "<w:updateFields/>";
+const DOC_VARS: &str = "<w:docVars/>";
+/// The revision's settings of the `mc:AlternateContent` cases: a theme font
+/// language, and no `w:compat`.
+const THEME_FONT_LANG: &str = r#"<w:themeFontLang w:val="fr-FR"/>"#;
+
+/// A document of one paragraph whose only chrome is the settings part
+/// `children`.
+fn settings_document(text: &str, children: &str) -> Vec<u8> {
+    package(
+        &docx::para(text),
+        &Chrome {
+            theme: None,
+            styles: None,
+            settings: Some(settings(children)),
+        },
+    )
+}
+
+/// The review's `order` probe and its neighbours. An `mc:AlternateContent` in
+/// the original's settings counts as what its branches hold, so an inserted
+/// child takes its place against it; one whose branches disagree about that
+/// place takes the child in each branch. The wrappers hold settings the
+/// redline keeps from the original: one it takes from the revision would be
+/// replaced or removed there first.
+#[test]
+fn an_inserted_setting_takes_its_place_against_an_alternate_content() {
+    let separator = |value: &str| format!(r#"<w:listSeparator w:val="{value}"/>"#);
+    let cases: [(&str, String, Vec<Shape>, &[&str]); 3] = [
+        (
+            "both branches supply the later separator",
+            alternate(&separator(","), &separator(";")),
+            vec![
+                Shape::Bare("compat".to_string()),
+                Shape::Bare("themeFontLang".to_string()),
+                wrapped(&[&["listSeparator"], &["listSeparator"]]),
+            ],
+            &["12"],
+        ),
+        (
+            "a later child follows the wrapper",
+            format!("{ZOOM}{}{}", alternate(RSIDS, RSIDS), separator(",")),
+            [
+                bare(&["zoom", "compat"]),
+                vec![wrapped(&[&["rsids"], &["rsids"]])],
+                bare(&["themeFontLang", "listSeparator"]),
+            ]
+            .concat(),
+            &["12"],
+        ),
+        (
+            "the wrapper straddles the place",
+            format!(
+                "{ZOOM}{}",
+                alternate(&format!("{UPDATE_FIELDS}{DOC_VARS}"), UPDATE_FIELDS)
+            ),
+            [
+                bare(&["zoom"]),
+                vec![wrapped(&[
+                    &["updateFields", "compat", "docVars"],
+                    &["updateFields", "compat"],
+                ])],
+                bare(&["themeFontLang"]),
+            ]
+            .concat(),
+            // One in each branch: whichever the consumer takes has it once.
+            &["12", "12"],
+        ),
+    ];
+    for (label, original_children, expected, modes) in &cases {
+        let original = settings_document("One", original_children);
+        let revised = settings_document("Two", THEME_FONT_LANG);
+
+        let out = redline(&original, &revised, CompareMode::WordWindows);
+        let settings_xml = part(&out, "word/settings.xml");
+        assert_eq!(
+            shapes(&settings_xml),
+            expected.as_slice(),
+            "{label}: {settings_xml}"
+        );
+        assert_eq!(
+            compat_modes(&settings_xml),
+            *modes,
+            "{label}: the revision has no w:compat"
+        );
+        assert_settings_in_schema_order(&settings_xml, label);
+        crate::common::validity::assert_word_valid_package(&out);
+
+        // `word`: the original's settings stay as they are.
+        let out = redline(&original, &revised, CompareMode::Word);
+        assert_eq!(
+            shapes(&part(&out, "word/settings.xml")),
+            shapes(&settings(original_children)),
+            "{label}: `word` leaves the settings alone"
+        );
+    }
+}
+
+/// A setting the original's settings hold inside an `mc:AlternateContent` is
+/// the one replaced or removed, in each branch; a `w:compat` the revision
+/// holds in one is the revision's, not the default one.
+#[test]
+fn a_setting_inside_an_alternate_content_is_replaced_or_removed_where_it_is() {
+    let none: &[&str] = &[];
+    let tab_stop = r#"<w:defaultTabStop w:val="720"/>"#;
+
+    // The original's `w:compat` is wrapped; the revision's is bare.
+    let original = settings_document(
+        "One",
+        &format!("{ZOOM}{}", alternate(&compat(15, ""), &compat(12, ""))),
+    );
+    let revised = settings_document("Two", &format!("{ZOOM}{}", compat(14, "")));
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let settings_xml = part(&out, "word/settings.xml");
+    assert_eq!(
+        shapes(&settings_xml),
+        [bare(&["zoom"]), vec![wrapped(&[&["compat"], &["compat"]])],].concat(),
+        "{settings_xml}"
+    );
+    assert_eq!(
+        compat_modes(&settings_xml),
+        ["14", "14"],
+        "each branch holds the revised w:compat, and no second one is written"
+    );
+    assert_settings_in_schema_order(&settings_xml, "word-windows");
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // The original's tab stop is wrapped; the revision has none.
+    let original = settings_document("One", &format!("{ZOOM}{}", alternate(tab_stop, tab_stop)));
+    let revised = settings_document("Two", ZOOM);
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let settings_xml = part(&out, "word/settings.xml");
+    assert_eq!(
+        shapes(&settings_xml),
+        [
+            bare(&["zoom"]),
+            vec![wrapped(&[none, none]), Shape::Bare("compat".to_string())],
+        ]
+        .concat(),
+        "{settings_xml}"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // The revision's `w:compat` is wrapped; the original's is bare.
+    let original = settings_document("One", &format!("{ZOOM}{}", compat(15, "")));
+    let revised = settings_document(
+        "Two",
+        &format!("{ZOOM}{}", alternate(&compat(14, ""), &compat(12, ""))),
+    );
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let settings_xml = part(&out, "word/settings.xml");
+    assert_eq!(
+        shapes(&settings_xml),
+        [bare(&["zoom"]), vec![Shape::Bare("compat".to_string())]].concat(),
+        "{settings_xml}"
+    );
+    assert_eq!(
+        compat_modes(&settings_xml),
+        ["14"],
+        "the revision's w:compat is taken, not the default one"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // `word`: the original's `w:compat` stays.
+    let out = redline(&original, &revised, CompareMode::Word);
+    assert_eq!(
+        compat_modes(&part(&out, "word/settings.xml")),
+        ["15"],
+        "`word` keeps the original's w:compat"
+    );
+}
+
+/// The revision's settings and stylesheet are the ones its main document's
+/// relationships name, wherever it keeps them.
+#[test]
+fn the_revised_settings_and_stylesheet_are_read_through_the_main_documents_relationships() {
+    let original = package(
+        &docx::para("Alpha beta gamma"),
+        &Chrome {
+            theme: None,
+            styles: Some(styles(Some((22, 160)))),
+            settings: Some(settings(r#"<w:defaultTabStop w:val="720"/>"#)),
+        },
+    );
+    let revised = docx::docx_with(
+        &docx::para("Alpha delta gamma"),
+        &[
+            docx::Part {
+                name: "word/layout.xml",
+                content_type: SETTINGS_CT,
+                rel_type: SETTINGS_REL,
+                xml: &settings(r#"<w:defaultTabStop w:val="360"/>"#),
+            },
+            docx::Part {
+                name: "word/format.xml",
+                content_type: STYLES,
+                rel_type: STYLES_REL,
+                xml: &styles(Some((36, 0))),
+            },
+        ],
+    );
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let settings_xml = part(&out, "word/settings.xml");
+    assert_eq!(
+        settings_children(&settings_xml),
+        ["defaultTabStop", "compat"],
+        "{settings_xml}"
+    );
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")),
+        ("36".to_string(), "0".to_string()),
+        "the redline's docDefaults are the revised document's"
+    );
+    for name in ["word/layout.xml", "word/format.xml"] {
+        assert!(
+            docx::part_string(&out, name).is_none(),
+            "{name} comes in under the output's own name"
+        );
+    }
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // `word`: the original's stay.
+    let out = redline(&original, &revised, CompareMode::Word);
+    let (dom, root) = parse(&part(&out, "word/settings.xml"));
+    assert_eq!(val(&dom, child(&dom, root, "defaultTabStop")), "720");
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")),
+        ("22".to_string(), "160".to_string())
+    );
+}
+
+/// A revision that keeps its settings and stylesheet at the conventional
+/// names but relates neither is still read: the relationship names the part,
+/// and the conventional name stands in when there is none.
+#[test]
+fn a_revision_that_relates_neither_part_is_read_at_the_conventional_names() {
+    let original = package(
+        &docx::para("Alpha beta gamma"),
+        &Chrome {
+            theme: None,
+            styles: Some(styles(Some((22, 160)))),
+            settings: Some(settings(r#"<w:defaultTabStop w:val="720"/>"#)),
+        },
+    );
+    let revised = docx::docx_with(
+        &docx::para("Alpha delta gamma"),
+        &[
+            docx::Part {
+                name: "word/settings.xml",
+                content_type: SETTINGS_CT,
+                rel_type: "",
+                xml: &settings(r#"<w:defaultTabStop w:val="360"/>"#),
+            },
+            docx::Part {
+                name: "word/styles.xml",
+                content_type: STYLES,
+                rel_type: "",
+                xml: &styles(Some((36, 0))),
+            },
+        ],
+    );
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let (dom, root) = parse(&part(&out, "word/settings.xml"));
+    assert_eq!(val(&dom, child(&dom, root, "defaultTabStop")), "360");
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")),
+        ("36".to_string(), "0".to_string())
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// A 1×1 PNG of the colour `rgb`, in a deflate block that stores its bytes
+/// as they are.
+fn png(rgb: [u8; 3]) -> Vec<u8> {
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut crc = u32::MAX;
+        for &byte in bytes {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+            }
+        }
+        !crc
+    }
+    fn adler32(bytes: &[u8]) -> u32 {
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in bytes {
+            a = (a + u32::from(byte)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        (b << 16) | a
+    }
+    fn chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+        chunk.extend_from_slice(kind);
+        chunk.extend_from_slice(data);
+        chunk.extend_from_slice(&crc32(&chunk[4..]).to_be_bytes());
+        chunk
+    }
+    // One scanline: no filter, then the pixel.
+    let scanline = [0, rgb[0], rgb[1], rgb[2]];
+    let zlib = [0x78, 0x01, 0x01, 0, 4, 0xFB, 0xFF]
+        .into_iter()
+        .chain(scanline)
+        .chain(adler32(&scanline).to_be_bytes())
+        .collect::<Vec<u8>>();
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend(chunk(b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]));
+    png.extend(chunk(b"IDAT", &zlib));
+    png.extend(chunk(b"IEND", &[]));
+    png
+}
+
+/// The bytes of the ZIP entry `name` of `docx`.
+fn entry(docx: &[u8], name: &str) -> Vec<u8> {
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let mut file = archive.by_name(name).unwrap();
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut bytes).unwrap();
+    bytes
+}
+
+/// The part a relationship `target` of a part in the folder `dir` names: a
+/// relative one from `dir`, an absolute one (`/word/…`) from the package root.
+fn resolve(dir: &str, target: &str) -> String {
+    let mut path: Vec<&str> = if dir.is_empty() || target.starts_with('/') {
+        Vec::new()
+    } else {
+        dir.split('/').collect()
+    };
+    for segment in target.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                path.pop();
+            }
+            _ => path.push(segment),
+        }
+    }
+    path.join("/")
+}
+
+/// A theme whose first fill is the picture its own relationship `rIdPic`
+/// names, where [`theme`] has a scheme colour.
+fn picture_theme(name: &str) -> String {
+    theme(name, "Cambria", "Calibri")
+        .replacen(
+            "<a:theme ",
+            &format!("<a:theme xmlns:r=\"{}\" ", docx::R_NS),
+            1,
+        )
+        .replacen(
+            r#"<a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>"#,
+            r#"<a:fillStyleLst><a:blipFill><a:blip r:embed="rIdPic"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>"#,
+            1,
+        )
+}
+
+/// A document whose theme, the part `theme_part`, is [`picture_theme`] `name`
+/// showing the 1×1 PNG of `rgb` from its own `word/media/fill.png`.
+fn picture_package(name: &str, rgb: [u8; 3], theme_part: &'static str) -> Vec<u8> {
+    let theme_xml = picture_theme(name);
+    let (dir, file) = theme_part.rsplit_once('/').unwrap();
+    let rels_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="{PACKAGE_RELS_NS}"><Relationship Id="rIdPic" Type="{IMAGE_REL}" Target="../media/fill.png"/></Relationships>"#
+    );
+    let rels_part = format!("{dir}/_rels/{file}.rels");
+    let docx = docx::docx_with(
+        &docx::para("Shared body"),
+        &[
+            docx::Part {
+                name: theme_part,
+                content_type: THEME,
+                rel_type: THEME_REL,
+                xml: &theme_xml,
+            },
+            docx::Part {
+                name: &rels_part,
+                content_type: RELATIONSHIPS_CT,
+                rel_type: "",
+                xml: &rels_xml,
+            },
+            docx::Part {
+                name: "word/media/fill.png",
+                content_type: "image/png",
+                rel_type: "",
+                xml: "",
+            },
+        ],
+    );
+    docx::replace_entry(&docx, "word/media/fill.png", &png(rgb))
+}
+
+/// The `a:blip` of the theme part `theme_part`, in its DOM.
+fn theme_blip(docx: &[u8], theme_part: &str) -> (Dom, NodeId) {
+    let (dom, root) = parse(&part(docx, theme_part));
+    let blip = dom
+        .descendants(root, Some(&XName::get("blip", A_NS)))
+        .first()
+        .copied()
+        .expect("the theme shows a picture");
+    (dom, blip)
+}
+
+/// The ZIP entry names of `docx`, sorted.
+fn entries(docx: &[u8]) -> Vec<String> {
+    let archive = zip::ZipArchive::new(std::io::Cursor::new(docx)).unwrap();
+    let mut names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("decode ZIP entry name").into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The `word/media/` ZIP entries of `docx`, sorted.
+fn media_entries(docx: &[u8]) -> Vec<String> {
+    entries(docx)
+        .into_iter()
+        .filter(|name| name.starts_with("word/media/"))
+        .collect()
+}
+
+/// The id the theme part `theme_part` names its first fill's picture by,
+/// `""` when it names none.
+fn theme_blip_id(docx: &[u8], theme_part: &str) -> String {
+    let (dom, blip) = theme_blip(docx, theme_part);
+    attr(&dom, blip, docx::R_NS, "embed").to_string()
+}
+
+/// The bytes of the picture the theme part `theme_part` shows as its first
+/// fill, through the theme's own relationships.
+fn theme_picture(docx: &[u8], theme_part: &str) -> Vec<u8> {
+    let (dom, blip) = theme_blip(docx, theme_part);
+    let id = attr(&dom, blip, docx::R_NS, "embed");
+    assert!(!id.is_empty(), "{theme_part} shows no picture");
+    let (dir, file) = theme_part.rsplit_once('/').unwrap();
+    let (rels, rels_root) = parse(&part(docx, &format!("{dir}/_rels/{file}.rels")));
+    let relationship = rels
+        .elements(rels_root, None)
+        .into_iter()
+        .find(|&r| attr(&rels, r, "", "Id") == id)
+        .unwrap_or_else(|| panic!("{theme_part} has no relationship {id}"));
+    assert_eq!(attr(&rels, relationship, "", "Type"), IMAGE_REL);
+    entry(docx, &resolve(dir, attr(&rels, relationship, "", "Target")))
+}
+
+/// The review's `theme-image` probe: both themes show a picture as `rIdPic`,
+/// and each package's `word/media/fill.png` is a different colour. The
+/// redline's theme is the revised theme, pictures included.
+#[test]
+fn the_revised_theme_brings_the_pictures_its_own_relationships_name() {
+    let red = [0xFF, 0x00, 0x00];
+    let blue = [0x00, 0x00, 0xFF];
+    let original = picture_package("Theme A", red, "word/theme/theme1.xml");
+    let revised = picture_package("Theme B", blue, "word/theme/theme1.xml");
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let theme_xml = part(&out, "word/theme/theme1.xml");
+    assert_eq!(theme_fonts(&theme_xml).0, "Theme B");
+    assert_eq!(
+        theme_picture(&out, "word/theme/theme1.xml"),
+        png(blue),
+        "the revised theme's fill resolves to the revised picture"
+    );
+    assert_eq!(
+        entry(&out, "word/media/fill.png"),
+        png(red),
+        "the original's picture stays the original's"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // `word`: the redline keeps the original's theme and its picture.
+    let out = redline(&original, &revised, CompareMode::Word);
+    assert_eq!(
+        theme_fonts(&part(&out, "word/theme/theme1.xml")).0,
+        "Theme A"
+    );
+    assert_eq!(theme_picture(&out, "word/theme/theme1.xml"), png(red));
+}
+
+#[test]
+fn a_theme_picture_is_carried_from_wherever_the_revision_keeps_it() {
+    let red = [0xFF, 0x00, 0x00];
+    let blue = [0x00, 0x00, 0xFF];
+    let original = picture_package("Theme A", red, "word/theme/theme1.xml");
+
+    // The revision keeps its theme under another name, its picture too.
+    let revised = picture_package("Theme B", blue, "word/theme/theme2.xml");
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    assert_eq!(theme_picture(&out, "word/theme/theme1.xml"), png(blue));
+    assert!(
+        docx::part_string(&out, "word/theme/theme2.xml").is_none(),
+        "the revised theme comes in under the output's own name"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // The same picture on both sides: the theme keeps naming it by the id
+    // the output's own relationship resolves, and nothing is carried.
+    let revised = picture_package("Theme B", red, "word/theme/theme2.xml");
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    assert_eq!(
+        theme_fonts(&part(&out, "word/theme/theme1.xml")).0,
+        "Theme B"
+    );
+    assert_eq!(
+        theme_blip_id(&out, "word/theme/theme1.xml"),
+        "rIdPic",
+        "the output's own relationship names the picture"
+    );
+    assert_eq!(theme_picture(&out, "word/theme/theme1.xml"), png(red));
+    assert_eq!(
+        media_entries(&out),
+        ["word/media/fill.png"],
+        "nothing is carried for a picture that already resolves the same"
+    );
+}
+
+/// The original's theme has no picture, the revision's has one: it is
+/// carried onto the redline's theme. The general reconciliation pass already
+/// did this before the theme's relationships were carried at adoption (an
+/// unresolved id is its business); this keeps it so through that pass too.
+#[test]
+fn a_theme_picture_the_original_had_none_of_is_carried() {
+    let blue = [0x00, 0x00, 0xFF];
+    let plain = theme("Theme A", "Georgia", "Arial");
+    let original = docx::docx_with(
+        &docx::para("Shared body"),
+        &[docx::Part {
+            name: "word/theme/theme1.xml",
+            content_type: THEME,
+            rel_type: THEME_REL,
+            xml: &plain,
+        }],
+    );
+    let revised = picture_package("Theme B", blue, "word/theme/theme1.xml");
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    assert_eq!(theme_picture(&out, "word/theme/theme1.xml"), png(blue));
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// The revision's theme names a picture its package does not have. The
+/// redline shows no picture there: it does not borrow the original's, which
+/// the same id resolves to in the output.
+#[test]
+fn a_picture_the_revision_cannot_resolve_is_not_shown_as_the_originals() {
+    let red = [0xFF, 0x00, 0x00];
+    let original = picture_package("Theme A", red, "word/theme/theme1.xml");
+    let unreferenced = picture_theme("Theme B");
+    let revised = docx::docx_with(
+        &docx::para("Shared body"),
+        &[docx::Part {
+            name: "word/theme/theme1.xml",
+            content_type: THEME,
+            rel_type: THEME_REL,
+            xml: &unreferenced,
+        }],
+    );
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    assert_eq!(
+        theme_fonts(&part(&out, "word/theme/theme1.xml")).0,
+        "Theme B"
+    );
+    assert_eq!(
+        theme_blip_id(&out, "word/theme/theme1.xml"),
+        "",
+        "the reference goes, rather than resolving to the original's picture"
+    );
     crate::common::validity::assert_word_valid_package(&out);
 }
