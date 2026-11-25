@@ -159,6 +159,18 @@ describe("an empty paragraph's page break (#48)", () => {
     expect(pages[1].frames[0].fragments.some((f) => f.blockId === second.id)).toBe(true);
     done();
   });
+  // Word, showing markup, breaks at a page break inserted or deleted with tracking (b077: 3 pages).
+  for (const kind of ["page-break-del", "page-break-ins"])
+    it(`a tracked ${kind} still breaks the page in the tracked view (#131)`, () => {
+      const { composed, done } = compose(
+        `${header()}<!-- p0 -->\nFIRST\n\n<!-- p1 ${kind} r1 @A, break-${kind.slice(-3)} r1 @A -->\n\n<!-- p2 -->\nSECOND\n`,
+      );
+      expect(composed.layout.pages.length).toBe(2);
+      const second = composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text.includes("SECOND")));
+      expect(composed.layout.pages[1].frames[0].fragments.some((f) => f.blockId === second.id)).toBe(true);
+      expect(composed.warnings?.some?.((w) => /unknown/.test(w.code) && /page-break/.test(w.message)) ?? false).toBe(false);
+      done();
+    });
 });
 
 describe("sections and their notes (#49)", () => {

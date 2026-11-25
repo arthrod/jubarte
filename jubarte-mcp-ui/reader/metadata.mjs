@@ -147,6 +147,11 @@ function parseClause(raw, context) {
   if (value === 'bullet') return {...scopedBase, type: 'bullet'};
   if ((match = value.match(/^level\s+(\d+)$/))) return {...scopedBase, type: 'level', level: Number(match[1])};
   if (['page-break', 'section-break', 'empty'].includes(value)) return {...scopedBase, type: value};
+  // A page break inserted or deleted with tracking: the tracked view still breaks there, as Word does
+  // with markup shown (#131); the tags name its revision.
+  if ((match = value.match(/^page-break-(ins|del)\s+(.+)$/s))) {
+    return {...scopedBase, type: 'page-break', change: match[1], tagSource: match[2], tags: parseTags(match[2], scope?.story || story, warnings, range)};
+  }
   if ((match = value.match(/^(break-ins|break-del|fmt|rev)\s+(.+)$/s))) {
     return {...scopedBase, type: match[1], tagSource: match[2], tags: parseTags(match[2], scope?.story || story, warnings, range)};
   }
@@ -195,7 +200,7 @@ function parseClause(raw, context) {
 }
 
 function looksLikeClause(value) {
-  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty|size|mark|before|after|line)(?:\s|$)/.test(value);
+  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break-ins|page-break-del|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty|size|mark|before|after|line)(?:\s|$)/.test(value);
 }
 
 function normalizeDirective(directive) {
@@ -209,7 +214,7 @@ function normalizeDirective(directive) {
       case 'numbering': properties.numbering = {kind: 'numbered', label: clause.label}; break;
       case 'bullet': properties.numbering = {kind: 'bullet'}; break;
       case 'level': properties.level = clause.level; break;
-      case 'page-break': properties.pageBreak = true; break;
+      case 'page-break': properties.pageBreak = true; if (clause.change) properties.pageBreakChange = {change: clause.change, tags: clause.tags}; break;
       case 'section-break': properties.sectionBreak = true; break;
       case 'empty': properties.empty = true; break;
       case 'break-ins': case 'break-del': case 'fmt': case 'rev': properties.revisions.push(clause); break;
