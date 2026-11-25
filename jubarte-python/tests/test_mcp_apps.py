@@ -778,3 +778,74 @@ def test_preview_serves_the_engines_accepted_and_original_views(tmp_path: Path) 
     assert "OneTwo" in accepted.structured_content["markdown"]
     assert "{--" not in original.structured_content["markdown"]
     assert bad.is_error
+
+
+# -- docx_image: the card draws a picture from its bytes (#95) --------------
+
+
+def _two_pictures(root: Path) -> tuple[bytes, bytes]:
+    import base64
+
+    first, second = _png(40), _png(60)
+    uri = [f"data:image/png;base64,{base64.b64encode(p).decode()}" for p in (first, second)]
+    docx = _native.markdown_to_docx(f"One ![a]({uri[0]}) two ![b]({uri[1]})\n")
+    (root / "p.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    return first, second
+
+
+def test_docx_image_is_the_cards_own_tool(tmp_path: Path) -> None:
+    tool = tools(tmp_path)["docx_image"]
+    assert ui_meta(tool).get("visibility") == ["app"]
+    assert tool.annotations.read_only_hint
+
+
+def test_docx_image_returns_the_pictures_bytes_as_image_content(tmp_path: Path) -> None:
+    import base64
+
+    first, second = _two_pictures(tmp_path)
+    preview, one, two = call(
+        tmp_path,
+        ("docx_preview", {"path": "p.docx"}),
+        ("docx_image", {"path": "p.docx", "id": "image1"}),
+        ("docx_image", {"path": "p.docx", "id": "image2"}),
+    )
+    # The ids the tool takes are the labels the preview's stand-ins carry.
+    markdown = preview.structured_content["markdown"]
+    assert "[image1]: <image/png," in markdown and "[image2]: <image/png," in markdown
+    for result, want in ((one, first), (two, second)):
+        assert not result.is_error, result.content[0].text
+        (content,) = result.content
+        assert content.type == "image" and content.mime_type == "image/png"
+        assert base64.b64decode(content.data) == want
+    # The same bytes as the package's media parts.
+    with ZipFile(tmp_path / "p.docx") as zf:
+        media = sorted(zf.read(n) for n in zf.namelist() if n.startswith("word/media/"))
+    assert sorted([first, second]) == media
+
+
+def test_docx_image_refuses_an_unknown_id_a_path_outside_and_a_picture_too_big(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    _two_pictures(root)
+    (tmp_path / "out.docx").write_bytes((root / "p.docx").read_bytes())
+    unknown, outside = call(
+        root,
+        ("docx_image", {"path": "p.docx", "id": "image9"}),
+        ("docx_image", {"path": "../out.docx", "id": "image1"}),
+    )
+    assert unknown.is_error and "image9" in unknown.content[0].text
+    assert outside.is_error and "outside root" in outside.content[0].text
+    monkeypatch.setattr(server, "_IMAGE_LIMIT", 1024)
+    (big,) = call(root, ("docx_image", {"path": "p.docx", "id": "image2"}))
+    assert big.is_error and "too large" in big.content[0].text
+
+
+def test_docx_image_ignores_a_definition_inside_code(tmp_path: Path) -> None:
+    # The shape inside a fence is the document's text, not a picture (#31).
+    literal = "[image1]: <data:image/png;base64,QUJD>"
+    docx = _native.markdown_to_docx(f"```\n{literal}\n```\n")
+    (tmp_path / "c.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    (result,) = call(tmp_path, ("docx_image", {"path": "c.docx", "id": "image1"}))
+    assert result.is_error

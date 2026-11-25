@@ -30,7 +30,7 @@ from typing import Any, Literal
 try:
     from mcp.server import MCPServer
     from mcp.server.mcpserver.exceptions import ToolError
-    from mcp.types import CallToolResult, TextContent, ToolAnnotations
+    from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError("jubarte-mcp needs the MCP SDK: pip install 'jubarte-docx[mcp]'") from exc
 
@@ -82,6 +82,8 @@ _VIEW_META = {
 # The serialized UTF-8 JSON of one preview; hosts persist tool results of a
 # few MiB at most.
 _PREVIEW_LIMIT = 2 * 1024 * 1024
+# One picture's bytes, sent to the card on its own (#95).
+_IMAGE_LIMIT = 8 * 1024 * 1024
 # A picture's reference definition as the engine writes it. The card draws a
 # picture as a chip whose tooltip is this address, so it is sent its type and
 # size, not its bytes (a document's pictures can pass the limit alone).
@@ -89,11 +91,38 @@ _IMAGE_DEFINITION = re.compile(r"^(\[[^\]\n]+\]: )<data:([\w.+-]+/[\w.+-]+);base
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 
+def _outside_code(markdown: str) -> Generator[tuple[str, bool], None, None]:
+    """Each line of `markdown` with whether it sits outside fenced code.
+
+    Inside a fence a picture definition's shape is the document's text, and
+    the card draws it as written (#31). Lines end at \n only, as the Markdown
+    reader reads them; str.splitlines would also end one at U+2028, U+2029 or
+    U+0085 inside a code line (#91).
+    """
+    fence: str | None = None
+    for line in re.split(r"(?<=\n)", markdown):
+        opener = _FENCE.match(line.rstrip("\r\n"))
+        if fence is None:
+            if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
+                fence = opener.group(1)
+                yield line, False
+            else:
+                yield line, True
+            continue
+        if (
+            opener
+            and opener.group(1)[0] == fence[0]
+            and len(opener.group(1)) >= len(fence)
+            and not opener.group(2).strip()
+        ):
+            fence = None
+        yield line, False
+
+
 def _image_stand_ins(markdown: str) -> str:
     """`[image1]: <data:image/png;base64,…>` as `[image1]: <image/png, 412 KB>`.
 
-    Only a definition outside fenced code: inside one the shape is the
-    document's text, and the card draws it as written (#31).
+    The label stays: it is the id docx_image takes to send the bytes (#95).
     """
 
     def stand_in(found: re.Match[str]) -> str:
@@ -101,26 +130,16 @@ def _image_stand_ins(markdown: str) -> str:
         size = len(payload) * 3 // 4 - payload[-2:].count("=")
         return f"{found.group(1)}<{found.group(2)}, {round(size / 1024)} KB>"
 
-    out: list[str] = []
-    fence: str | None = None
-    # Lines end at \n only, as the Markdown reader reads them; str.splitlines would
-    # also end one at U+2028, U+2029 or U+0085 inside a code line (#91).
-    for line in re.split(r"(?<=\n)", markdown):
-        opener = _FENCE.match(line.rstrip("\r\n"))
-        if fence is None:
-            if opener and not (opener.group(1)[0] == "`" and "`" in opener.group(2)):
-                fence = opener.group(1)
-            else:
-                line = _IMAGE_DEFINITION.sub(stand_in, line)
-        elif (
-            opener
-            and opener.group(1)[0] == fence[0]
-            and len(opener.group(1)) >= len(fence)
-            and not opener.group(2).strip()
-        ):
-            fence = None
-        out.append(line)
-    return "".join(out)
+    return "".join(_IMAGE_DEFINITION.sub(stand_in, line) if live else line for line, live in _outside_code(markdown))
+
+
+def _image_definition(markdown: str, label: str) -> tuple[str, str] | None:
+    """The mime type and base64 payload of picture `label`, outside code."""
+    want = f"[{label}]: "
+    for line, live in _outside_code(markdown):
+        if live and (found := _IMAGE_DEFINITION.match(line)) and found.group(1) == want:
+            return found.group(2), found.group(3)
+    return None
 
 
 # docx_view's listing: files returned, directory entries visited, depth.
@@ -730,6 +749,22 @@ def build_server(*, root: Path) -> MCPServer:
         c = preview["counts"]
         text = f"{p.name}: {c['inserted']} inserted, {c['deleted']} deleted, {c['moved']} moved, {c['formatted']} formatted."
         return CallToolResult(content=[TextContent(type="text", text=text)], structured_content=preview)
+
+    @mcp.tool(annotations=_READ, meta=_APP_ONLY)
+    def docx_image(path: str, id: str, view: Literal["tracked", "accepted", "original"] = "tracked") -> CallToolResult:
+        """The document card's picture fetch (hidden from the model in MCP Apps hosts): the bytes of picture `id` (the label docx_preview's stand-in keeps, such as image1) as image content."""
+        from . import _native
+
+        data = load(path).to_bytes()
+        track = {"tracked": None, "accepted": "accept", "original": "reject"}[view]
+        markdown, _ = engine(lambda: _native.read_view(data, track_changes=track, page_markers=False))
+        found = _image_definition(markdown, id)
+        if found is None:
+            raise ToolError(f"no picture {id} in {Path(path).name}")
+        mime, payload = found
+        if len(payload) * 3 // 4 > _IMAGE_LIMIT:
+            raise ToolError(f"picture {id} is too large to send")
+        return CallToolResult(content=[ImageContent(type="image", data=payload, mime_type=mime)])
 
     return mcp
 
