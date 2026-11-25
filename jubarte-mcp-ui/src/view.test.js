@@ -292,7 +292,10 @@ it("a picture is asked of docx_image for the document and view the card shows (#
   const url = host.pictureLoader({ id: "image1", mime: "image/png" });
   await settle();
   expect(host.pending.map((p) => p.request)).toEqual([
-    { name: "docx_image", arguments: { path: "old.docx", id: "image1", view: "tracked" } },
+    {
+      name: "docx_image",
+      arguments: { path: "old.docx", id: "image1", view: "tracked", sha256: "abc" },
+    },
   ]);
   host.pending[0].resolve({ content: [{ type: "image", data: "QUJD", mimeType: "image/png" }] });
   expect(await url).toBe("data:image/png;base64,QUJD");

@@ -40,3 +40,25 @@ test('the mime type comes from the stand-in; only types a browser draws are fetc
  assert.equal(pictureMime('image/x-wmf, 3 KB'),null);
  assert.equal(pictureMime('https://example.com/a.png'),null);
 });
+
+test('the extent reads cy before cx as well (#122)',()=>{
+ const xml='<w:drawing><wp:inline><wp:extent cy="1905000" cx="2857500"/></wp:inline></w:drawing>';
+ assert.deepEqual(pictureExtents(drawing('image1',xml)).get('image1'),{widthPx:300,heightPx:200,inline:true});
+});
+
+test('a picture with no drawing comment takes its stand-in\'s raster size, as the engine writes it (#122)',()=>{
+ const body='![a][image1] ![b][image2] ![c][image3]\n\n[image1]: <image/png, 2 KB, 40x30 px>\n[image2]: <image/png, 9 KB, 1248x100 px>\n[image3]: <image/png, 2 KB>\n';
+ const got=pictureExtents(body);
+ assert.deepEqual(got.get('image1'),{widthPx:40,heightPx:30,inline:true});
+ // Wider than MAX_PICTURE_WIDTH (5,943,600 EMU = 624px): scaled to it, keeping its shape.
+ assert.deepEqual(got.get('image2'),{widthPx:624,heightPx:50,inline:true});
+ assert.equal(got.has('image3'),false);
+ assert.equal(pictureMime('image/png, 2 KB, 40x30 px'),'image/png');
+});
+
+test('a drawing comment wins over the stand-in\'s raster size, and code is text (#122)',()=>{
+ const body=`[image1]: <image/png, 2 KB, 40x30 px>\n${drawing('image1',inline(952500,952500))}\n\n\`\`\`\n[image2]: <image/png, 2 KB, 40x30 px>\n\`\`\`\n`;
+ const got=pictureExtents(body);
+ assert.deepEqual(got.get('image1'),{widthPx:100,heightPx:100,inline:true});
+ assert.equal(got.has('image2'),false);
+});

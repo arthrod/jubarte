@@ -9,6 +9,9 @@
 import {fencedCodeRanges} from './metadata.mjs';
 
 const EMU_PER_PX=9525;
+// crates/jubarte-markdown write.rs MAX_PICTURE_WIDTH, 5,943,600 EMU.
+const MAX_WIDTH_PX=5943600/EMU_PER_PX;
+const DEFINITION=/^ {0,3}\[(\S+)\]: <[\w.+-]+\/[\w.+-]+, \d+ KB, (\d+)x(\d+) px>[ \t]*$/gm;
 const COMMENT=/^ {0,3}<!-- (\S+) drawing:([A-Za-z0-9_-]+={0,2}) -->[ \t]*$/gm;
 // Types an <img> draws in every browser the card runs in; EMF and WMF are not.
 const DRAWABLE=new Set(['image/png','image/jpeg','image/gif','image/webp','image/bmp','image/svg+xml']);
@@ -25,15 +28,23 @@ export function pictureExtents(body){
  for(const m of body.matchAll(COMMENT)){
   if(code.some(r=>m.index>=r.start&&m.index<r.end))continue;
   let xml;try{xml=decode(m[2]).xml}catch{continue}
-  const ext=typeof xml==='string'&&/<wp:extent\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/.exec(xml);
-  if(!ext)continue;
-  out.set(m[1],{widthPx:Number(ext[1])/EMU_PER_PX,heightPx:Number(ext[2])/EMU_PER_PX,inline:/<wp:inline\b/.test(xml)});
+  const ext=typeof xml==='string'&&/<wp:extent\b[^>]*>/.exec(xml)?.[0],cx=ext&&/\bcx="(\d+)"/.exec(ext),cy=ext&&/\bcy="(\d+)"/.exec(ext);
+  if(!cx||!cy)continue;
+  out.set(m[1],{widthPx:Number(cx[1])/EMU_PER_PX,heightPx:Number(cy[1])/EMU_PER_PX,inline:/<wp:inline\b/.test(xml)});
+ }
+ // A picture the engine regenerates carries no drawing comment (#122): it is an inline picture
+ // at its raster's size, one pixel to a px, no wider than the writer's MAX_PICTURE_WIDTH. The
+ // server's stand-in says that size.
+ for(const m of body.matchAll(DEFINITION)){
+  if(out.has(m[1])||code.some(r=>m.index>=r.start&&m.index<r.end))continue;
+  const w=Number(m[2]),h=Number(m[3]),scale=Math.min(1,MAX_WIDTH_PX/w);
+  out.set(m[1],{widthPx:w*scale,heightPx:Math.max(1/EMU_PER_PX,h*scale),inline:true});
  }
  return out;
 }
 
-/** The mime type of a stand-in such as `image/png, 412 KB`, if a browser draws it. */
+/** The mime type of a stand-in such as `image/png, 412 KB, 640x480 px`, if a browser draws it. */
 export function pictureMime(standIn){
- const m=/^([\w.+-]+\/[\w.+-]+), \d+ KB$/.exec(standIn||'');
+ const m=/^([\w.+-]+\/[\w.+-]+), \d+ KB(?:, \d+x\d+ px)?$/.exec(standIn||'');
  return m&&DRAWABLE.has(m[1])?m[1]:null;
 }

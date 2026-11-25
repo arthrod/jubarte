@@ -43,13 +43,22 @@ export function tableWidth(widthsIn,frame,rightMargin){
 export function fitTable(textMins,width,maxWidth){
  for(let pad=8;pad>=2;pad--){const need=textMins.reduce((n,t)=>n+(t>0?t+2*pad+3:0),0);if(need<=width)return {pad,width};if(need<=maxWidth)return {pad,width:need}}
  return {pad:2,width:Math.max(width,maxWidth)}}
-/** A paragraph holding only pictures (and drawing chips) as Word sets it: one line, each
- * picture at its extent, scaled down together when they pass the column (#95). */
+/** A paragraph holding only pictures (and drawing chips) as Word sets it (#95, #122): each
+ * picture at its extent, wrapped like a character when the next one does not fit; one picture
+ * wider than its line alone is scaled to it, and none is taller than the frame. */
 export function pictureOnly(block){const runs=block.runs||[];return runs.some(r=>r.picture)&&runs.every(r=>r.image||!r.text.trim());}
-function pictureLine(lines,inner,block,reach=0){const source=new Map((block.runs||[]).map(r=>[r.id,r])),runs=[];for(const line of lines)for(const drawn of line.runs){const picture=source.get(drawn.runId)?.picture,run=picture?{...drawn,picture}:drawn;const last=runs[runs.length-1];if(run.picture&&last?.picture?.id===run.picture.id&&last.pmRange.to===run.pmRange.from){runs[runs.length-1]={...last,text:last.text+run.text,pmRange:{from:last.pmRange.from,to:run.pmRange.to}};continue;}runs.push(run);}
- const fixed=runs.reduce((n,r)=>n+(r.picture?0:r.width||0),0),wide=runs.reduce((n,r)=>n+(r.picture?.widthPx||0),0),scale=wide>0?Math.min(1,Math.max(1,inner+reach-fixed)/wide):1;
- let x=0,tall=0;const placed=runs.map(r=>{const width=r.picture?r.picture.widthPx*scale:r.width||0,out={...r,x,width,...(r.picture?{picture:{...r.picture,drawWidth:width,drawHeight:r.picture.heightPx*scale}}:{})};x+=width;if(r.picture)tall=Math.max(tall,r.picture.heightPx*scale);return out;});
- const ranges=runs.map(r=>r.pmRange);return {...lines[0],runs:placed,width:x,pictureHeight:tall,pmRange:{from:Math.min(...ranges.map(r=>r.from)),to:Math.max(...ranges.map(r=>r.to))}};}
+function pictureLines(lines,inner,block,{reach=0,first=0,rest=0,maxHeight=Infinity}={}){
+ const source=new Map((block.runs||[]).map(r=>[r.id,r])),runs=[];
+ for(const line of lines)for(const drawn of line.runs){const picture=source.get(drawn.runId)?.picture,run=picture?{...drawn,picture}:drawn;const last=runs[runs.length-1];if(run.picture&&last?.picture?.id===run.picture.id&&last.pmRange.to===run.pmRange.from){runs[runs.length-1]={...last,text:last.text+run.text,pmRange:{from:last.pmRange.from,to:run.pmRange.to}};continue;}runs.push(run);}
+ const out=[],edge=inner+reach;let current=[],x=first;
+ const flush=()=>{if(!current.length)return;const ranges=current.map(r=>r.pmRange),tall=current.reduce((n,r)=>Math.max(n,r.picture?.drawHeight??0),0);out.push({...lines[0],runs:current,width:x,pictureHeight:tall,pmRange:{from:Math.min(...ranges.map(r=>r.from)),to:Math.max(...ranges.map(r=>r.to))}});current=[];x=rest;};
+ for(const r of runs){
+  if(!r.picture){if(!current.length&&!r.text.trim()&&out.length)continue;current.push({...r,x});x+=r.width||0;continue;}
+  if(current.some(c=>c.picture)&&x+r.picture.widthPx>edge+0.001)flush();
+  const scale=Math.min(1,Math.max(1,edge-x)/r.picture.widthPx,Math.max(1,maxHeight)/r.picture.heightPx),width=r.picture.widthPx*scale;
+  current.push({...r,x,width,picture:{...r.picture,drawWidth:width,drawHeight:r.picture.heightPx*scale}});x+=width;
+ }
+ flush();return out;}
 
 export function composeWithTables(snapshot,runtime,input){
  const started=performance.now(),diagnostics=[],tableFragments=[],footnoteFragments=[],footnoteBands=[];
@@ -153,7 +162,7 @@ export function composeWithTables(snapshot,runtime,input){
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
  // `reach`: how far a picture may run past the column, as Word lets a body picture run into the right margin.
- function composeLines(blocks,w,reach=0){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w+'+'+reach;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
+ function composeLines(blocks,w,reach=0){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w+'+'+reach+'^'+height;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[],at=0,prev=null;
   for(const block of blocks){if(prev&&block.attrs?.first!==false&&!block.attrs?.spacer)at+=pairGap(prev,block);if(!block.attrs?.spacer)prev=block;const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
@@ -162,7 +171,7 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // A line Word breaks at a soft hyphen shows a hyphen there; mid-line ones stay invisible (#89).
    lines=lines.map((line,i)=>{if(i===lines.length-1)return line;const k=line.runs.findLastIndex(r=>r.text);const run=line.runs[k];if(!run?.text.endsWith('\u00ad'))return line;const runs=[...line.runs];runs[k]={...run,text:run.text.slice(0,-1)+'-',width:(run.width||0)+glyphWidth('-',run.font)-glyphWidth('\u00ad',run.font)};return {...line,runs};});
-   if(pictureOnly(block)&&lines.length)lines=[pictureLine(lines,inner,block,reach)];
+   if(pictureOnly(block)&&lines.length){const box=block.attrs?.lineBox,set=box?.advance??lh,below=box?.baseline==null?0:set-box.baseline;lines=pictureLines(lines,inner,block,{reach,first:ind.first,rest:ind.rest,maxHeight:height-below});}
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;

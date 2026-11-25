@@ -1369,4 +1369,47 @@ describe("pictures take their extent on the page (#95)", () => {
     setPictureLoader(null);
     done();
   });
+  it("pictures that do not fit one line wrap at their extents, as Word wraps characters (#122)", () => {
+    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 400, 200)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 400, 100)}`);
+    const { composed, done } = compose(md);
+    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    expect(a.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
+    expect(b.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
+    expect(b.y).toBeGreaterThan(a.y);
+    expect(a.advance).toBeCloseTo(200 + BELOW, 2);
+    expect(b.advance).toBeCloseTo(100 + BELOW, 2);
+    done();
+  });
+  it("a picture keeps its paragraph's first-line indent (#122)", () => {
+    const md = doc("<!-- p0 first-line 0.5in -->\n![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const { composed, done } = compose(md);
+    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).x).toBe(48);
+    done();
+  });
+  it("a picture taller than the page is scaled to fit it, in the body and in a footnote (#122)", () => {
+    const { composed, done } = compose(PICTURE(300, 1500));
+    const frame = composed.layout.pages[0].frames[0].bounds;
+    const line = lineOf(composed, "PICALT");
+    expect(line.advance).toBeLessThanOrEqual(frame.height + 0.01);
+    const run = line.runs.find((r) => r.picture);
+    expect(run.picture.drawWidth / run.picture.drawHeight).toBeCloseTo(300 / 1500, 6);
+    done();
+    const note = doc("<!-- p0 -->\nBODY[^1]\n\n[^1]: ![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}`);
+    expect(() => compose(note).done()).not.toThrow();
+  });
+  it("a picture with no drawing comment is drawn at its stand-in's raster size (#122)", () => {
+    const md = doc("<!-- p0 -->\n![PICALT][image1]\n", "[image1]: <image/png, 2 KB, 40x30 px>");
+    const { composed, done } = compose(md);
+    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).picture).toMatchObject({ drawWidth: 40, drawHeight: 30 });
+    done();
+  });
+  it("a commented picture still opens its discussion by mouse and keyboard (#122)", () => {
+    const md = doc("<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const { container, done } = compose(md);
+    const box = container.querySelector(".paged-picture");
+    expect(box.getAttribute("role")).toBe("button");
+    expect(box.getAttribute("tabindex")).toBe("0");
+    expect(box.dataset.discussions).toMatch(/comment/);
+    done();
+  });
 });

@@ -17,7 +17,11 @@ describe("createPictureLoader", () => {
     const url = await load({ path: "a.docx", view: "tracked", sha256: "s", id: "image1" });
     expect(url).toBe("data:image/png;base64,QUJD");
     expect(calls).toEqual([
-      { name: "docx_image", arguments: { path: "a.docx", id: "image1", view: "tracked" } },
+      // The preview's hash rides along, so a file changed since is refused (#122).
+      {
+        name: "docx_image",
+        arguments: { path: "a.docx", id: "image1", view: "tracked", sha256: "s" },
+      },
     ]);
   });
 

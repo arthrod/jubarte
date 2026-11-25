@@ -5,7 +5,8 @@
 // The card's picture fetches (#95). A page asks for each picture when it is
 // drawn; the asks run one at a time so a picture-heavy document does not
 // flood the host, and each document, view and picture is asked once. The
-// answer is a data: URL, which the spec's default img-src allows.
+// answer is a data: URL, which the spec's default img-src allows. The ask carries the
+// preview's sha256, so a file changed since is refused, not cached under the old hash (#122).
 
 const IMAGE = /^image\/[\w.+-]+$/;
 
@@ -18,7 +19,10 @@ export function createPictureLoader(call) {
     if (!cache.has(key)) {
       const ask = queue.then(async () => {
         try {
-          const res = await call({ name: "docx_image", arguments: { path, id, view } });
+          const res = await call({
+            name: "docx_image",
+            arguments: { path, id, view, ...(sha256 ? { sha256 } : {}) },
+          });
           const image = !res?.isError && res?.content?.find((c) => c.type === "image");
           return image && IMAGE.test(image.mimeType) && image.data
             ? `data:${image.mimeType};base64,${image.data}`
