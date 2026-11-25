@@ -167,3 +167,14 @@ test('the hang is judged on the composer’s width, not a sum of glyphs that ker
   const l = { runs: [{ runId: 'r0', text: 'abcd ', x: 0, width: 45, font: 'f', pmRange: { from: 1, to: 6 } }] };
   assert.deepEqual(texts(constrainLines([l], 42, 29, () => 11)), ['abcd ']);
 });
+
+test('a line with no space to break at breaks after its last hyphen, as Word does, before it cuts a word (#110)', async () => {
+  const { constrainLines } = await import('./table-layout.js');
+  // Word: "…/en-us/microsoft-" / "365/copilot/…-data-protection-auditing".
+  assert.deepEqual(texts(constrainLines([line(['ab-cd-efgh', 0])], 70, 29, () => 10)), ['ab-cd-', 'efgh']);
+  // Not after "." or "/": Word does not break there.
+  assert.deepEqual(texts(constrainLines([line(['ab/cd.efgh', 0])], 70, 29, () => 10)), ['ab/cd.e', 'fgh']);
+  // The last break that fits wins, space or hyphen; a leading hyphen is no break.
+  assert.deepEqual(texts(constrainLines([line(['ab cd-efgh', 0])], 70, 29, () => 10)), ['ab cd-', 'efgh']);
+  assert.deepEqual(texts(constrainLines([line(['-abcdefgh', 0])], 50, 29, () => 10)), ['-abcd', 'efgh']);
+});
