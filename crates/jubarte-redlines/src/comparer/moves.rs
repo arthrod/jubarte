@@ -18,12 +18,14 @@
 //! - collapse whitespace before Jaccard (a stamp re-spacing is not a move);
 //! - M117: length ratio ≥ 0.90 and Jaccard threshold ≥ 0.97;
 //! - M118: drop expansion thrash (≥ 12 pending, ≥ 8 near-exact pairs,
-//!   size ratio ≥ 2).
+//!   size ratio ≥ 2) — not under Windows Word when every candidate is a
+//!   relocation (arthrod/jubarte#156).
 //!
 //! [`detect_moves_in_atom_list`] is the public entry the compare pipeline
 //! calls once; [`promote_skip_ahead_equals`] / `promote_skip_ahead_equals_with_source`
 //! rearrange LCS so a `moveTo`-before-gap / `moveFrom`-after-gap shape is
-//! possible before the move pass runs.
+//! possible before the move pass runs, for the `word` preset only (Mac
+//! Word 16's): Windows Word keeps such a run `Equal` (arthrod/jubarte#156).
 
 use std::collections::HashSet;
 
@@ -31,7 +33,7 @@ use crate::namespaces::W;
 use crate::xmllinq::Dom;
 
 use super::atoms::{AtomBlock, ComparisonUnitAtom};
-use super::{CorrelationStatus, WmlComparerSettings};
+use super::{CorrelationStatus, WmlComparerSettings, WordPlatform};
 
 /// Split `text` at any character in `seps`; the resulting `Vec` keeps
 /// leading, trailing and adjacent empty segments (so the count of splits is
@@ -256,6 +258,10 @@ pub fn split_block_on_paragraphs(
 /// the promotion is skipped when the same original paragraph appears in
 /// both the pre-gap and post-gap equates (an alignment anchor, not a
 /// move).
+///
+/// The `word` preset's only (Mac Word 16's). Under
+/// [`WordPlatform::Windows`] nothing is promoted: see
+/// [`promote_skip_ahead_equals_inner`].
 pub fn promote_skip_ahead_equals(
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
     settings: &WmlComparerSettings,
@@ -269,6 +275,8 @@ pub fn promote_skip_ahead_equals(
 /// those immutable source owners (an unchanged paragraph that appears in
 /// both the pre-gap and post-gap Equals stays in place; promoting it lets
 /// table coalescing pull the original row ahead of its deleted prefix).
+/// Like it, the `word` preset's only: Windows Word keeps the run Equal
+/// (arthrod/jubarte#156).
 pub(crate) fn promote_skip_ahead_equals_with_source(
     dom: &Dom,
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
@@ -277,6 +285,23 @@ pub(crate) fn promote_skip_ahead_equals_with_source(
     promote_skip_ahead_equals_inner(Some(dom), seqs, settings);
 }
 
+/// [`promote_skip_ahead_equals`] for either platform.
+///
+/// Under [`WordPlatform::Windows`] the sequences come back as they are.
+/// Windows Word 2024's compare of broken_ones_two file_8 → file_9
+/// (arthrod/jubarte#156) keeps the heading and the capability matrix that
+/// follow a cut block unmarked, the cut block being the move; and a run
+/// of `Equal` sequences cannot have relocated: each of its units is
+/// paired with its counterpart between the same two matched neighbours in
+/// both documents, and the deleted gap has no place in the revision to
+/// measure the run against. What moved, if anything, is the gap's own
+/// content when the revision holds it elsewhere, and the move pass pairs
+/// that where it stands, beside an `Equal` run. Promoted, the sequences
+/// read an inserted copy, the deleted gap and a deleted copy, which the
+/// move pass turns into `moveTo` and `moveFrom`: the matrix twice, its
+/// cells `w:cellIns`, and a page more. The `word` preset, Mac Word
+/// 16's, keeps the promotion: arthrod/jubarte#156 measured the Windows
+/// redline alone.
 fn promote_skip_ahead_equals_inner(
     dom: Option<&Dom>,
     seqs: &mut Vec<super::atoms::CorrelatedSequence>,
@@ -285,6 +310,9 @@ fn promote_skip_ahead_equals_inner(
     use super::ComparisonUnitGroupType;
     use super::atoms::{ComparisonUnit, CorrelatedSequence};
     if !settings.merge_replaced_paragraphs || !settings.detect_moves {
+        return;
+    }
+    if settings.word_platform == WordPlatform::Windows {
         return;
     }
     let unit_is_table = |u: &ComparisonUnit| match u {
@@ -488,10 +516,15 @@ fn promote_skip_ahead_equals_inner(
 ///   independently;
 /// - M117: length ratio ≥ 0.90 and Jaccard threshold ≥ 0.97;
 /// - M118: drop all pending moves when an expansion-thrash shape fires
-///   (≥ 12 pending, ≥ 8 near-exact pairs, del/ins char size ratio ≥ 2).
+///   (≥ 12 pending, ≥ 8 near-exact pairs, del/ins char size ratio ≥ 2),
+///   unless under [`WordPlatform::Windows`] every candidate is a
+///   relocation (arthrod/jubarte#156).
 ///
 /// Production dispatches to the memoized path; the per-block text features
 /// are computed once instead of re-extracted per (deleted × inserted) pair.
+/// [`detect_moves_reference`], the test-only oracle for that path, keeps
+/// M118 without the Windows exception: the two agree on every setting but
+/// this one.
 pub fn detect_moves_in_atom_list(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -513,6 +546,34 @@ struct BlockText {
     tokens: HashSet<String>,
     /// `text.chars().count()` — the M118 size-ratio operand.
     chars: usize,
+}
+
+/// Whether an `Equal` atom lies between a deleted block and an inserted
+/// one in the flat atom list: unchanged content separates the two, so the
+/// inserted block stands elsewhere than the deleted one did.
+fn unchanged_separates(
+    atoms: &[ComparisonUnitAtom],
+    deleted: &AtomBlock,
+    inserted: &AtomBlock,
+) -> bool {
+    let (Some(&d_first), Some(&d_last), Some(&i_first), Some(&i_last)) = (
+        deleted.atoms.first(),
+        deleted.atoms.last(),
+        inserted.atoms.first(),
+        inserted.atoms.last(),
+    ) else {
+        return false;
+    };
+    let between = if d_last < i_first {
+        &atoms[d_last + 1..i_first]
+    } else if i_last < d_first {
+        &atoms[i_last + 1..d_first]
+    } else {
+        return false;
+    };
+    between
+        .iter()
+        .any(|a| a.correlation_status == CorrelationStatus::Equal)
 }
 
 fn precompute_block(
@@ -565,6 +626,9 @@ fn jaccard_precomputed(a: &BlockText, b: &BlockText) -> f64 {
 /// value — `dw`, `iw`, `sim`, `del_chars`, `ins_chars`, iteration order, the
 /// greedy `matched` set, `pending`, the M118 decision, and the final retag — is
 /// bit-for-bit what the reference computes. Proven by `memoized_matches_reference`.
+/// The one divergence is M118's Windows exception (arthrod/jubarte#156),
+/// which the reference does not model;
+/// `windows_keeps_relocations_through_the_expansion_drop` pins it.
 fn detect_moves_memoized(
     dom: &Dom,
     atoms: &mut [ComparisonUnitAtom],
@@ -662,8 +726,6 @@ fn detect_moves_memoized(
             );
         }
     }
-    // M118: expansion thrash — drop all pending when many near-exact matches +
-    // size-skewed del/ins text.
     let near_exact = pending.iter().filter(|(_, _, s)| *s >= 0.999).count();
     let del_chars: usize = del_info.iter().map(|b| b.chars).sum();
     let ins_chars: usize = ins_info.iter().map(|b| b.chars).sum();
@@ -676,7 +738,29 @@ fn detect_moves_memoized(
             pending.len()
         );
     }
-    if pending.len() >= 12 && near_exact >= 8 && size_ratio >= 2.0 {
+    // M118: expansion thrash — drop all pending when many near-exact matches +
+    // size-skewed del/ins text.
+    //
+    // arthrod/jubarte#156: Windows Word marks a block it moved. When every
+    // candidate is a relocation — an `Equal` atom stands between each
+    // deleted block and the inserted one it pairs with, so none is a
+    // paragraph replaced where it stood — there is no thrash to drop, and
+    // the revision merely grew elsewhere (file_8 → file_9: the cut block
+    // reappears at the tail with a second capability matrix, 46 `moveFrom`
+    // in Windows Word's redline).
+    let expansion = pending.len() >= 12 && near_exact >= 8 && size_ratio >= 2.0;
+    let thrash = expansion
+        && !(settings.word_platform == WordPlatform::Windows
+            && pending
+                .iter()
+                .all(|&(di, ii, _)| unchanged_separates(atoms, &deleted[di], &inserted[ii])));
+    if debug && expansion && !thrash {
+        eprintln!(
+            "[moves] thrash drop withheld: {} candidates, all relocations (Windows)",
+            pending.len()
+        );
+    }
+    if thrash {
         if debug {
             eprintln!(
                 "[moves] thrash drop (expansion): pending={} near_exact={near_exact} size_ratio={size_ratio:.2}",
@@ -963,6 +1047,154 @@ mod memoized_moves_tests {
         let mut a_memo = base.clone();
         detect_moves_memoized(&dom, &mut a_memo, &settings);
         assert_eq!(sig(&a_ref), sig(&a_memo), "memoized must match reference");
+    }
+
+    /// A paragraph of `text`, one atom a word and its mark last, every
+    /// atom of `status`.
+    fn paragraph(dom: &mut Dom, text: &str, status: CorrelationStatus) -> Vec<ComparisonUnitAtom> {
+        let mut atoms = Vec::new();
+        for word in text.split_whitespace() {
+            let e = dom.new_element(W::t());
+            dom.set_value(e, &format!("{word} "));
+            atoms.push(atom(e, status));
+        }
+        let ppr = dom.new_element(W::p_pr());
+        atoms.push(atom(ppr, status));
+        atoms
+    }
+
+    fn clause(k: usize) -> String {
+        format!("Relocated clause number {k} carries enough words for the detector to see it")
+    }
+
+    fn fresh(k: usize) -> String {
+        format!("Brand new paragraph number {k} says what the original never held at all")
+    }
+
+    /// The `(id, text)` of each move group on one side.
+    fn moves_of(
+        dom: &Dom,
+        atoms: &[ComparisonUnitAtom],
+        status: CorrelationStatus,
+    ) -> Vec<(u32, String)> {
+        let mut out: Vec<(u32, String)> = Vec::new();
+        for a in atoms.iter().filter(|a| a.correlation_status == status) {
+            let text = dom.value_str(a.content_element).to_string();
+            match out.last_mut() {
+                Some((id, texts)) if *id == a.move_group_id.unwrap_or(0) => {
+                    if dom.name_is(a.content_element, &W::t()) {
+                        texts.push_str(&text);
+                    }
+                }
+                _ => out.push((a.move_group_id.unwrap_or(0), text)),
+            }
+        }
+        out
+    }
+
+    /// arthrod/jubarte#156: M118 drops every candidate when many
+    /// near-exact pairs come with del/ins text skewed 2:1, the shape of an
+    /// expansion. Windows Word marks a block it moved, and a candidate
+    /// whose deleted block an `Equal` atom separates from the inserted one
+    /// it pairs with is that block, not a paragraph replaced where it
+    /// stood: when every candidate is one, the drop is withheld under
+    /// `WordPlatform::Windows` alone. One candidate replaced in place
+    /// keeps the drop.
+    #[test]
+    fn windows_keeps_relocations_through_the_expansion_drop() {
+        let windows = WmlComparerSettings::new(super::super::CompareMode::WordWindows);
+        let mac = WmlComparerSettings::default();
+        assert_eq!(mac.word_platform, WordPlatform::Mac);
+        let mut dom = Dom::new();
+        let keep = dom.new_element(W::t());
+        dom.set_value(keep, "kept ");
+        let (relocated, expansion) = (14usize, 40usize);
+        let relocated_atoms = {
+            let mut atoms = Vec::new();
+            for k in 0..relocated {
+                atoms.extend(paragraph(&mut dom, &clause(k), CorrelationStatus::Deleted));
+            }
+            atoms.push(atom(keep, CorrelationStatus::Equal));
+            for k in 0..relocated {
+                atoms.extend(paragraph(&mut dom, &clause(k), CorrelationStatus::Inserted));
+            }
+            atoms
+        };
+        let expansion_atoms = |dom: &mut Dom| {
+            let mut atoms = Vec::new();
+            for k in 0..expansion {
+                atoms.extend(paragraph(dom, &fresh(k), CorrelationStatus::Inserted));
+            }
+            atoms
+        };
+
+        // The shape of M118: 14 near-exact candidates, four times the
+        // text on the inserted side.
+        let mut base = relocated_atoms.clone();
+        base.extend(expansion_atoms(&mut dom));
+        let mut a_mac = base.clone();
+        detect_moves_memoized(&dom, &mut a_mac, &mac);
+        assert!(
+            a_mac
+                .iter()
+                .all(|a| a.correlation_status != CorrelationStatus::MovedSource),
+            "the word preset drops the expansion"
+        );
+        let mut a_ref = base.clone();
+        detect_moves_reference(&dom, &mut a_ref, &windows);
+        assert!(
+            a_ref
+                .iter()
+                .all(|a| a.correlation_status != CorrelationStatus::MovedSource),
+            "the reference keeps M118 as it was"
+        );
+        let mut a_windows = base.clone();
+        detect_moves_memoized(&dom, &mut a_windows, &windows);
+        let sources = moves_of(&dom, &a_windows, CorrelationStatus::MovedSource);
+        let destinations = moves_of(&dom, &a_windows, CorrelationStatus::MovedDestination);
+        assert_eq!(sources.len(), relocated, "every relocated clause moves");
+        assert_eq!(destinations.len(), relocated);
+        for (k, ((id, text), (back, copy))) in sources.iter().zip(&destinations).enumerate() {
+            assert_eq!(id, back, "a clause and its copy share a move");
+            assert_eq!(*id as usize, k + 1);
+            assert_eq!(text, &format!("{} ", clause(k)));
+            assert_eq!(copy, text);
+        }
+        assert_eq!(
+            a_windows
+                .iter()
+                .filter(|a| a.correlation_status == CorrelationStatus::Equal)
+                .count(),
+            1
+        );
+
+        // A clause replaced where it stood — its copy right behind it,
+        // nothing kept between — is the thrash M118 means: one such
+        // candidate brings the drop back for all.
+        for in_place in [relocated - 1, 0] {
+            let mut base = Vec::new();
+            for k in 0..relocated {
+                base.extend(paragraph(&mut dom, &clause(k), CorrelationStatus::Deleted));
+                if k == in_place {
+                    base.extend(paragraph(&mut dom, &clause(k), CorrelationStatus::Inserted));
+                }
+            }
+            base.push(atom(keep, CorrelationStatus::Equal));
+            for k in 0..relocated {
+                if k != in_place {
+                    base.extend(paragraph(&mut dom, &clause(k), CorrelationStatus::Inserted));
+                }
+            }
+            base.extend(expansion_atoms(&mut dom));
+            let mut a_windows = base.clone();
+            detect_moves_memoized(&dom, &mut a_windows, &windows);
+            assert!(
+                a_windows
+                    .iter()
+                    .all(|a| a.correlation_status != CorrelationStatus::MovedSource),
+                "in_place={in_place}: a clause replaced in place keeps the drop"
+            );
+        }
     }
 
     /// Thousands of seeded-random deleted/inserted/equal runs over a small,
@@ -1560,6 +1792,54 @@ mod source_paragraph_promotion_boundary_tests {
             ];
             check(&dom, [aroot, broot], &a, &b, sequences, false, &settings);
         }
+    }
+
+    /// arthrod/jubarte#156: Windows Word keeps a heading and the table
+    /// under it `Equal` when a deleted gap opens in front of them, so
+    /// under `WordPlatform::Windows` the promotion leaves the sequences
+    /// alone; the `word` preset, Mac Word 16's, promotes the same ones.
+    #[test]
+    fn windows_word_keeps_the_run_after_a_deleted_gap() {
+        let mut dom = Dom::new();
+        let settings = WmlComparerSettings::default();
+        let suffix = format!(
+            "{}{}",
+            paragraph("Capability matrix heading"),
+            table("Table source payload")
+        );
+        let (aroot, a) = source(
+            &mut dom,
+            &format!(
+                "{}{}{suffix}",
+                paragraph("Existing agreed prefix"),
+                paragraph("Independent removed provision")
+            ),
+            &settings,
+        );
+        let (broot, b) = source(
+            &mut dom,
+            &format!("{}{suffix}", paragraph("Existing agreed prefix")),
+            &settings,
+        );
+        let sequences = vec![
+            equal(vec![a[0].clone()], vec![b[0].clone()]),
+            CorrelatedSequence::deleted(vec![a[1].clone()]),
+            equal(vec![a[2].clone()], vec![b[1].clone()]),
+            equal(vec![a[3].clone()], vec![b[2].clone()]),
+        ];
+        let windows = WmlComparerSettings::new(super::super::CompareMode::WordWindows);
+        assert_eq!(windows.word_platform, WordPlatform::Windows);
+        check(
+            &dom,
+            [aroot, broot],
+            &a,
+            &b,
+            sequences.clone(),
+            false,
+            &windows,
+        );
+        assert_eq!(settings.word_platform, WordPlatform::Mac);
+        check(&dom, [aroot, broot], &a, &b, sequences, true, &settings);
     }
 }
 
