@@ -230,7 +230,7 @@ fn a_later_revised_block_protects_the_long_intro_checklist_boundary() {
         };
         let input = lead.clone() + &intro + &first + &rest + &bridge + &after + TABLE;
         let (mut dom, root, body) = package(&input);
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         let expected = if keep {
             input
         } else {
@@ -243,7 +243,7 @@ fn a_later_revised_block_protects_the_long_intro_checklist_boundary() {
         };
         assert_body(&dom, body, &expected, label);
         let once = semantic(&dom, root);
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         assert_eq!(semantic(&dom, root), once, "repeat {label}");
     }
 }
@@ -337,7 +337,7 @@ fn a_short_residual_label_does_not_steal_long_bookmark_or_heading_properties() {
         let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
         let input = first.clone() + &second + &last + &old + &tail + section;
         let (mut dom, root, body) = package(&input);
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         let expected = if keep {
             input
         } else {
@@ -359,7 +359,7 @@ fn a_short_residual_label_does_not_steal_long_bookmark_or_heading_properties() {
         };
         assert_body(&dom, body, &expected, label);
         let once = semantic(&dom, root);
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         assert_eq!(semantic(&dom, root), once, "repeat {label}");
     }
 }

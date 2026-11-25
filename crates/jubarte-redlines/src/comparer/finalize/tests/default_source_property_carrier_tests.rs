@@ -97,7 +97,7 @@ fn related_one_to_one_pairs_keep_the_exact_default_or_structural_source_carrier(
             let old = format!("<w:p>{old_props}{original_body}</w:p>");
             let new = format!("<w:p>{new_props}{revised_body}</w:p>");
             let (mut dom, _, body) = package(&(old + &new + TABLE));
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             // M88's independent carrier cases: revised structural spacing
             // owns the mixed p; otherwise old structural spacing/heading
             // owns it; otherwise the revised default carrier is retained.
@@ -115,7 +115,7 @@ fn related_one_to_one_pairs_keep_the_exact_default_or_structural_source_carrier(
                 &format!("default D/I {old_kind}/{new_kind}"),
             );
             let once = semantic(&dom, body);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             assert_eq!(semantic(&dom, body), once);
         }
     }
@@ -155,7 +155,7 @@ fn a_sole_original_closes_multi_inserted_default_paragraphs_without_inventing_pr
             let old = format!("<w:p>{old_props}{original_body}</w:p>");
             let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
             let (mut dom, _, body) = package(&(old + &lead + &new + section));
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             let expected_properties = if original_kind == "heading" {
                 old_props
             } else {
@@ -174,7 +174,7 @@ fn a_sole_original_closes_multi_inserted_default_paragraphs_without_inventing_pr
                 &format!("sole original {original_kind}/{closing_kind}"),
             );
             let once = semantic(&dom, body);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             assert_eq!(semantic(&dom, body), once);
         }
     }

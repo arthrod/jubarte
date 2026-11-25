@@ -378,7 +378,7 @@ fn passes() -> Vec<Pass> {
             },
         ),
         ("merge_replaced_paragraphs_in", |dom, root| {
-            merge_replaced_paragraphs_in(dom, root, "Editor", true);
+            merge_replaced_paragraphs_in(dom, root, "Editor", true, false);
         }),
         ("residual_short_label_zip_with_settings", |dom, root| {
             residual_short_label_zip_with_settings(
