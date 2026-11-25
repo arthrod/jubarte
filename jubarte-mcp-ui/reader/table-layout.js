@@ -54,8 +54,10 @@ function pictureLines(lines,inner,block,{reach=0,first=0,rest=0,maxHeight=Infini
  const flush=()=>{if(!current.length)return;const ranges=current.map(r=>r.pmRange),tall=current.reduce((n,r)=>Math.max(n,r.picture?.drawHeight??0),0);out.push({...lines[0],runs:current,width:x,pictureHeight:tall,pmRange:{from:Math.min(...ranges.map(r=>r.from)),to:Math.max(...ranges.map(r=>r.to))}});current=[];x=rest;};
  for(const r of runs){
   if(!r.picture){if(!current.length&&!r.text.trim()&&out.length)continue;current.push({...r,x});x+=r.width||0;continue;}
-  if(current.some(c=>c.picture)&&x+r.picture.widthPx>edge+0.001)flush();
-  const scale=Math.min(1,Math.max(1,edge-x)/r.picture.widthPx,Math.max(1,maxHeight)/r.picture.heightPx),width=r.picture.widthPx*scale;
+  // A picture too tall for the frame is first scaled to it; only then does it take its room on the line (#125).
+  const tall=Math.min(1,Math.max(1,maxHeight)/r.picture.heightPx);
+  if(current.some(c=>c.picture)&&x+r.picture.widthPx*tall>edge+0.001)flush();
+  const scale=Math.min(tall,Math.max(1,edge-x)/r.picture.widthPx),width=r.picture.widthPx*scale;
   current.push({...r,x,width,picture:{...r.picture,drawWidth:width,drawHeight:r.picture.heightPx*scale}});x+=width;
  }
  flush();return out;}
@@ -162,7 +164,8 @@ export function composeWithTables(snapshot,runtime,input){
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
  // `reach`: how far a picture may run past the column, as Word lets a body picture run into the right margin.
- function composeLines(blocks,w,reach=0){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w+'+'+reach+'^'+height;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
+ // cap: the tallest a picture line may be, the frame's height unless the caller's area is another (#125).
+ function composeLines(blocks,w,reach=0,cap=height){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w+'+'+reach+'^'+cap;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[],at=0,prev=null;
   for(const block of blocks){if(prev&&block.attrs?.first!==false&&!block.attrs?.spacer)at+=pairGap(prev,block);if(!block.attrs?.spacer)prev=block;const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
@@ -171,7 +174,7 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // A line Word breaks at a soft hyphen shows a hyphen there; mid-line ones stay invisible (#89).
    lines=lines.map((line,i)=>{if(i===lines.length-1)return line;const k=line.runs.findLastIndex(r=>r.text);const run=line.runs[k];if(!run?.text.endsWith('\u00ad'))return line;const runs=[...line.runs];runs[k]={...run,text:run.text.slice(0,-1)+'-',width:(run.width||0)+glyphWidth('-',run.font)-glyphWidth('\u00ad',run.font)};return {...line,runs};});
-   if(pictureOnly(block)&&lines.length){const box=block.attrs?.lineBox,set=box?.advance??lh,below=box?.baseline==null?0:set-box.baseline;lines=pictureLines(lines,inner,block,{reach,first:ind.first,rest:ind.rest,maxHeight:height-below});}
+   if(pictureOnly(block)&&lines.length){const box=block.attrs?.lineBox,set=box?.advance??lh,below=box?.baseline==null?0:set-box.baseline;lines=pictureLines(lines,inner,block,{reach,first:ind.first,rest:ind.rest,maxHeight:cap-below});}
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;

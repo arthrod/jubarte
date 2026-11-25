@@ -68,6 +68,19 @@ describe("createPictureLoader", () => {
     expect(n).toBe(3);
   });
 
+  it("asks again after the server refused a file changed since its preview (#125)", async () => {
+    let n = 0;
+    const load = createPictureLoader(async () =>
+      n++ === 0
+        ? { isError: true, content: [{ type: "text", text: "a.docx changed since its preview" }] }
+        : image("QUJD"),
+    );
+    const pic = { path: "a.docx", view: "tracked", sha256: "s", id: "image1" };
+    expect(await load(pic)).toBeNull();
+    expect(await load(pic)).toBe("data:image/png;base64,QUJD");
+    expect(n).toBe(2);
+  });
+
   it("refuses a mime type the server did not say is an image", async () => {
     const load = createPictureLoader(async () => image("PHN2Zz4=", "text/html"));
     expect(await load({ path: "p", view: "tracked", sha256: "s", id: "image1" })).toBeNull();

@@ -62,3 +62,9 @@ test('a drawing comment wins over the stand-in\'s raster size, and code is text 
  assert.deepEqual(got.get('image1'),{widthPx:100,heightPx:100,inline:true});
  assert.equal(got.has('image2'),false);
 });
+
+test('a stand-in size no raster has leaves the picture a chip (#125)',()=>{
+ const body=`[image1]: <image/png, 1 KB, ${'9'.repeat(400)}x30 px>\n[image2]: <image/png, 1 KB, 0x30 px>\n[image3]: <image/png, 1 KB, 40x0 px>\n`;
+ const got=pictureExtents(body);
+ assert.equal(got.size,0,JSON.stringify([...got]));
+});

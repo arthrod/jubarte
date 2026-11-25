@@ -7,8 +7,11 @@
 // flood the host, and each document, view and picture is asked once. The
 // answer is a data: URL, which the spec's default img-src allows. The ask carries the
 // preview's sha256, so a file changed since is refused, not cached under the old hash (#122).
+// A failure is kept, so a broken picture is not asked for again, except that
+// refusal: the file may be put back, and then the same ask succeeds (#125).
 
 const IMAGE = /^image\/[\w.+-]+$/;
+const STALE = /changed since its preview/;
 
 /** `call` is the host bridge's callServerTool. */
 export function createPictureLoader(call) {
@@ -23,6 +26,7 @@ export function createPictureLoader(call) {
             name: "docx_image",
             arguments: { path, id, view, ...(sha256 ? { sha256 } : {}) },
           });
+          if (res?.isError && res.content?.some((c) => STALE.test(c.text ?? ""))) cache.delete(key);
           const image = !res?.isError && res?.content?.find((c) => c.type === "image");
           return image && IMAGE.test(image.mimeType) && image.data
             ? `data:${image.mimeType};base64,${image.data}`

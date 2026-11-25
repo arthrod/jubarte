@@ -1403,6 +1403,22 @@ describe("pictures take their extent on the page (#95)", () => {
     expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).picture).toMatchObject({ drawWidth: 40, drawHeight: 30 });
     done();
   });
+  it("a picture too tall for the frame is scaled before it takes its room on the line (#125)", () => {
+    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 100)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 1000, 10000)}`);
+    const { composed, done } = compose(md);
+    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    expect(b.y).toBe(a.y);
+    expect(composed.layout.pages.length).toBe(1);
+    const tall = b.runs.find((r) => r.picture?.id === "image2").picture;
+    expect(tall.drawWidth / tall.drawHeight).toBeCloseTo(0.1, 6);
+    done();
+  });
+  it("a footnote picture fits a later section's shorter frame (#125)", () => {
+    const md = `---\nview: tracked\npage: Letter portrait, margins 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top 3in, right 1in, bottom 3in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: ![PICALT][image1]\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}\n`;
+    let view;
+    expect(() => (view = compose(md))).not.toThrow();
+    view.done();
+  });
   it("a commented picture still opens its discussion by mouse and keyboard (#122)", () => {
     const md = doc("<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
     const { container, done } = compose(md);

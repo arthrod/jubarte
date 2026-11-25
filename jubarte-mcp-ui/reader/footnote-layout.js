@@ -59,15 +59,19 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
  });
  const wrap = note => {
-  note.lines = composeLines(note.blocks, width);
+  note.lines = composeLines(note.blocks, width, 0, height);
   // An empty definition is still a visible labelled note.
   if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, advance: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
  };
  for (const note of notes.values()) wrap(note);
- // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119).
- const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
- labelHeight = Math.min(labelHeight, Math.max(0, height - tallest));
- separator = Math.min(separator, Math.max(0, height - tallest - labelHeight));
+ // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119),
+ // and is fitted again when a section brings another frame (#125).
+ const fitDecoration = () => {
+  const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
+  labelHeight = Math.min(20, Math.max(0, height - lineHeight), Math.max(0, height - tallest));
+  separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight), Math.max(0, height - tallest - labelHeight));
+ };
+ fitDecoration();
  let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
  // A note's lines take their own heights (#102): Word sets footnote text in its own style.
@@ -184,7 +188,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  // The lines already drawn stay as they were; only the text not yet shown is
  // wrapped again, from its first character (#50), so nothing repeats.
  setGeometry(geometry) {
-  const rewrap = Math.abs(geometry.width - width) > 0.001;
+  // A shorter frame rewraps too: a picture line capped to the old one may not fit it (#125).
+  const rewrap = Math.abs(geometry.width - width) > 0.001 || Math.abs(geometry.height - height) > 0.001;
   width = geometry.width; height = geometry.height;
   if (!rewrap) return;
   for (const note of notes.values()) {
@@ -192,9 +197,10 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    if (!carried) { wrap(note); continue; }
    const from = note.lines[carried.offset]?.pmRange?.from;
    if (!Number.isFinite(from)) continue;
-   const rest = composeLines(clipBlocks(note.blocks, from), width);
+   const rest = composeLines(clipBlocks(note.blocks, from), width, 0, height);
    note.lines = [...note.lines.slice(0, carried.offset), ...rest];
   }
+  fitDecoration();
  },
   get hasPending() { return pending.length > 0; },
   get enabled() { return notes.size > 0 || sourceRuns.size > 0; }};

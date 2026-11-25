@@ -38,6 +38,8 @@ export function pictureExtents(body){
  for(const m of body.matchAll(DEFINITION)){
   if(out.has(m[1])||code.some(r=>m.index>=r.start&&m.index<r.end))continue;
   const w=Number(m[2]),h=Number(m[3]),scale=Math.min(1,MAX_WIDTH_PX/w);
+  // A size no raster has (zero, or too many digits to be a number) leaves the stand-in a chip (#125).
+  if(!(w>0&&h>0&&Number.isFinite(w)&&Number.isFinite(h)))continue;
   out.set(m[1],{widthPx:w*scale,heightPx:Math.max(1/EMU_PER_PX,h*scale),inline:true});
  }
  return out;
