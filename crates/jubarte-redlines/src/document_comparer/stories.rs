@@ -1157,7 +1157,74 @@ pub(super) fn mark_a_only_hf_content_as_deleted(
         if needs_unmerged_section_story_cleanup(settings) && !whole_story && !final_only {
             continue;
         }
+        // #155: when the original has several sections, Windows Word 2024
+        // takes the result's headers/footers from the revised document, so
+        // an A-only story is dropped untracked — the part emptied, no
+        // `w:ins`/`w:del` (15 of 18 redline_600 references). With a single
+        // section it keeps Mac Word 16's pure-D diff (68 of 68), so that
+        // shape stays. Slots B shares keep the compared shape.
+        if settings.word_platform == WordPlatform::Windows && section_count > 1 {
+            empty_a_only_hf_content_for_windows(out, part);
+            continue;
+        }
         mark_hf_part_content_as_deleted(out, part, settings, whole_story);
+    }
+}
+
+/// #155 — empty an A-only header/footer part for `--mode word-windows`:
+/// Windows Word 2024 carries the revised document's (empty) slots, so the
+/// original's story leaves no text and no revision marks. The part keeps a
+/// single blank paragraph in the kind's own style, which Accept All and
+/// Reject All both read as empty.
+pub(super) fn empty_a_only_hf_content_for_windows(out: &mut PartFs, part: &str) {
+    let Some(xml) = out.part_string(part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(doc) else {
+        return;
+    };
+    let own_style = if dom.name(root) == Some(W::ftr()) {
+        "Footer"
+    } else {
+        "Header"
+    };
+    for child in dom.elements(root, None) {
+        dom.remove(child);
+    }
+    let p = dom.new_element(W::p());
+    let ppr = dom.new_element(W::p_pr());
+    let style = dom.new_element(W::p_style());
+    dom.set_attribute_value(style, &W::val(), Some(own_style));
+    dom.add(ppr, style);
+    dom.add(p, ppr);
+    dom.add(root, p);
+    out.set_part(part, dom.serialize_element(root).into_bytes());
+}
+
+/// #155 — mark a B-only header/footer story as inserted for
+/// `--mode word-windows`: Windows Word 2024 wraps the revised story's runs
+/// in `w:ins` with inserted paragraph marks. Parts the adopt pass copied
+/// already carry that wrap; parts the main-document reconcile carried over
+/// live (a mid-section break B inserts) skipped it, and Mac Word keeps them
+/// untracked. Already-marked parts stay untouched.
+pub(super) fn mark_b_only_hf_content_as_inserted_for_windows(
+    out: &mut PartFs,
+    pkg1: &PartFs,
+    pkg2: &PartFs,
+    settings: &WmlComparerSettings,
+) {
+    let mut parts: Vec<String> = a_only_header_footer_parts(pkg2, pkg1).into_iter().collect();
+    parts.sort();
+    for part in parts {
+        let Some(xml) = out.part_string(&part) else {
+            continue;
+        };
+        if crate::revision_processor::xml_has_tracked_revisions(&xml) {
+            continue;
+        }
+        mark_adopted_hf_content_as_inserted(out, &part, settings);
     }
 }
 
