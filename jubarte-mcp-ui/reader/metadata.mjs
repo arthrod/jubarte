@@ -103,7 +103,9 @@ function parseCellGroups(value) {
   const flat = value.match(/^(p\d+(?:-p?\d+)?)\s+by\s+row$/i);
   if (flat) return {order: 'row', paragraphRange: paragraphRange(flat[1])};
   const groups = [];
-  const pattern = /r(\d+)\s+((?:p\d+(?:-p?\d+)?(?:\s+|$))+)/g;
+  // `r1 p5 p6` names each cell of a row; the engine's `t0.row1 p5-p11` names the row's
+  // paragraphs as one range when its cells do not hold one paragraph each (agent.rs cells).
+  const pattern = /(?:r|t\d+\.row)(\d+)\s+((?:p\d+(?:-p?\d+)?(?:\s+|$))+)/g;
   let cursor = 0;
   let match;
   while ((match = pattern.exec(value))) {

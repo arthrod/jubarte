@@ -33,9 +33,10 @@ describe("buildSnapshot", () => {
     expect(typeSize({ paragraphProperties: { fontSizePt: 9 } }, false)).toBe(12);
   });
 
-  it("keeps table cells inside the 29px row grid until rows take Word's heights", () => {
-    expect(typeSize({}, true)).toBe(14);
-    expect(typeSize({ fontSizePt: 10 }, true)).toBe(40 / 3);
-    expect(typeSize({ fontSizePt: 6 }, true)).toBe(9);
+  it("draws table cells at Word's size too, now that rows take Word's heights (#102)", () => {
+    expect(typeSize({}, true, 11)).toBeCloseTo(44 / 3, 6);
+    expect(typeSize({ fontSizePt: 10 }, true, 12)).toBeCloseTo(40 / 3, 6);
+    expect(typeSize({ fontSizePt: 6 }, true)).toBe(8);
+    expect(typeSize({ fontSizePt: 24 }, true)).toBe(32);
   });
 });
