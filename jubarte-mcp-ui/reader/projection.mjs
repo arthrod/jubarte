@@ -179,6 +179,8 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
   // Paragraph ids count Word cells too: a span's covered columns hold none.
   if(d.cells?.paragraphRange){let id=d.cells.paragraphRange.start;for(const row of table.children)for(const cell of row.children.filter(c=>!c.spanCovered)){if(id<=d.cells.paragraphRange.end){cell.agentId='p'+id++;cell.paragraphIds=[cell.agentId]}}}
   for(const rowGroup of d.cells?.rows||[]){const row=table.children[rowGroup.row];if(!row)continue;rowGroup.paragraphRanges.forEach((r,i)=>{const cell=row.children.filter(c=>!c.spanCovered)[i];if(cell)cell.paragraphIds=Array.from({length:r.end-r.start+1},(_,n)=>'p'+(r.start+n))})}
+  // A cell's paragraphs' own spacing (#101), as their size above.
+  if(d.cellSpacings?.length)for(const row of table.children)for(const cell of row.children){const ids=(cell.paragraphIds||[]).map(id=>Number(id.slice(1)));const group=d.cellSpacings.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(group)cell.cellSpacing=group.spacing}
   if(d.cellSizes?.length)for(const row of table.children)for(const cell of row.children){const ids=(cell.paragraphIds||[]).map(id=>Number(id.slice(1)));const size=d.cellSizes.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(size)cell.fontSizePt=size.points}
  }
  // Apply the browser-expressible portion of the style legend; preserve everything else as metadata.
