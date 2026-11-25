@@ -887,6 +887,22 @@ def test_raster_size_reads_png_gif_bmp_and_jpeg_headers() -> None:
     assert _raster_size("image/x-emf", b64(_png(7))) is None
 
 
+def test_raster_size_skips_jpeg_fill_bytes_and_reads_core_bmp_headers() -> None:
+    # #125: a marker may follow any number of 0xFF fill bytes (ITU T.81 B.1.1.2),
+    # and an OS/2 core BMP (12-byte BITMAPCOREHEADER) holds 16-bit sizes.
+    import base64
+    import struct
+
+    from jubarte.mcp_server import _raster_size
+
+    b64 = lambda raw: base64.b64encode(raw).decode()  # noqa: E731
+    sof = b"\xff\xc2" + struct.pack(">HBHH", 17, 8, 30, 40) + b"\x00" * 12
+    app = b"\xff\xe0" + struct.pack(">H", 16) + b"J" * 14
+    assert _raster_size("image/jpeg", b64(b"\xff\xd8\xff" + app + b"\xff\xff" + sof)) == (40, 30)
+    core = b"BM" + struct.pack("<IHHI", 26, 0, 0, 26) + struct.pack("<IHHHH", 12, 40, 30, 1, 24)
+    assert _raster_size("image/bmp", b64(core)) == (40, 30)
+
+
 def test_docx_image_refuses_a_document_changed_since_its_preview(tmp_path: Path) -> None:
     # #122: the card caches a picture under the preview's sha256; bytes from a
     # changed file must not land under the old hash.

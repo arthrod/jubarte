@@ -154,11 +154,19 @@ def _raster_size(mime: str, payload: str) -> tuple[int, int] | None:
     elif mime == "image/gif" and raw[:4] == b"GIF8" and len(raw) >= 10:
         size = struct.unpack("<HH", raw[6:10])
     elif mime == "image/bmp" and raw[:2] == b"BM" and len(raw) >= 26:
-        width, height = struct.unpack("<ii", raw[18:26])
-        size = (abs(width), abs(height))
+        # An OS/2 core header (12 bytes) holds 16-bit sizes; the later ones 32-bit, signed (#125).
+        if struct.unpack("<I", raw[14:18])[0] == 12:
+            size = struct.unpack("<HH", raw[18:22])
+        else:
+            width, height = struct.unpack("<ii", raw[18:26])
+            size = (abs(width), abs(height))
     elif mime == "image/jpeg" and raw[:2] == b"\xff\xd8":
         at = 2
         while at + 9 <= len(raw) and raw[at] == 0xFF:
+            # Any number of 0xFF fill bytes may come before a marker (ITU T.81 B.1.1.2, #125).
+            if raw[at + 1] == 0xFF:
+                at += 1
+                continue
             marker, length = raw[at + 1], struct.unpack(">H", raw[at + 2 : at + 4])[0]
             if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
                 height, width = struct.unpack(">HH", raw[at + 5 : at + 9])
