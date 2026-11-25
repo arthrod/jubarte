@@ -99,8 +99,14 @@ include-workspace = true
 allow-build-scripts = [
     "ahash",
     "alloca",
+    # Bench-only (dev-dependencies of the CodSpeed criterion layer).
+    # codspeed compiles CodSpeed's instrument-hooks C file with cc; the
+    # other two are cfg or rustc probes.
+    "anyhow",
     "cap-primitives",
     "cap-std",
+    "codspeed",
+    "codspeed-criterion-compat",
     # zip 9.4.2 (fuzz graph) depends on this crate. Its build script only
     # sets rustc cfgs.
     "constant_time_eq",

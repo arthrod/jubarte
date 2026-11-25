@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: CodSpeed
+
+# The criterion benches (benches/*.rs) measured by CodSpeed on every pull
+# request and on main, which records the baseline pull requests compare
+# against. Two instruments: CPU simulation (deterministic instruction
+# counts, flame graphs) on a GitHub-hosted runner, and wall time on
+# CodSpeed's bare-metal macro runner. Actions are pinned to commit SHAs as
+# in ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets CodSpeed start a run by hand, to backfill a baseline.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmarks:
+    name: benchmarks (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: simulation
+            runner: ubuntu-latest
+          - mode: walltime
+            runner: codspeed-macro
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      # OIDC authentication with CodSpeed: no token secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Two bench pairs read documents kept outside git, fetched as in ci.yml.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
+      - name: fetch the test documents kept outside git
+        shell: bash
+        run: python3 scripts/fetch_fixtures.py || python scripts/fetch_fixtures.py
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: codspeed-${{ matrix.mode }}
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: cargo-codspeed
+      - name: build the benches
+        run: cargo codspeed build -m ${{ matrix.mode }}
+      - name: run the benches
+        uses: CodSpeedHQ/action@b1f28b5eccf7cb5bfe6a2a89cb3053eb67f1150c # v5.8.0
+        with:
+          mode: ${{ matrix.mode }}
+          run: cargo codspeed run
