@@ -50,7 +50,9 @@ pub use jubarte_opc::{admission, opc, strict_translation};
 // A5 shims: the floors' modules under the names the moved code uses, so
 // `crate::<module>::…` paths compile unchanged.
 pub(crate) use jubarte_dom::{limits, ooxml, perf, unid, util};
-pub(crate) use jubarte_opc::{builtin_styles, markup_simplifier, validate_dom, word_default_theme};
+pub(crate) use jubarte_opc::{
+    builtin_styles, markup_simplifier, settings, validate_dom, word_default_theme,
+};
 
 /// The comparison core: atomizing, matching, and the redline writer.
 pub mod comparer;
