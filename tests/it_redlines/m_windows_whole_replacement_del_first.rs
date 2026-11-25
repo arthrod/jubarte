@@ -17,10 +17,10 @@
 //! base that ends on an empty paragraph as well. Two other shapes are not
 //! among them. A replacement whose last inserted paragraph folds into its
 //! first deleted one is still written insertions first:
-//! `merge_replaced_paragraphs_in` writes Mac Word's order there again. And
-//! where the shortcut pairs words inside a paragraph (the stamped demos), the
-//! reorder puts a paragraph's deleted words ahead of its kept ones, so
-//! Accept All and Reject All no longer read as their sources.
+//! `merge_replaced_paragraphs_in` writes Mac Word's order there again. Where
+//! the shortcut pairs words inside a paragraph, the reorder stays between
+//! two kept words, so Accept All and Reject All still read as the two
+//! documents.
 
 use std::io::{Cursor, Read};
 
@@ -341,5 +341,36 @@ fn the_two_orders_accept_and_reject_to_the_same_text() {
         let word = redline(&pair.original, &pair.revised, CompareMode::Word);
         let windows = redline(&pair.original, &pair.revised, CompareMode::WordWindows);
         assert_eq!(views(&word), views(&windows), "{}", pair.name);
+    }
+}
+
+/// A pair the whole-replacement shortcut takes while pairing words inside
+/// its paragraphs: two one-page demos whose titles and sentences share a
+/// few words (the shape of bench pair `file_139` against `file_140`).
+/// Windows Word 2024 keeps each paragraph's shared words in place there,
+/// so a deletion never moves past a kept word: Reject All still reads as
+/// the original and Accept All as the revision.
+#[test]
+fn windows_keeps_a_paired_paragraphs_words_in_place() {
+    const ORIGINAL: [&str; 4] = [
+        "file_139.docx",
+        "Heading 3 Style Demo",
+        "This document demonstrates Heading 3 paragraph style.",
+        "Heading 3 provides a third level of document hierarchy.",
+    ];
+    const REVISED: [&str; 4] = [
+        "file_140.docx",
+        "Font Size 12 Demo",
+        "This document demonstrates font size 12 point text.",
+        "Size 12 is a standard readable font size for documents.",
+    ];
+    let original = package(&ORIGINAL, false, false);
+    let revised = package(&REVISED, false, false);
+    for mode in [CompareMode::Word, CompareMode::WordWindows] {
+        let out = redline(&original, &revised, mode);
+        let (accepted, rejected) = views(&out);
+        assert_eq!(rejected, ORIGINAL.concat(), "{mode:?}: Reject All");
+        assert_eq!(accepted, REVISED.concat(), "{mode:?}: Accept All");
+        crate::common::validity::assert_word_valid_package(&out);
     }
 }
