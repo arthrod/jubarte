@@ -1311,12 +1311,22 @@ describe("pictures take their extent on the page (#95)", () => {
     expect(lineOf(composed, "BELOW").y - line.y).toBeCloseTo(200 + BELOW + 8 * PX, 2);
     done();
   });
-  it("a picture wider than the column is scaled down to it, keeping its shape", () => {
+  it("a picture a little wider than the column keeps its extent, into the right margin, as Word draws it", () => {
+    // 074's chart: 691px in a 672px column; Word draws it 691px wide (#95).
+    const { composed, done } = compose(PICTURE(700, 360));
+    const run = lineOf(composed, "PICALT").runs.find((r) => r.picture);
+    expect(composed.layout.pages[0].frames[0].bounds.width).toBeLessThan(700);
+    expect(run.picture.drawWidth).toBe(700);
+    expect(run.picture.drawHeight).toBe(360);
+    done();
+  });
+  it("a picture wider than the paper is scaled down to reach its edge, keeping its shape", () => {
     const { composed, done } = compose(PICTURE(2000, 400));
     const run = lineOf(composed, "PICALT").runs.find((r) => r.picture);
-    const column = composed.layout.pages[0].frames[0].bounds.width;
-    expect(run.picture.drawWidth).toBeCloseTo(column, 1);
-    expect(run.picture.drawHeight).toBeCloseTo((400 * column) / 2000, 1);
+    const frame = composed.layout.pages[0].frames[0].bounds;
+    const reach = 816; // Letter paper, 8.5in at 96dpi
+    expect(run.picture.drawWidth).toBeCloseTo(reach - frame.x, 1);
+    expect(run.picture.drawHeight).toBeCloseTo((400 * (reach - frame.x)) / 2000, 1);
     done();
   });
   it("a floating picture, or one inside a line of text, stays a chip at the text's height", () => {

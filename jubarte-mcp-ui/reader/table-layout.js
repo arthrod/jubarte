@@ -46,8 +46,8 @@ export function fitTable(textMins,width,maxWidth){
 /** A paragraph holding only pictures (and drawing chips) as Word sets it: one line, each
  * picture at its extent, scaled down together when they pass the column (#95). */
 export function pictureOnly(block){const runs=block.runs||[];return runs.some(r=>r.picture)&&runs.every(r=>r.image||!r.text.trim());}
-function pictureLine(lines,inner,block){const source=new Map((block.runs||[]).map(r=>[r.id,r])),runs=[];for(const line of lines)for(const drawn of line.runs){const picture=source.get(drawn.runId)?.picture,run=picture?{...drawn,picture}:drawn;const last=runs[runs.length-1];if(run.picture&&last?.picture?.id===run.picture.id&&last.pmRange.to===run.pmRange.from){runs[runs.length-1]={...last,text:last.text+run.text,pmRange:{from:last.pmRange.from,to:run.pmRange.to}};continue;}runs.push(run);}
- const fixed=runs.reduce((n,r)=>n+(r.picture?0:r.width||0),0),wide=runs.reduce((n,r)=>n+(r.picture?.widthPx||0),0),scale=wide>0?Math.min(1,Math.max(1,inner-fixed)/wide):1;
+function pictureLine(lines,inner,block,reach=0){const source=new Map((block.runs||[]).map(r=>[r.id,r])),runs=[];for(const line of lines)for(const drawn of line.runs){const picture=source.get(drawn.runId)?.picture,run=picture?{...drawn,picture}:drawn;const last=runs[runs.length-1];if(run.picture&&last?.picture?.id===run.picture.id&&last.pmRange.to===run.pmRange.from){runs[runs.length-1]={...last,text:last.text+run.text,pmRange:{from:last.pmRange.from,to:run.pmRange.to}};continue;}runs.push(run);}
+ const fixed=runs.reduce((n,r)=>n+(r.picture?0:r.width||0),0),wide=runs.reduce((n,r)=>n+(r.picture?.widthPx||0),0),scale=wide>0?Math.min(1,Math.max(1,inner+reach-fixed)/wide):1;
  let x=0,tall=0;const placed=runs.map(r=>{const width=r.picture?r.picture.widthPx*scale:r.width||0,out={...r,x,width,...(r.picture?{picture:{...r.picture,drawWidth:width,drawHeight:r.picture.heightPx*scale}}:{})};x+=width;if(r.picture)tall=Math.max(tall,r.picture.heightPx*scale);return out;});
  const ranges=runs.map(r=>r.pmRange);return {...lines[0],runs:placed,width:x,pictureHeight:tall,pmRange:{from:Math.min(...ranges.map(r=>r.from)),to:Math.max(...ranges.map(r=>r.to))}};}
 
@@ -152,7 +152,8 @@ export function composeWithTables(snapshot,runtime,input){
   return {shift,right:px(p.right),first:Math.max(0,left+first-shift),rest:Math.max(0,left-shift)};}
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
- function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
+ // `reach`: how far a picture may run past the column, as Word lets a body picture run into the right margin.
+ function composeLines(blocks,w,reach=0){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w+'+'+reach;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
   let result=[],at=0,prev=null;
   for(const block of blocks){if(prev&&block.attrs?.first!==false&&!block.attrs?.spacer)at+=pairGap(prev,block);if(!block.attrs?.spacer)prev=block;const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
@@ -161,7 +162,7 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // A line Word breaks at a soft hyphen shows a hyphen there; mid-line ones stay invisible (#89).
    lines=lines.map((line,i)=>{if(i===lines.length-1)return line;const k=line.runs.findLastIndex(r=>r.text);const run=line.runs[k];if(!run?.text.endsWith('\u00ad'))return line;const runs=[...line.runs];runs[k]={...run,text:run.text.slice(0,-1)+'-',width:(run.width||0)+glyphWidth('-',run.font)-glyphWidth('\u00ad',run.font)};return {...line,runs};});
-   if(pictureOnly(block)&&lines.length)lines=[pictureLine(lines,inner,block)];
+   if(pictureOnly(block)&&lines.length)lines=[pictureLine(lines,inner,block,reach)];
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
@@ -227,7 +228,7 @@ export function composeWithTables(snapshot,runtime,input){
  // lines (all of them when it keeps its lines) or a table's first row. A paragraph's manual
  // breaks made it several blocks; they count together. When the group fits a page but not what
  // is left of this one, with the note band its own lines reserve, the page breaks before it.
- function paragraphAt(k){const b=snapshot.blocks[k];if(!b||b.type==='table'||b.attrs?.spacer)return null;const lines=[];let j=k;do{lines.push(...composeLines([snapshot.blocks[j]],width));j++;}while(b.attrs?.paragraph!=null&&snapshot.blocks[j]?.attrs?.paragraph===b.attrs.paragraph&&!snapshot.blocks[j].attrs?.spacer);return{block:b,lines,end:j};}
+ function paragraphAt(k){const b=snapshot.blocks[k];if(!b||b.type==='table'||b.attrs?.spacer)return null;const lines=[];let j=k;do{lines.push(...composeLines([snapshot.blocks[j]],width,margins.rightPx));j++;}while(b.attrs?.paragraph!=null&&snapshot.blocks[j]?.attrs?.paragraph===b.attrs.paragraph&&!snapshot.blocks[j].attrs?.spacer);return{block:b,lines,end:j};}
  // The table's first rows that must stay together: up to the first row foot no cell spans past (#119).
  function firstRowGroup(g){for(let k=1;k<g.rowTops.length;k++)if(!g.cells.some(c=>c.rowIndex<k&&c.rowIndex+(c.rowspan||1)>k))return g.rowTops[k];return g.total;}
  function keepTogether(k){
@@ -254,7 +255,7 @@ export function composeWithTables(snapshot,runtime,input){
   if(block.type!=='table'&&block.attrs?.first!==false){const gap=y===0?(topKeeps?sidePx(block.attrs?.spacing,'before'):0):pairGap(prevPara,block);if(y>0&&y+gap>=notes.bodyLimit-0.001)newPage();else y+=gap;}
   else if(block.type==='table'&&y>0&&prevPara){const gap=sidePx(prevPara.attrs?.spacing,'after');if(y+gap>=notes.bodyLimit-0.001)newPage();else y+=gap;}
   if(block.type!=='table'&&block.attrs?.first!==false&&y>0)keepTogether(bi);
-  if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;
+  if(block.type!=='table'){const lines=composeLines([block],width,margins.rightPx);let cursor=0,fragmentIndex=0;
    while(cursor<lines.length){let fit=0,room=notes.bodyLimit-y,used=0;while(cursor+fit<lines.length&&used+advance(lines[cursor+fit])<=room+0.001)used+=advance(lines[cursor+fit++]);
     // A line taller than the page takes a page of its own (word-metrics, `overtall`).
     const forced=!fit&&y===0;if(forced)fit=1;if(!fit){newPage();continue;}const remaining=lines.length-cursor;const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
