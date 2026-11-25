@@ -102,7 +102,7 @@ fn plain() -> Vec<u8> {
 }
 
 #[test]
-fn windows_drops_base_only_header_footer_text_untracked_when_sectioned() {
+fn windows_keeps_base_only_header_footer_text_untracked_when_sectioned() {
     let original = sectioned_with_header_footer("Base header text", "Base footer text");
     let revised = docx::docx(&format!(
         r#"{}<w:p><w:pPr><w:sectPr/></w:pPr></w:p>{}"#,
@@ -116,7 +116,10 @@ fn windows_drops_base_only_header_footer_text_untracked_when_sectioned() {
         let revisions = dom.descendants(root, Some(&W::ins())).len()
             + dom.descendants(root, Some(&W::del())).len();
         assert_eq!(revisions, 0, "{name} carries no revision marks");
-        assert_eq!(text(&dom, root), "", "{name} text is gone");
+        assert!(
+            text(&dom, root).starts_with("Base "),
+            "{name} keeps the original's text"
+        );
     }
     crate::common::validity::assert_word_valid_package(&out);
 }
