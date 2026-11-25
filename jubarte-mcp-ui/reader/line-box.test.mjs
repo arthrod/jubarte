@@ -117,3 +117,17 @@ test("a run's glyph box comes from its CSS font", async () => {
   assert.ok(Math.abs(box.descent - 0.216309 * 16) < 1e-6);
   assert.equal(fontBox("bad"), null);
 });
+
+// Aptos has no twin, but its lines are as tall as Word sets them (#123): its hhea, read from the
+// subset Word embeds in its PDFs (074_docx_lots_of_comments_byword.pdf), is 1923 + 577 + 0 of
+// 2048 units, the same height as Calibri's, not the Sans class face's 1.1499 em. Word's page 3
+// of that document pitches its 10.5pt body at 20.0px (line 1.15) and its table cells at 17.3px.
+test("Aptos takes its own line height, whatever face draws its letters (#123)", () => {
+  const em = (1923 + 577) / 2048;
+  assert.ok(Math.abs(lineBox("Aptos", 10.5).height - 10.5 * em) < 1e-6);
+  assert.ok(Math.abs(lineBox("Aptos", 10.5, { line: 276 }).height - 10.5 * em * 1.15) < 1e-6);
+  assert.ok(Math.abs(lineBox("Aptos", 10.5, { line: 276 }).height * 4 / 3 - 20.0) < 0.5);
+  assert.ok(Math.abs(lineBox("Aptos", 10.5).baseline - 10.5 * 1923 / 2048) < 1e-6);
+  // The class face still measures the families it stands for.
+  assert.equal(lineBox("Verdana", 11).height, lineBox("Arial", 11).height);
+});

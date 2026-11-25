@@ -11,7 +11,8 @@
 //   - `atLeast` is the larger of the line value and single spacing.
 // The heights come from the bundled faces (face-metrics.json, written by
 // scripts/page_fonts.py): each twin has its family's metrics, and a family
-// with no twin measures with its class's face, as faces.mjs draws it.
+// with no twin measures with its class's face, as faces.mjs draws it, unless
+// FAMILY_LINES below has its own (#123).
 // Text is measured and drawn unkerned (fontKerning "none"): Word does not
 // kern by default.
 import metrics from "./face-metrics.json" with { type: "json" };
@@ -24,8 +25,20 @@ import { faceFor } from "./faces.mjs";
  *   line (in 240ths of a line for auto, twentieths of a point otherwise) and lineRule
  * @returns {{ascent: number, descent: number, height: number, baseline: number}} in points
  */
+// A source family with no twin whose line height Word's evidence gives, so its lines are as tall
+// as Word sets them whatever face draws its letters (#123). Aptos: the hhea of the subset Word
+// embeds in its PDFs (074_docx_lots_of_comments_byword.pdf), 1923 + 577 + 0 of 2048 units.
+const FAMILY_LINES = { aptos: { ascent: 1923 / 2048, descent: 577 / 2048, lineGap: 0 } };
+const familyKey = (family) =>
+  String(family ?? "")
+    .split(",")[0]
+    .replace(/["']/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+
 export function lineBox(family, sizePt, { line, rule = "auto" } = {}) {
-  const face = metrics[faceFor(family).bundled];
+  const face = FAMILY_LINES[familyKey(family)] ?? metrics[faceFor(family).bundled];
   const ascent = face.ascent * sizePt;
   const descent = face.descent * sizePt;
   const single = ascent + descent + face.lineGap * sizePt;
