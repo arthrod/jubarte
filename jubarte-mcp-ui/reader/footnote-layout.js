@@ -57,7 +57,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   });
   if (!runs.length) return [];
   // A paragraph that starts at or after the cut is whole: it keeps its first line and indent (#126).
-  if ((block.pmRange?.from ?? runs[0].pmRange?.from ?? -Infinity) >= from) return [block];
+  // The block's own start, not its clipped first run's, says whether the cut fell inside it.
+  if ((block.pmRange?.from ?? block.runs?.[0]?.pmRange?.from ?? -Infinity) >= from) return [block];
   return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
  });
  const wrap = note => {
@@ -68,13 +69,14 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  for (const note of notes.values()) wrap(note);
  // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119),
  // and is fitted again when a section brings another frame (#125).
- let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
+ let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false, live = false;
  const fitDecoration = () => {
-  // Only lines still to place count: one already drawn stays on its page (#126).
+  // Only lines still to place count: one on a finished page stays there (#126). A note the page being
+  // filled requests or holds is still to place, from the first line it holds.
   const unplaced = note => {
    if (!scheduled.has(note.id)) return note.lines;
-   const item = pending.find(part => part.id === note.id);
-   return item ? note.lines.slice(item.offset) : [];
+   const offsets = [pending, ...(live ? [requests, allocations] : [])].flatMap(items => items.filter(part => part.id === note.id).map(part => part.offset ?? 0));
+   return offsets.length ? note.lines.slice(Math.min(...offsets)) : [];
   };
   const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => unplaced(note).map(line => line.advance ?? lineHeight)));
   labelHeight = Math.min(20, Math.max(0, height - lineHeight), Math.max(0, height - tallest));
@@ -86,9 +88,9 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  const lineAt = (id, index) => notes.get(id).lines[index]?.advance ?? lineHeight;
  const span = (id, offset, count) => { let sum = 0; for (let i = 0; i < count; i++) sum += lineAt(id, offset + i); return sum; };
  const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + span(item.id, item.offset, item.count), 0) + between * (items.length - 1) : 0;
- function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active}; }
- function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; }
- function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; }
+ function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active, live}; }
+ function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; live = state.live ?? live; }
+ function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; live = true; }
  function referenceIds(lines) {
   const ids = [];
   for (const line of lines) for (const run of line.runs || []) {
@@ -186,6 +188,7 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   });
   const emitted = new Map(allocations.map(item => [item.id, item.count]));
   pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
+  live = false;
   return {band, fragments};
  }
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,
