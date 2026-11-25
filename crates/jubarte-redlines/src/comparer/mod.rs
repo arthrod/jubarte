@@ -1059,6 +1059,11 @@ pub fn try_compare_bodies_faithful_with_notes(
     // region's first deleted paragraph.
     if settings.merge_replaced_paragraphs && settings.word_platform == WordPlatform::Windows {
         finalize::windows_replaced_region_tail(dom, root);
+        // #171: the original's last paragraph, deleted in full behind a
+        // replaced tail, opens the revision's first inserted paragraph, as
+        // Windows Word writes it. Left at the end, the mid-stream splice
+        // below lifts it mid-document.
+        finalize::windows_deleted_final_paragraph_opens_replacement(dom, root);
     }
     // Match Word's replacement order. Mac Word writes the insertion (new)
     // before the deletion (old); Windows Word 2024 the deletion first
