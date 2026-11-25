@@ -19,8 +19,9 @@ export function flattenLayoutBlocks(blocks) {
 export function createFootnoteAllocator({snapshot, composeLines, width, height, lineHeight, warn}) {
  // Extremely short custom frames can still show one source line on a
  // continuation-only page. Suppress decorative label/rule spacing if needed.
- const labelHeight = Math.min(20, Math.max(0, height - lineHeight));
- const separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight));
+ // Sized again once the notes' lines are known: a note line can be taller than the default (#119).
+ let labelHeight = Math.min(20, Math.max(0, height - lineHeight));
+ let separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight));
  const between = 6;
  const notes = new Map(), sourceRuns = new Map(), missing = new Set(), nestedReferences = new Set();
  const definitions = snapshot.footnotes || [];
@@ -63,6 +64,10 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, advance: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
  };
  for (const note of notes.values()) wrap(note);
+ // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119).
+ const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
+ labelHeight = Math.min(labelHeight, Math.max(0, height - tallest));
+ separator = Math.min(separator, Math.max(0, height - tallest - labelHeight));
  let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
  // A note's lines take their own heights (#102): Word sets footnote text in its own style.

@@ -1218,3 +1218,49 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     done();
   });
 });
+
+describe("table and footnote slicing keep every line (#119, codex review of #117)", () => {
+  const head =
+    "---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 0pt, line 1\n---\n\n";
+  let composeDocument;
+  beforeAll(async () => {
+    ({ composeDocument } = await import("../reader/pagination.js"));
+  });
+  const cellTexts = (out) => out.tableFragments.flatMap((f) => f.cells.flatMap((c) => c.lines.flatMap((l) => l.runs.map((r) => r.text))));
+  it("a cell line taller than the page takes a page and the table goes on", () => {
+    const md = `${head}<!-- t0 2x1, cells p0-p1 by row, p0-p0 line 700pt exact, width auto -->\n|HUGE|\n|-|\n|AFTER|\n`;
+    const out = composeDocument(parseJubarte(md));
+    expect(cellTexts(out)).toEqual(["HUGE", "AFTER"]);
+  });
+  it("cells of different line heights lose no line at a page cut", () => {
+    const cell = (prefix) => Array.from({ length: 50 }, (_, i) => prefix + i).join("<br/>");
+    const md = `${head}<!-- t0 1x2, cells r0 p0 p1, p0-p0 line 15pt exact, p1-p1 line 22.5pt exact, width auto -->\n|${cell("A")}|${cell("B")}|\n|-|-|\n`;
+    const out = composeDocument(parseJubarte(md));
+    const drawn = cellTexts(out);
+    expect(drawn).toHaveLength(100);
+    expect(new Set(drawn).size).toBe(100);
+    // A cut crosses no line, so no line hangs past the foot of its page's slice.
+    for (const f of out.tableFragments)
+      for (const c of f.cells) for (const l of c.lines) expect(c.y + l.y + l.advance).toBeLessThanOrEqual(f.height + 0.01);
+  });
+  it("a footnote referenced from a table row is scheduled by that reference", () => {
+    const filler = Array.from({ length: 70 }, (_, i) => `<!-- p${i + 2} -->\nFILL${i}`).join("\n\n");
+    const md = `${head}<!-- t0 1x2, cells r0 p0 p1, p0-p0 line 15pt exact, p1-p1 line 22.5pt exact, width auto -->\n|A0<br/>A1|REFERENCE[^1]|\n|-|-|\n\n${filler}\n\n[^1]: NOTE\n`;
+    const out = composeDocument(parseJubarte(md));
+    expect(out.footnoteFragments[0].orphan).toBe(false);
+    expect(out.footnoteFragments[0].pageIndex).toBe(0);
+  });
+  it("a footnote line that fits the frame is laid out", () => {
+    const md =
+      head.replace("  Normal:", "  FootnoteText: Calibri 11pt, line 630pt exact\n  Normal:") +
+      "<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 FootnoteText -->\n[^1]: NOTE\n";
+    expect(() => composeDocument(parseJubarte(md))).not.toThrow();
+  });
+  it("a heading stays with a table whose first cell spans two rows", () => {
+    const md = `${head}<!-- p0 line 450pt exact -->\nLEAD\n\n<!-- p1 line 150pt exact -->\n# HEADING\n\n<!-- t0 2x1, cells p2-p2 by row, p2-p2 line 67.5pt exact, merged t0.row0.cell0 down 2, width auto -->\n|CELL|\n|-|\n||\n`;
+    const out = composeDocument(parseJubarte(md));
+    const pageOf = (word) =>
+      out.layout.pages.find((p) => p.frames[0].fragments.some((f) => f.lines.some((l) => l.runs.some((r) => r.text.includes(word))))).index;
+    expect(pageOf("HEADING")).toBe(pageOf("CELL"));
+  });
+});
