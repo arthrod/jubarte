@@ -1130,7 +1130,89 @@ fn quoted_name(name: &str) -> String {
     }
 }
 
+/// The spacing a table style's `w:pPr` gives its cells' paragraphs that
+/// the default paragraph style (through its `basedOn` chain) does not
+/// override: ECMA-376 §17.7.2 puts the table style above the document
+/// defaults and below the paragraph styles, so Normal wins where it says
+/// something and the table style wins over `w:pPrDefault` (#124). The
+/// words are `spacing_clauses`', space-joined: `after 0pt line 1`.
+fn cell_paragraph_spacing(styles: &Element, id: &str) -> Option<String> {
+    // Each spacing side's attributes: a side is set as a whole.
+    const SIDES: [&[&str]; 3] = [
+        &["before", "beforeAutospacing", "beforeLines"],
+        &["after", "afterAutospacing", "afterLines"],
+        &["line", "lineRule"],
+    ];
+    let chain = |start: Option<String>| {
+        let mut out: Vec<&Element> = Vec::new();
+        let mut current = start;
+        while let Some(sid) = current.take() {
+            if out.len() > 16 {
+                break;
+            }
+            let Some(style) = style_by_id(styles, &sid) else {
+                break;
+            };
+            if let Some(spacing) = style.path(&["pPr", "spacing"]) {
+                out.push(spacing);
+            }
+            current = style
+                .child("basedOn")
+                .and_then(|b| b.attr("val"))
+                .map(str::to_string);
+        }
+        out
+    };
+    let table = chain(Some(id.to_string()));
+    let normal = chain(
+        styles
+            .children_named("style")
+            .find(|s| {
+                s.attr("type") == Some("paragraph")
+                    && matches!(s.attr("default"), Some("1" | "true" | "on"))
+            })
+            .and_then(|s| s.attr("styleId"))
+            .map(str::to_string),
+    );
+    let mut attrs = Vec::new();
+    for side in SIDES {
+        if normal
+            .iter()
+            .any(|spacing| side.iter().any(|a| spacing.attr(a).is_some()))
+        {
+            continue;
+        }
+        // The nearest style in the chain that sets the side gives all of it.
+        if let Some(spacing) = table
+            .iter()
+            .find(|spacing| side.iter().any(|a| spacing.attr(a).is_some()))
+        {
+            for a in side {
+                if let Some(v) = spacing.attr(a) {
+                    attrs.push(((*a).to_string(), v.to_string()));
+                }
+            }
+        }
+    }
+    let spacing = Element {
+        name: "w:spacing".to_string(),
+        attrs,
+        children: Vec::new(),
+        namespaces: std::sync::Arc::default(),
+    };
+    let words = super::agent::spacing_clauses(&spacing);
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 fn table_style_line(styles: Option<&Element>, id: &str) -> String {
+    let line = table_style_borders_line(styles, id);
+    match styles.and_then(|s| cell_paragraph_spacing(s, id)) {
+        Some(spacing) => format!("{line}, cell paragraphs {spacing}"),
+        None => line,
+    }
+}
+
+fn table_style_borders_line(styles: Option<&Element>, id: &str) -> String {
     // The style's name, when it is not the one the writer would give the
     // id (`9` is named `Normal Table`, `TableGrid0` `TableGrid`, #528).
     let named = styles

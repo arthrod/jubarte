@@ -626,8 +626,13 @@ fn words_older_table_styles_get_their_own_names() {
     // the second legend says them (`borders vary`) where the document's
     // bare definitions said nothing: the plural legend tells the truth
     // about the docx it describes (#549).
+    // Word's definitions give cell paragraphs no space after and single
+    // lines, which the bare ones did not, and the legend says so (#124).
     assert!(
-        second.contains("tables: MediumList2, borders vary, LightShading-Accent1, borders vary"),
+        second.contains(
+            "tables: MediumList2, borders vary, cell paragraphs after 0pt line 1, \
+             LightShading-Accent1, borders vary, cell paragraphs after 0pt line 1"
+        ),
         "{second}"
     );
 }
@@ -705,7 +710,19 @@ fn a_named_built_in_table_style_keeps_the_documents_name() {
         "{definition}"
     );
     assert!(!definition.contains("Grid Table 2"), "{definition}");
-    assert_eq!(second, first);
+    // Word's Grid Table 2 tightens its cell paragraphs, which the bare
+    // definition did not: the second legend says so, and nothing else
+    // changes (#124).
+    assert!(
+        second.contains(
+            "table: GridTable2, borders vary, named My Grid, cell paragraphs after 0pt line 1"
+        ),
+        "{second}"
+    );
+    assert_eq!(
+        second.replace(", cell paragraphs after 0pt line 1", ""),
+        first
+    );
 }
 
 /// A table style's name that holds the `named` separator or a comma
@@ -824,7 +841,16 @@ fn a_table_style_whose_borders_vary_names_each_side() {
         ),
         "{written}"
     );
-    assert_eq!(second, first);
+    // Only Word's Grid Table 2 tightens its cell paragraphs (#124); the
+    // document's own styles keep theirs.
+    assert!(
+        second.contains("GridTable2, borders vary, cell paragraphs after 0pt line 1, TableGrid"),
+        "{second}"
+    );
+    assert_eq!(
+        second.replace(", cell paragraphs after 0pt line 1", ""),
+        first
+    );
 }
 
 /// Harvested from `cell_border_groups_that_share_a_cell_all_reach_it`
@@ -910,6 +936,52 @@ fn border_shadow_and_frame_come_back() {
     assert_eq!(
         cell_borders(&document)[0].as_deref(),
         Some("<w:bottom w:val=\"double\" w:sz=\"4\" w:space=\"0\" w:shadow=\"1\"/>")
+    );
+    assert_eq!(second, first);
+}
+
+/// A table style's `w:pPr` spacing reaches its cells' paragraphs above the
+/// document defaults and below Normal (ECMA-376 §17.7.2), so the legend
+/// says what Normal leaves to it (`cell paragraphs after 0pt line 1`) and
+/// the writer puts it back in the style (#124).
+#[test]
+fn a_table_style_carries_the_spacing_it_gives_cell_paragraphs() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:before="60"/></w:pPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/></w:style><w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/><w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style><w:style w:type="table" w:styleId="Plain"><w:name w:val="Plain"/><w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:before="120"/></w:pPr></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let body = format!(
+        "{}<w:p/>{}",
+        table(r#"<w:tblStyle w:val="Ledger"/>"#),
+        table(r#"<w:tblStyle w:val="Plain"/>"#)
+    );
+    let docx = common::docx::docx_with(&body, &parts);
+    let (first, again, second) = round_trip(&docx);
+    // Normal's own `before` wins over Ledger's, so the legend leaves it
+    // out; Plain gives nothing Normal does not override.
+    assert!(
+        first.contains(
+            "tables: Ledger, borders bottom double 0.75pt, cell paragraphs after 0pt line 1, Plain"
+        ),
+        "{first}"
+    );
+    let written = part(&again, "word/styles.xml");
+    let ledger = written
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"Ledger\""))
+        .unwrap_or_else(|| panic!("no Ledger: {written}"));
+    assert!(
+        ledger.contains(
+            r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr>"#
+        ),
+        "{ledger}"
     );
     assert_eq!(second, first);
 }

@@ -632,7 +632,7 @@ fn border_sides(clause: &str) -> Option<Vec<BorderSide>> {
 
 /// The legend's `table:` style, which every table takes: its id, the
 /// borders its entry states and the name it gives the style.
-pub(super) fn table_style(yaml: &str) -> Option<(String, Option<TableBorders>, Option<String>)> {
+pub(super) fn table_style(yaml: &str) -> Option<(String, TableLook)> {
     legend_line(yaml, "table: ")
         .as_deref()
         .and_then(table_style_entry)
@@ -642,16 +642,14 @@ pub(super) fn table_style(yaml: &str) -> Option<(String, Option<TableBorders>, O
 /// The `tables:` legend's entries, keyed by their style id: the styles of
 /// a document whose tables differ, each with the border and the name its
 /// entry states.
-pub(super) fn table_legend(
-    yaml: &str,
-) -> std::collections::BTreeMap<String, (Option<TableBorders>, Option<String>)> {
+pub(super) fn table_legend(yaml: &str) -> std::collections::BTreeMap<String, TableLook> {
     let mut out = std::collections::BTreeMap::new();
     let Some(value) = legend_line(yaml, "tables: ") else {
         return out;
     };
     let mut rest = value.as_str();
-    while let Some(((id, border, name), next)) = table_style_entry(rest) {
-        out.insert(id, (border, name));
+    while let Some(((id, look), next)) = table_style_entry(rest) {
+        out.insert(id, look);
         rest = next;
     }
     out
@@ -682,13 +680,19 @@ fn legend_line(yaml: &str, key: &str) -> Option<String> {
 /// its id, the border it states and the name it gives the style, with
 /// the rest of the line after it (the `tables:` legend holds one entry
 /// per style). A clause that is none of the grammar's ends the entry.
-type TableStyleEntry = (String, Option<TableBorders>, Option<String>);
+/// What a legend entry says of a table style: its borders, its name, and
+/// the spacing it gives its cells' paragraphs (`cell paragraphs after 0pt
+/// line 1`, #124) as `w:spacing` attributes.
+pub(crate) type TableLook = (Option<TableBorders>, Option<String>, Option<String>);
+
+type TableStyleEntry = (String, TableLook);
 
 fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
     let (id, mut rest) = take_clause(value);
     let id = unquote(id.trim()).filter(|id| !id.is_empty())?;
     let mut border = None;
     let mut name = None;
+    let mut cells = None;
     while !rest.is_empty() {
         let (clause, next) = take_clause(rest);
         if border.is_none()
@@ -709,12 +713,72 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
                 .and_then(|named| unquote(named.trim()))
         {
             name = Some(named);
+        } else if cells.is_none()
+            && let Some(attrs) = clause
+                .strip_prefix("cell paragraphs ")
+                .and_then(cell_spacing_attrs)
+        {
+            cells = Some(attrs);
         } else if clause != "borders vary" {
-            return Some(((id, border, name), rest));
+            return Some(((id, (border, name, cells)), rest));
         }
         rest = next;
     }
-    Some(((id, border, name), ""))
+    Some(((id, (border, name, cells)), ""))
+}
+
+/// The `w:spacing` attributes of a `cell paragraphs` clause's words, the
+/// ones `spacing_clauses` writes (`before 6pt`, `after auto`, `before 1.5
+/// lines`, `line 1.15`, `line 12pt exact`): None unless every word reads.
+fn cell_spacing_attrs(words: &str) -> Option<String> {
+    let words: Vec<&str> = words.split_whitespace().collect();
+    let mut attrs = String::new();
+    let mut at = 0;
+    while at < words.len() {
+        let value = *words.get(at + 1)?;
+        match words[at] {
+            side @ ("before" | "after") if value == "auto" => {
+                let _ = write!(attrs, " w:{side}Autospacing=\"1\"");
+                at += 2;
+            }
+            side @ ("before" | "after") if words.get(at + 2) == Some(&"lines") => {
+                let count: f64 = value.parse().ok().filter(|c: &f64| c.is_finite())?;
+                if !(0.0..=100.0).contains(&count) {
+                    return None;
+                }
+                let _ = write!(
+                    attrs,
+                    " w:{side}Lines=\"{}\"",
+                    (count * 100.0).round() as u32
+                );
+                at += 3;
+            }
+            side @ ("before" | "after") => {
+                let twips = points(value, 20.0)?;
+                let _ = write!(attrs, " w:{side}=\"{twips}\"");
+                at += 2;
+            }
+            "line" => match words.get(at + 2) {
+                Some(rule @ (&"exact" | &"atLeast")) => {
+                    let twips = points(value, 20.0)?;
+                    let _ = write!(attrs, " w:line=\"{twips}\" w:lineRule=\"{rule}\"");
+                    at += 3;
+                }
+                _ => {
+                    let ratio: f64 = value.parse().ok()?;
+                    if !(ratio.is_finite() && (0.0..=132.0).contains(&ratio)) {
+                        return None;
+                    }
+                    // `as` cannot overflow: the bound is checked first.
+                    let line = (ratio * 240.0).round() as u32;
+                    let _ = write!(attrs, " w:line=\"{line}\" w:lineRule=\"auto\"");
+                    at += 2;
+                }
+            },
+            _ => return None,
+        }
+    }
+    (!attrs.is_empty()).then_some(attrs)
 }
 
 /// The value's first `, `-separated clause, a quoted one whole (a `"`
@@ -2206,6 +2270,44 @@ mod branch_tests {
         assert_eq!(unquote("\"bad"), None);
     }
 
+    /// A legend entry's `cell paragraphs` clause is the spacing its
+    /// style's `w:pPr` gives cell paragraphs, in `spacing_clauses`' words,
+    /// and no new style id (#124).
+    #[test]
+    fn a_table_entry_carries_its_cell_paragraph_spacing() {
+        let yaml = "styles:\n  tables: A, borders vary, cell paragraphs after 0pt line 1, B, cell paragraphs before auto after 1.5 lines line 12pt exact, C, cell paragraphs line 18pt atLeast\n";
+        let legend = table_legend(yaml);
+        let keys: Vec<&str> = legend.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["A", "B", "C"]);
+        assert_eq!(
+            legend["A"].2.as_deref(),
+            Some(" w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"")
+        );
+        assert_eq!(
+            legend["B"].2.as_deref(),
+            Some(
+                " w:beforeAutospacing=\"1\" w:afterLines=\"150\" w:line=\"240\" w:lineRule=\"exact\""
+            )
+        );
+        assert_eq!(
+            legend["C"].2.as_deref(),
+            Some(" w:line=\"360\" w:lineRule=\"atLeast\"")
+        );
+        for bad in [
+            "after",
+            "after 0",
+            "after 0pt line",
+            "line 1.5x",
+            "line 200",
+            "after -1pt",
+            "after 0pt extra",
+            "before 101 lines",
+            "",
+        ] {
+            assert_eq!(cell_spacing_attrs(bad), None, "{bad}");
+        }
+    }
+
     #[test]
     fn table_legends_read_borders_names_and_stop_at_unknown_clauses() {
         assert_eq!(
@@ -2248,13 +2350,16 @@ mod branch_tests {
             table_style(yaml),
             Some((
                 "Grid".to_string(),
-                Some(TableBorders::All(12)),
-                Some("My, Grid".to_string())
+                (
+                    Some(TableBorders::All(12)),
+                    Some("My, Grid".to_string()),
+                    None
+                )
             ))
         );
         assert_eq!(
             table_style("styles:\n  table: \"Q, named Z\"\n"),
-            Some(("Q".to_string(), None, Some("Z".to_string())))
+            Some(("Q".to_string(), (None, Some("Z".to_string()), None)))
         );
         let legend = table_legend(yaml);
         let keys: Vec<&str> = legend.keys().map(String::as_str).collect();

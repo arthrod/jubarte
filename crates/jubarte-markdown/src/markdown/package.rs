@@ -817,13 +817,13 @@ fn word_name(name: &str) -> String {
 /// with the legend's border all round when it gives one.
 fn with_table_styles(
     styles: &str,
-    wanted: &BTreeMap<String, (Option<TableBorders>, Option<String>)>,
+    wanted: &BTreeMap<String, super::view_styles::TableLook>,
     theme: &str,
 ) -> String {
     let missing: String = wanted
         .iter()
         .filter(|(id, _)| !styles.contains(&format!("w:styleId=\"{}\"", escape(id))))
-        .map(|(id, (border, name))| {
+        .map(|(id, (border, name, cells))| {
             if let Some(style) = built_in_table_style(id, theme) {
                 // The legend's `named` renames even Word's own template:
                 // the document renamed the built-in, and the name is its
@@ -839,13 +839,18 @@ fn with_table_styles(
                     table_border_sides(border)
                 )
             });
+            // The legend's `cell paragraphs` spacing, which CT_Style puts
+            // before the table properties (#124).
+            let cells = cells.as_ref().map_or_else(String::new, |attrs| {
+                format!("<w:pPr><w:spacing{attrs}/></w:pPr>")
+            });
             let name = name
                 .clone()
                 .or_else(|| word_table_style_name(id))
                 .unwrap_or_else(|| id.clone());
             format!(
                 "<w:style w:type=\"table\" w:styleId=\"{id}\"><w:name w:val=\"{name}\"/>\
-                 <w:basedOn w:val=\"TableNormal\"/>{borders}</w:style>",
+                 <w:basedOn w:val=\"TableNormal\"/>{cells}{borders}</w:style>",
                 id = escape(id),
                 name = escape(&word_name(&name))
             )
