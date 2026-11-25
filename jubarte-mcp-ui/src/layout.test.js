@@ -1267,6 +1267,20 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     expect(lines[1].y - lines[0].y).toBeCloseTo(1.220703 * 10 * PX, 2);
     done();
   });
+  // Word ends the band with the note's own space after, and parts a note's paragraphs by
+  // their spacing alone: no 29px spacer line (006_input: the card ran a page longer).
+  it("a footnote takes its paragraphs' spacing, not a 29px spacer after each", () => {
+    const one = compose(`${head()}<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: NOTE\n`);
+    const [single] = one.composed.footnoteFragments;
+    const label = single.lines[0].y;
+    expect(single.height - label).toBeCloseTo(NORMAL + 8 * PX, 2);
+    one.done();
+    const two = compose(`${head()}<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: FIRST\n\n    SECOND\n`);
+    const lines = two.composed.footnoteFragments[0].lines.filter((l) => l.runs.some((r) => r.text?.trim()));
+    expect(lines.map((l) => l.runs.map((r) => r.text).join("").trim())).toEqual(["FIRST", "SECOND"]);
+    expect(lines[1].y - lines[0].y).toBeCloseTo(NORMAL + 8 * PX, 2);
+    two.done();
+  });
 });
 
 describe("table and footnote slicing keep every line (#119, codex review of #117)", () => {
