@@ -1504,9 +1504,11 @@ fn run_format(dom: &Dom, run: NodeId) -> Format {
         dom.element(rpr, &W::name(local))
             .is_some_and(|el| !matches!(dom.attribute(el, &W::val()), Some("false" | "0" | "off")))
     };
+    // Word draws no line for a `w:u` without `w:val` (#97).
     let underline = dom
         .element(rpr, &W::name("u"))
-        .is_some_and(|u| dom.attribute(u, &W::val()).is_none_or(|v| v != "none"));
+        .and_then(|u| dom.attribute(u, &W::val()))
+        .is_some_and(|v| v != "none");
     let highlight = dom
         .element(rpr, &W::name("highlight"))
         .and_then(|h| dom.attribute(h, &W::val()))
@@ -1557,6 +1559,26 @@ mod tests {
             source_sha256(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    /// Word draws no line for a `w:u` without `w:val`, coloured or not
+    /// (#97); `single` draws one and `none` none.
+    #[test]
+    fn a_w_u_with_no_val_is_no_underline() {
+        for (u, underlined) in [
+            (r#"<w:u w:color="000000"/>"#, false),
+            ("<w:u/>", false),
+            (r#"<w:u w:val="none"/>"#, false),
+            (r#"<w:u w:val="single"/>"#, true),
+            (r#"<w:u w:val="double"/>"#, true),
+        ] {
+            let mut dom = Dom::new();
+            let doc = dom.parse_xdocument(&format!(
+                r#"<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:rPr>{u}</w:rPr><w:t>x</w:t></w:r>"#
+            ));
+            let run = dom.root(doc).expect("the run parses");
+            assert_eq!(run_format(&dom, run).underline, underlined, "{u}");
+        }
     }
 
     #[test]

@@ -2132,9 +2132,11 @@ fn is_monospace(font: &str) -> bool {
         || FACES.contains(&font.as_str())
 }
 
-/// `w:u` underlines unless its value is `none`.
+/// `w:u` underlines when it names a kind other than `none`. Word draws no
+/// line for a `w:u` without `w:val` (#97), which Pages writes with only a
+/// colour.
 fn is_underlined(u: &Element) -> bool {
-    u.attr("val").is_none_or(|v| v != "none")
+    u.attr("val").is_some_and(|v| v != "none")
 }
 
 fn num_pr(numpr: &Element) -> Option<(String, usize)> {

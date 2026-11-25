@@ -128,3 +128,87 @@ fn a_w_u_with_no_val_is_no_line() {
     let line = legend(&markdown, "Emph");
     assert!(!line.contains("underline"), "{line}");
 }
+
+/// A body paragraph: a plain word, then `marked` in a run with `rpr`.
+fn run_with(rpr: &str, marked: &str) -> String {
+    format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">plain </w:t></w:r><w:r><w:rPr>{rpr}</w:rPr><w:t>{marked}</w:t></w:r></w:p>"#
+    )
+}
+
+/// Word draws no line for a `w:u` without `w:val`, with a colour or
+/// without one (#97, `.scratch/r97`); `single` draws one and `none` none.
+#[test]
+fn a_run_s_w_u_with_no_val_is_no_line() {
+    let body = [
+        run_with(r#"<w:u w:color="000000"/>"#, "coloured"),
+        run_with("<w:u/>", "empty"),
+        run_with(r#"<w:u w:val="single"/>"#, "single"),
+        run_with(r#"<w:u w:val="none"/>"#, "none"),
+    ]
+    .concat();
+    let markdown = view(&common::docx::docx(&body));
+    for plain in ["coloured", "empty", "none"] {
+        assert!(
+            !markdown.contains(&format!("<u>{plain}</u>")),
+            "{plain}:\n{markdown}"
+        );
+        assert!(markdown.contains(plain), "{plain} is read:\n{markdown}");
+    }
+    assert!(markdown.contains("<u>single</u>"), "{markdown}");
+}
+
+/// The same for a character style's `w:u`.
+#[test]
+fn a_character_style_s_w_u_with_no_val_is_no_line() {
+    let w = common::docx::W_NS;
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{w}"><w:style w:type="character" w:styleId="Bare"><w:name w:val="Bare"/><w:rPr><w:u w:color="000000"/></w:rPr></w:style><w:style w:type="character" w:styleId="Lined"><w:name w:val="Lined"/><w:rPr><w:u w:val="single"/></w:rPr></w:style></w:styles>"#
+    );
+    let body = [
+        run_with(r#"<w:rStyle w:val="Bare"/>"#, "bare"),
+        run_with(r#"<w:rStyle w:val="Lined"/>"#, "lined"),
+    ]
+    .concat();
+    let markdown = view(&common::docx::docx_with(
+        &body,
+        &[common::docx::Part {
+            name: "word/styles.xml",
+            content_type: STYLES_CT,
+            rel_type: STYLES_REL,
+            xml: &styles,
+        }],
+    ));
+    assert!(!markdown.contains("<u>bare</u>"), "{markdown}");
+    assert!(markdown.contains("<u>lined</u>"), "{markdown}");
+}
+
+/// And for a run in a header, whose marks print as tags too.
+#[test]
+fn a_header_run_s_w_u_with_no_val_is_no_line() {
+    let header = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="{}" xmlns:r="{}">{}{}</w:hdr>"#,
+        common::docx::W_NS,
+        common::docx::R_NS,
+        run_with(r#"<w:u w:color="000000"/>"#, "bare"),
+        run_with(r#"<w:u w:val="single"/>"#, "lined"),
+    );
+    let docx = common::docx::docx_with_sect(
+        "<w:p><w:r><w:t>Body.</w:t></w:r></w:p>",
+        &[common::docx::Part {
+            name: "word/header1.xml",
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml",
+            rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header",
+            xml: &header,
+        }],
+        r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#,
+    );
+    let markdown = view(&docx);
+    assert!(
+        markdown.contains("lined"),
+        "the header is read:\n{markdown}"
+    );
+    assert!(!markdown.contains("<u>bare</u>"), "{markdown}");
+    assert!(markdown.contains("<u>lined</u>"), "{markdown}");
+}
