@@ -262,7 +262,9 @@ js-sys = { version = "0.3", default-features = false }
 # bundled schema from disk and use this validator only to confirm
 # parse_expectations and the bundled schema agree on accept/reject.
 jsonschema = { version = "0.61", default-features = false }
-criterion = "0.8"
+# Criterion API through the CodSpeed compatibility layer: plain `cargo bench`
+# runs Criterion as usual; `cargo codspeed` builds measure with CodSpeed.
+criterion = { package = "codspeed-criterion-compat", version = "6.1.0" }
 # Round-trip validation of produced .docx files in integration tests; only the
 # `parts` feature (= dep:zip) is built.
 # 0.15.0 requires zip ^9.2.2 (RUSTSEC-2026-0367/-0368/-0369, GHSA-m665-v7pm-7grj),
@@ -355,4 +357,8 @@ tempfile = { workspace = true }
 
 [[bench]]
 name = "redline"
+harness = false
+
+[[bench]]
+name = "document"
 harness = false

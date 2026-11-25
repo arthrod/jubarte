@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: CodSpeed
+
+# Runs the Criterion benchmarks in benches/ under CodSpeed's CPU simulation
+# and uploads the results: each pull request gets a report against main.
+# Simulation counts instructions instead of timing them, so a shared
+# GitHub-hosted runner gives stable numbers; it needs no self-hosted runner.
+# Third-party actions are pinned to commit SHAs, as in ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Lets CodSpeed run the benchmarks on demand for a commit.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmarks:
+    name: benchmarks (simulation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      # CodSpeed authenticates the upload with OIDC: no token secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Some benchmark documents come from a Hugging Face dataset, as in
+      # ci.yml. Without them the benchmarks that read them are skipped.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tests/corpus/broken_ones_two
+            tests/corpus/batch_to_fix/pairs/03_eigenpal_docx_editor_suggesting_mixed_edits_employee_directory_table_2
+          key: hf-fixtures-${{ hashFiles('tests/corpus/hf_fixtures.sha256') }}
+          enableCrossOsArchive: true
+      - name: fetch the test documents kept outside git
+        run: python3 scripts/fetch_fixtures.py
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, pinned 2026-10-01
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@72f835688cb6c15903b796f704b01e652a2b8835 # pinned 2026-10-01
+        with:
+          tool: cargo-codspeed
+      - name: build the benchmarks
+        run: cargo codspeed build -m simulation
+      - name: run the benchmarks
+        uses: CodSpeedHQ/action@b1f28b5eccf7cb5bfe6a2a89cb3053eb67f1150c # v5.8.0
+        with:
+          mode: simulation
+          run: cargo codspeed run
