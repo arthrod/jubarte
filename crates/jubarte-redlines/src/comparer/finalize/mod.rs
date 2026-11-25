@@ -29,6 +29,7 @@ use crate::namespaces::{M, MC, PT, R, W, W14, WP14};
 use crate::xmllinq::{Dom, NodeId, XName, XNamespace};
 
 use super::WmlComparerSettings;
+use super::WordPlatform;
 use super::formatchg;
 use super::lcs_table;
 use super::tables::ALLOWABLE_RUN_CHILDREN;

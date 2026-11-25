@@ -363,7 +363,7 @@ fn paired_body_tail_stays_separate_but_nested_stories_still_fold() {
             document(&format!("{pair}<w:{container}>{pair}</w:{container}>"));
         let outer = paragraphs(&dom, body);
         let nested = dom.element(body, &W::name(container)).unwrap();
-        merge_replaced_paragraphs_in(&mut dom, root, "Editor", true, false);
+        merge_replaced_paragraphs_in(&mut dom, root, "Editor", true);
         assert_eq!(paragraphs(&dom, body), outer);
         expect_segments(&dom, outer[0], &[("ins", "shared new")]);
         expect_segments(&dom, outer[1], &[("del", "shared old")]);
@@ -394,7 +394,7 @@ fn shared_title_head_junction_precedes_remaining_inserted_stream() {
     let (mut dom, root, body) = document(&fragment);
     let old = paragraphs(&dom, body);
     let expected_props = props_xml(&dom, old[5]);
-    merge_replaced_paragraphs_in(&mut dom, root, "Editor", true, false);
+    merge_replaced_paragraphs_in(&mut dom, root, "Editor", true);
     assert_eq!(paragraphs(&dom, body), old[..5]);
     expect_segments(
         &dom,
@@ -480,7 +480,7 @@ fn story_tail_fusion_stops_at_page_breaks_section_breaks_and_live_tables() {
             para("del", "Base title", dp)
         ));
         let before = dom.serialize_element(root);
-        merge_replaced_paragraphs_in(&mut dom, root, "Editor", paired, false);
+        merge_replaced_paragraphs_in(&mut dom, root, "Editor", paired);
         assert_eq!(dom.serialize_element(root), before);
     }
 }
@@ -575,7 +575,7 @@ fn unmatched_field_blocks_shared_title_head_junction() {
         );
         let (mut dom, root, _) = document(&format!("{stream}{deleted}"));
         let before = dom.serialize_element(root);
-        merge_replaced_paragraphs_in(&mut dom, root, "Editor", true, false);
+        merge_replaced_paragraphs_in(&mut dom, root, "Editor", true);
         assert_eq!(dom.serialize_element(root), before);
     }
 }

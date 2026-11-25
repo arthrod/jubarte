@@ -1088,12 +1088,12 @@ pub fn try_compare_bodies_faithful_with_notes(
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // A revised closing mark paired before finalize already joined the
         // revised last words to the first deleted paragraph.
-        finalize::merge_replaced_paragraphs_in(
+        finalize::merge_replaced_paragraphs_for_platform(
             dom,
             root,
             &settings.author_for_revisions,
             story_final_paired || revised_close_paired,
-            settings.word_platform == WordPlatform::Windows,
+            settings.word_platform,
         );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).
