@@ -1277,3 +1277,86 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
     expect(pageOf("HEADING")).toBe(pageOf("CELL"));
   });
 });
+
+describe("pictures take their extent on the page (#95)", () => {
+  const PX = 4 / 3;
+  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  const BELOW = NORMAL - (0.220703 + 0.75) * 11 * PX;
+  const EMU = 9525;
+  const drawing = (label, w, h, kind = "inline") =>
+    `<!-- ${label} drawing:${Buffer.from(
+      JSON.stringify({ xml: `<w:drawing><wp:${kind}><wp:extent cx="${w * EMU}" cy="${h * EMU}"/></wp:${kind}></w:drawing>` }),
+    ).toString("base64url")} -->`;
+  const doc = (body, defs) =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n${body}\n${defs}\n`;
+  const lineOf = (composed, text) => {
+    for (const page of composed.layout.pages)
+      for (const f of page.frames[0].fragments)
+        for (const l of f.lines || []) if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, ...l };
+    return null;
+  };
+  const PICTURE = (w, h, kind) =>
+    doc(
+      "<!-- p0 -->\nABOVE\n\n<!-- p1 -->\n![PICALT][image1]\n\n<!-- p2 -->\nBELOW\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", w, h, kind)}`,
+    );
+
+  it("a paragraph holding only a picture is one line as tall as the picture, on the text's baseline", () => {
+    const { composed, done } = compose(PICTURE(300, 200));
+    const line = lineOf(composed, "PICALT");
+    expect(line.advance).toBeCloseTo(200 + BELOW, 2);
+    const run = line.runs.find((r) => r.picture);
+    expect(run.picture).toMatchObject({ id: "image1", mime: "image/png", drawWidth: 300, drawHeight: 200 });
+    expect(run.top).toBeCloseTo(line.baseline - 200, 2);
+    expect(lineOf(composed, "BELOW").y - line.y).toBeCloseTo(200 + BELOW + 8 * PX, 2);
+    done();
+  });
+  it("a picture wider than the column is scaled down to it, keeping its shape", () => {
+    const { composed, done } = compose(PICTURE(2000, 400));
+    const run = lineOf(composed, "PICALT").runs.find((r) => r.picture);
+    const column = composed.layout.pages[0].frames[0].bounds.width;
+    expect(run.picture.drawWidth).toBeCloseTo(column, 1);
+    expect(run.picture.drawHeight).toBeCloseTo((400 * column) / 2000, 1);
+    done();
+  });
+  it("a floating picture, or one inside a line of text, stays a chip at the text's height", () => {
+    const floating = compose(PICTURE(300, 200, "anchor"));
+    expect(lineOf(floating.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
+    floating.done();
+    const inText = compose(
+      doc("<!-- p0 -->\nWORDS ![PICALT][image1] MORE\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`),
+    );
+    expect(lineOf(inText.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
+    expect(inText.container.querySelector(".paged-picture")).toBeNull();
+    inText.done();
+  });
+  it("draws the box at its size before the bytes arrive, then the picture the loader returns", async () => {
+    const { setPictureLoader } = await import("../reader/pagination.js");
+    let resolve;
+    const asked = [];
+    setPictureLoader((picture) => (asked.push(picture.id), new Promise((r) => (resolve = r))));
+    const { container, done } = compose(PICTURE(300, 200));
+    const box = container.querySelector(".paged-picture");
+    expect(box.style.width).toBe("300px");
+    expect(box.style.height).toBe("200px");
+    expect(box.textContent).toBe("PICALT");
+    expect(asked).toEqual(["image1"]);
+    resolve("data:image/png;base64,QUJD");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(box.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,QUJD");
+    expect(box.classList.contains("loaded")).toBe(true);
+    setPictureLoader(null);
+    done();
+  });
+  it("a picture the loader cannot get keeps its alt text", async () => {
+    const { setPictureLoader } = await import("../reader/pagination.js");
+    setPictureLoader(() => Promise.resolve(null));
+    const { container, done } = compose(PICTURE(300, 200));
+    await new Promise((r) => setTimeout(r, 0));
+    const box = container.querySelector(".paged-picture");
+    expect(box.querySelector("img")).toBeNull();
+    expect(box.textContent).toBe("PICALT");
+    setPictureLoader(null);
+    done();
+  });
+});

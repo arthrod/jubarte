@@ -43,6 +43,14 @@ export function tableWidth(widthsIn,frame,rightMargin){
 export function fitTable(textMins,width,maxWidth){
  for(let pad=8;pad>=2;pad--){const need=textMins.reduce((n,t)=>n+(t>0?t+2*pad+3:0),0);if(need<=width)return {pad,width};if(need<=maxWidth)return {pad,width:need}}
  return {pad:2,width:Math.max(width,maxWidth)}}
+/** A paragraph holding only pictures (and drawing chips) as Word sets it: one line, each
+ * picture at its extent, scaled down together when they pass the column (#95). */
+export function pictureOnly(block){const runs=block.runs||[];return runs.some(r=>r.picture)&&runs.every(r=>r.image||!r.text.trim());}
+function pictureLine(lines,inner,block){const source=new Map((block.runs||[]).map(r=>[r.id,r])),runs=[];for(const line of lines)for(const drawn of line.runs){const picture=source.get(drawn.runId)?.picture,run=picture?{...drawn,picture}:drawn;const last=runs[runs.length-1];if(run.picture&&last?.picture?.id===run.picture.id&&last.pmRange.to===run.pmRange.from){runs[runs.length-1]={...last,text:last.text+run.text,pmRange:{from:last.pmRange.from,to:run.pmRange.to}};continue;}runs.push(run);}
+ const fixed=runs.reduce((n,r)=>n+(r.picture?0:r.width||0),0),wide=runs.reduce((n,r)=>n+(r.picture?.widthPx||0),0),scale=wide>0?Math.min(1,Math.max(1,inner-fixed)/wide):1;
+ let x=0,tall=0;const placed=runs.map(r=>{const width=r.picture?r.picture.widthPx*scale:r.width||0,out={...r,x,width,...(r.picture?{picture:{...r.picture,drawWidth:width,drawHeight:r.picture.heightPx*scale}}:{})};x+=width;if(r.picture)tall=Math.max(tall,r.picture.heightPx*scale);return out;});
+ const ranges=runs.map(r=>r.pmRange);return {...lines[0],runs:placed,width:x,pictureHeight:tall,pmRange:{from:Math.min(...ranges.map(r=>r.from)),to:Math.max(...ranges.map(r=>r.to))}};}
+
 export function composeWithTables(snapshot,runtime,input){
  const started=performance.now(),diagnostics=[],tableFragments=[],footnoteFragments=[],footnoteBands=[];
  const lh=input.typography.defaultLineHeightPx;
@@ -153,6 +161,7 @@ export function composeWithTables(snapshot,runtime,input){
    lines=constrainLines(lines,inner,lh,glyphWidth,{first:ind.first,rest:ind.rest});
    // A line Word breaks at a soft hyphen shows a hyphen there; mid-line ones stay invisible (#89).
    lines=lines.map((line,i)=>{if(i===lines.length-1)return line;const k=line.runs.findLastIndex(r=>r.text);const run=line.runs[k];if(!run?.text.endsWith('\u00ad'))return line;const runs=[...line.runs];runs[k]={...run,text:run.text.slice(0,-1)+'-',width:(run.width||0)+glyphWidth('-',run.font)-glyphWidth('\u00ad',run.font)};return {...line,runs};});
+   if(pictureOnly(block)&&lines.length)lines=[pictureLine(lines,inner,block)];
    // Word's w:jc right and center: each line against the right edge or about the middle (#50).
    const data=block.attrs?.sourceData,align=block.attrs?.cellAlign??data?.paragraphProperties?.alignment??data?.documentStyle?.alignment;
    const bidi=hasRtl(block),base=bidi&&isRtl(block)?1:0;
@@ -160,7 +169,7 @@ export function composeWithTables(snapshot,runtime,input){
    // the right margin (#93). A manual break ends a block, so the line before it stays as set.
    // Right-to-left lines keep their alignment.
    const justified=(line,i)=>{if(align!=='justify'||bidi||i===lines.length-1)return line;const extra=alignShift(line,inner,false);const last=line.runs.findLastIndex(r=>r.text?.trim());const spaces=line.runs.map((r,k)=>k>last?0:((k===last?r.text.replace(/[ \u00a0]+$/,''):r.text).match(/[ \u00a0]/g)||[]).length);const total=spaces.reduce((a,b)=>a+b,0);if(!total||extra<=0)return line;const add=extra/total;let before=0;return {...line,runs:line.runs.map((r,k)=>{const moved={...r,x:r.x+add*before,wordSpacing:add,width:(r.width||0)+add*spaces[k]};before+=spaces[k];return moved;})};};
-   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;const advance=block.attrs?.lineBox?.advance??lh;const baseline=block.attrs?.lineBox?.baseline;result.push({...line,y:at,height:advance,advance,ascent:block.attrs?.lineBox?.ascent,baseline,runs:line.runs.map(run=>{const glyphs=baseline==null?null:fontBox(run.font);return {...run,x:run.x+indent+shift,...(glyphs?{top:baseline-glyphs.ascent,boxHeight:glyphs.ascent+glyphs.descent}:{})};})});at+=advance;});
+   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;const box=block.attrs?.lineBox,set=box?.advance??lh,below=box?.baseline==null?0:set-box.baseline,exact=block.attrs?.spacing?.line?.rule==='exact';const advance=line.pictureHeight&&!exact?Math.max(set,line.pictureHeight+below):set;const baseline=line.pictureHeight&&box?.baseline!=null?advance-below:box?.baseline;result.push({...line,y:at,height:advance,advance,ascent:box?.ascent,baseline,runs:line.runs.map(run=>{if(run.picture?.drawHeight!=null)return {...run,x:run.x+indent+shift,top:(baseline??advance)-run.picture.drawHeight,boxHeight:run.picture.drawHeight};const glyphs=baseline==null?null:fontBox(run.font);return {...run,x:run.x+indent+shift,...(glyphs?{top:baseline-glyphs.ascent,boxHeight:glyphs.ascent+glyphs.descent}:{})};})});at+=advance;});
   }
   lineCache.set(key,result);return result;
  }

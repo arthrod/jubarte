@@ -9,7 +9,8 @@
 // transport differs: the MCP Apps bridge instead of the desk's postMessage.
 import { App } from "@modelcontextprotocol/ext-apps";
 import { parseJubarte } from "../reader/jubarte.mjs";
-import { mountPagination } from "../reader/pagination.js";
+import { mountPagination, setPictureLoader } from "../reader/pagination.js";
+import { createPictureLoader } from "./pictures.js";
 import { discussions } from "../reader/comments.mjs";
 import { loadFonts } from "./fonts.js";
 import { baseName, errorText, linkAction, pickDocument, pickFiles, readerNotices } from "./pick.js";
@@ -38,6 +39,18 @@ let drawMode = "tracked";
 const fontsReady = loadFonts().catch(() => []);
 
 const app = new App({ name: "jubarte", version: VERSION || "0" }, {}, { autoResize: true });
+// Pictures are fetched from the document the card shows, when their page is drawn (#95).
+const pictures = createPictureLoader((request) => app.callServerTool(request));
+setPictureLoader((picture) =>
+  preview && docPath
+    ? pictures({
+        path: docPath,
+        view: preview.view ?? "tracked",
+        sha256: preview.sha256,
+        id: picture.id,
+      })
+    : null,
+);
 
 // ---------- states ----------
 

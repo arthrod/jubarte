@@ -213,6 +213,36 @@ body.fixed {
     background: var(--surface);
 }
 
+/* A picture at Word's extent (#95): the box is sized before its bytes
+   arrive, framed like a chip, with the alt text until then. Once drawn it
+   loses the frame; an inserted or deleted picture keeps a revision outline. */
+.premirror-run.paged-picture {
+    box-sizing: border-box;
+    overflow: hidden;
+    outline: 1px dashed var(--line-strong);
+    outline-offset: -1px;
+    background: var(--surface);
+    white-space: normal;
+}
+.paged-picture-alt {
+    display: block;
+    padding: 4px 6px;
+    font: 12px/1.3 Manrope, system-ui, sans-serif;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+.premirror-run.paged-picture.loaded {
+    outline: none;
+    background: none;
+}
+.premirror-run.paged-picture.loaded.criticInsertion {
+    outline: 2px solid currentColor;
+}
+.premirror-run.paged-picture.loaded.criticDeletion {
+    outline: 2px solid currentColor;
+    opacity: 0.55;
+}
+
 /* Word's highlight colours (w:highlight), which the engine writes as
    <mark class="hl-…">; a plain <mark> is yellow, as in Word. */
 .premirror-run.highlight {

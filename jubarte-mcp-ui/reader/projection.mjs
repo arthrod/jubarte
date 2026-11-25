@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {pictureMime} from './pictures.mjs';
 import {decodeString} from 'micromark-util-decode-string';
 const mdTypes={paragraph:'p',heading:'h',blockquote:'blockquote',code:'code_block',listItem:'li',table:'table',tableRow:'tr',tableCell:'td',thematicBreak:'hr',footnoteDefinition:'footnote'};
 const offset=n=>n.position?.start?.offset??0;
@@ -96,7 +97,7 @@ export function projectDialect(tree, critic, document){
     const def=n.type==='linkReference'?definitions.get(n.identifier):n;out.push({type:'a',url:safeUrl(def?.url),title:def?.title,sourceRange:range(offset(n),end(n)),children:inline(n.children,active)});continue;
    }
    if(n.type==='image'||n.type==='imageReference'){
-    const def=n.type==='imageReference'?definitions.get(n.identifier):n;out.push({type:'image_alt',url:def?.url||'',alt:n.alt||'',sourceRange:range(offset(n),end(n)),...marksAt(offset(n)),children:leaves(n.alt||'[image]',offset(n),markdown.slice(offset(n),end(n)),active)});continue;
+    const def=n.type==='imageReference'?definitions.get(n.identifier):n;out.push({type:'image_alt',url:def?.url||'',alt:n.alt||'',pictureId:n.type==='imageReference'?(n.label??n.identifier):null,pictureMime:pictureMime(def?.url),sourceRange:range(offset(n),end(n)),...marksAt(offset(n)),children:leaves(n.alt||'[image]',offset(n),markdown.slice(offset(n),end(n)),active)});continue;
    }
    if(n.type==='footnoteReference'){out.push({type:'footnote_ref',identifier:n.identifier,...marksAt(offset(n)),sourceRange:range(offset(n),end(n)),children:[{text:n.label||n.identifier}]});continue}
    if(n.children)out.push(...inline(n.children,active));else if(n.value)out.push(...leaves(n.value,offset(n),markdown.slice(offset(n),end(n)),active));
