@@ -12,6 +12,25 @@ import monoLatin from "./fonts/jetbrains-mono-latin-wght-normal.woff2?inline";
 import monoExt from "./fonts/jetbrains-mono-latin-ext-wght-normal.woff2?inline";
 import serifLatin from "./fonts/source-serif-4-latin-opsz-normal.woff2?inline";
 import serifExt from "./fonts/source-serif-4-latin-ext-opsz-normal.woff2?inline";
+// The page faces (#99): Carlito and Liberation Sans, Serif and Mono, subset to
+// Latin and renamed, since a modified OFL font may not keep its Reserved Font
+// Name. Each has the advances of Calibri, Arial, Times New Roman or Courier New.
+import pageCRegular from "./fonts/page/jubarte-page-c-regular.woff2?inline";
+import pageCBold from "./fonts/page/jubarte-page-c-bold.woff2?inline";
+import pageCItalic from "./fonts/page/jubarte-page-c-italic.woff2?inline";
+import pageCBolditalic from "./fonts/page/jubarte-page-c-bolditalic.woff2?inline";
+import pageSansRegular from "./fonts/page/jubarte-page-sans-regular.woff2?inline";
+import pageSansBold from "./fonts/page/jubarte-page-sans-bold.woff2?inline";
+import pageSansItalic from "./fonts/page/jubarte-page-sans-italic.woff2?inline";
+import pageSansBolditalic from "./fonts/page/jubarte-page-sans-bolditalic.woff2?inline";
+import pageSerifRegular from "./fonts/page/jubarte-page-serif-regular.woff2?inline";
+import pageSerifBold from "./fonts/page/jubarte-page-serif-bold.woff2?inline";
+import pageSerifItalic from "./fonts/page/jubarte-page-serif-italic.woff2?inline";
+import pageSerifBolditalic from "./fonts/page/jubarte-page-serif-bolditalic.woff2?inline";
+import pageMonoRegular from "./fonts/page/jubarte-page-mono-regular.woff2?inline";
+import pageMonoBold from "./fonts/page/jubarte-page-mono-bold.woff2?inline";
+import pageMonoItalic from "./fonts/page/jubarte-page-mono-italic.woff2?inline";
+import pageMonoBolditalic from "./fonts/page/jubarte-page-mono-bolditalic.woff2?inline";
 
 // The unicode ranges of jubarte-app's src/fonts.css.
 const LATIN =
@@ -26,6 +45,22 @@ const FACES = [
   ["JetBrains Mono", "100 800", monoExt, LATIN_EXT],
   ["Source Serif 4", "200 900", serifLatin, LATIN],
   ["Source Serif 4", "200 900", serifExt, LATIN_EXT],
+  ["Jubarte Page C", "400", pageCRegular, undefined, "normal"],
+  ["Jubarte Page C", "700", pageCBold, undefined, "normal"],
+  ["Jubarte Page C", "400", pageCItalic, undefined, "italic"],
+  ["Jubarte Page C", "700", pageCBolditalic, undefined, "italic"],
+  ["Jubarte Page Sans", "400", pageSansRegular, undefined, "normal"],
+  ["Jubarte Page Sans", "700", pageSansBold, undefined, "normal"],
+  ["Jubarte Page Sans", "400", pageSansItalic, undefined, "italic"],
+  ["Jubarte Page Sans", "700", pageSansBolditalic, undefined, "italic"],
+  ["Jubarte Page Serif", "400", pageSerifRegular, undefined, "normal"],
+  ["Jubarte Page Serif", "700", pageSerifBold, undefined, "normal"],
+  ["Jubarte Page Serif", "400", pageSerifItalic, undefined, "italic"],
+  ["Jubarte Page Serif", "700", pageSerifBolditalic, undefined, "italic"],
+  ["Jubarte Page Mono", "400", pageMonoRegular, undefined, "normal"],
+  ["Jubarte Page Mono", "700", pageMonoBold, undefined, "normal"],
+  ["Jubarte Page Mono", "400", pageMonoItalic, undefined, "italic"],
+  ["Jubarte Page Mono", "700", pageMonoBolditalic, undefined, "italic"],
 ];
 
 /** The bytes of a `data:...;base64,` URL, without fetching it. */
@@ -40,8 +75,14 @@ export function dataUrlBytes(url) {
 /** Registers every face; resolves when they are usable. A face that fails falls back to the stack. */
 export async function loadFonts(fonts = document.fonts) {
   const loaded = await Promise.allSettled(
-    FACES.map(async ([family, weight, url, unicodeRange]) => {
-      const face = new FontFace(family, dataUrlBytes(url), { weight, style: "normal", unicodeRange, display: "block" });
+    FACES.map(async ([family, weight, url, unicodeRange, style = "normal"]) => {
+      const descriptors = {
+        weight,
+        style,
+        display: "block",
+        ...(unicodeRange ? { unicodeRange } : {}),
+      };
+      const face = new FontFace(family, dataUrlBytes(url), descriptors);
       fonts.add(await face.load());
     }),
   );
