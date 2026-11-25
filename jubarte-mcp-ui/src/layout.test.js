@@ -1160,6 +1160,19 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
     expect(parseFloat(lines[0].parentElement.style.height)).toBeCloseTo(lines.length * NORMAL, 2);
     done();
   });
+  it("runs sit on Word's baseline: auto keeps the line gap above, exact sets it at 0.8 of the line", () => {
+    const { container, done } = compose(
+      doc("<!-- p0 -->\nAUTOLINE\n\n<!-- p1 line 18pt exact -->\nEXACTLINE\n"),
+    );
+    const span = (text) =>
+      [...container.querySelectorAll(".paged-line span")].find((e) => e.textContent === text);
+    const ascent = 0.75 * 11 * PX;
+    // Calibri: line gap 0.2207em, ascent 0.75em, glyph box 1em tall.
+    expect(parseFloat(span("AUTOLINE").style.top)).toBeCloseTo((0.220703 + 0.75) * 11 * PX - ascent, 2);
+    expect(parseFloat(span("AUTOLINE").style.lineHeight)).toBeCloseTo(11 * PX, 2);
+    expect(parseFloat(span("EXACTLINE").style.top)).toBeCloseTo(0.8 * 18 * PX - ascent, 2);
+    done();
+  });
   it("a line taller than the page takes a page of its own and the document goes on", () => {
     const { composed, done } = compose(
       doc("<!-- p0 -->\nBEFORE\n\n<!-- p1 line 700pt exact -->\nHUGE\n\n<!-- p2 -->\nAFTER\n"),

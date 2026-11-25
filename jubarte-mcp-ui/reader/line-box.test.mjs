@@ -81,3 +81,39 @@ test("a family with no twin measures with its class's face", () => {
   assert.equal(lineBox("Georgia", 11).height, lineBox("Times New Roman", 11).height);
   assert.equal(lineBox(undefined, 11).height, lineBox("Calibri", 11).height);
 });
+
+// Where Word puts the text inside the line (#102, 4c). word-metrics' `lines-*` fixtures give
+// each rule's text shift against the auto spacing before it (summary.txt gaps less the pitch
+// and the 12pt spacing): an auto multiple puts its extra below the text, at least puts it above,
+// and exact sits the baseline at 0.8 of the line. The shifts carry two lines' 0.24pt rounding.
+const SHIFT = {
+  Calibri: { exact18: 4.56, atleast20: 7.44, atleast8: -0.36 },
+  Arial: { exact18: 4.32, atleast20: 7.68, atleast8: -0.48 },
+  "Times New Roman": { exact18: 4.92, atleast20: 8.28, atleast8: -0.24 },
+  "Courier New": { exact18: 6.48, atleast20: 8.88, atleast8: 0.12 },
+};
+
+test("the baseline moves with the line rule as Word moves it, within 1pt", () => {
+  for (const [family, shifts] of Object.entries(SHIFT)) {
+    const auto = lineBox(family, 10, RULES.auto108).baseline;
+    assert.ok(Math.abs(lineBox(family, 10, RULES.auto200).baseline - auto) < 0.01, `${family} auto200`);
+    for (const [rule, want] of Object.entries(shifts)) {
+      const got = lineBox(family, 10, RULES[rule]).baseline - auto;
+      assert.ok(Math.abs(got - want) <= 1, `${family} ${rule}: ${got.toFixed(2)} vs Word ${want}`);
+    }
+  }
+});
+
+test("a single Calibri 11pt line's baseline is where Word's table fixture draws it", () => {
+  // `table`: T00's glyph box starts 0.05pt under the margin; Calibri's box top is 0.952em above
+  // the baseline in Word's PDF, so the baseline is 10.52pt down.
+  assert.ok(Math.abs(lineBox("Calibri", 11).baseline - 10.52) <= 0.25);
+});
+
+test("a run's glyph box comes from its CSS font", async () => {
+  const { fontBox } = await import("./line-box.mjs");
+  const box = fontBox('italic 700 16px "Times New Roman", "Jubarte Page Serif", serif');
+  assert.ok(Math.abs(box.ascent - 0.891113 * 16) < 1e-6);
+  assert.ok(Math.abs(box.descent - 0.216309 * 16) < 1e-6);
+  assert.equal(fontBox("bad"), null);
+});
