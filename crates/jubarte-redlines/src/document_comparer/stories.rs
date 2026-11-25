@@ -1158,49 +1158,16 @@ pub(super) fn mark_a_only_hf_content_as_deleted(
             continue;
         }
         // #155: when the original has several sections, Windows Word 2024
-        // takes the result's headers/footers from the revised document, so
-        // an A-only story is dropped untracked — the part emptied, no
-        // `w:ins`/`w:del` (15 of 18 redline_600 references). With a single
-        // section it keeps Mac Word 16's pure-D diff (68 of 68), so that
-        // shape stays. Slots B shares keep the compared shape.
+        // keeps an A-only header/footer story as it was, untracked: its text
+        // stays and carries no `w:ins`/`w:del` (15 of 18 redline_600
+        // references). With a single section it keeps Mac Word 16's pure-D
+        // diff (68 of 68), so that shape stays. Slots B shares keep the
+        // compared shape.
         if settings.word_platform == WordPlatform::Windows && section_count > 1 {
-            empty_a_only_hf_content_for_windows(out, part);
             continue;
         }
         mark_hf_part_content_as_deleted(out, part, settings, whole_story);
     }
-}
-
-/// #155 — empty an A-only header/footer part for `--mode word-windows`:
-/// Windows Word 2024 carries the revised document's (empty) slots, so the
-/// original's story leaves no text and no revision marks. The part keeps a
-/// single blank paragraph in the kind's own style, which Accept All and
-/// Reject All both read as empty.
-pub(super) fn empty_a_only_hf_content_for_windows(out: &mut PartFs, part: &str) {
-    let Some(xml) = out.part_string(part) else {
-        return;
-    };
-    let mut dom = Dom::new();
-    let doc = dom.parse_xdocument(&xml);
-    let Some(root) = dom.root(doc) else {
-        return;
-    };
-    let own_style = if dom.name(root) == Some(W::ftr()) {
-        "Footer"
-    } else {
-        "Header"
-    };
-    for child in dom.elements(root, None) {
-        dom.remove(child);
-    }
-    let p = dom.new_element(W::p());
-    let ppr = dom.new_element(W::p_pr());
-    let style = dom.new_element(W::p_style());
-    dom.set_attribute_value(style, &W::val(), Some(own_style));
-    dom.add(ppr, style);
-    dom.add(p, ppr);
-    dom.add(root, p);
-    out.set_part(part, dom.serialize_element(root).into_bytes());
 }
 
 /// #155 — mark a B-only header/footer story as inserted for
