@@ -747,7 +747,13 @@ pub fn try_compare_bodies_faithful_with_notes(
         match lcs::detect_unrelated_sources_word_mode(dom, &cus1, &cus2, settings) {
             Some((seqs, paired)) => {
                 story_final_paired = paired;
-                seqs
+                // Windows Word 2024 writes a whole replacement's deletions
+                // before its insertions; Mac Word 16 the reverse.
+                if settings.word_platform == WordPlatform::Windows {
+                    whole_replacement_deletions_first(seqs)
+                } else {
+                    seqs
+                }
             }
             None => lcs::lcs(dom, cus1, cus2, settings),
         }
@@ -1808,6 +1814,52 @@ fn final_empty_paragraphs_paired(dom: &Dom, seqs: &[atoms::CorrelatedSequence]) 
     last.correlation_status == CorrelationStatus::Equal
         && empty_final(last.com_units_1.as_deref())
         && empty_final(last.com_units_2.as_deref())
+}
+
+/// Windows Word 2024's Compare writes a whole replacement's deletions
+/// before its insertions.
+///
+/// When base and next are unrelated, the word-mode shortcut
+/// ([`lcs::detect_unrelated_sources_word_mode`]) returns next's inserted
+/// sequence first and base's deleted sequence after it: Mac Word 16's
+/// order, which the `word` preset keeps. Windows Word writes base's deleted
+/// body first and next's inserted content after it, so on
+/// [`WordPlatform::Windows`] the sequences the shortcut returns are
+/// reordered here: from the first `Inserted` sequence onward, every
+/// `Deleted` sequence comes first, in its former order, and the other
+/// sequences of that stretch follow in theirs. What stands ahead of the
+/// first `Inserted` sequence, a kept opening or deletions that already
+/// lead, does not move.
+///
+/// Only these sequences move, and the passes after this one run as before:
+/// where the merge pass ([`finalize::merge_replaced_paragraphs_in`]) folds
+/// a replacement's last inserted paragraph into its first deleted one, Mac
+/// Word's order stands, because the Windows paragraph pass
+/// ([`finalize::reorder_deleted_paragraphs_before_inserted`]) trades only
+/// whole-deleted and whole-inserted paragraphs.
+///
+/// The reorder is by sequence, not by paragraph. While every sequence is a
+/// whole block, Accept All and Reject All read as before. Where the
+/// shortcut pairs words inside a paragraph (the stamped demos of
+/// `stamp_confetti_then_replace`), a `Deleted` sequence here passes a
+/// paired one and that paragraph's words come out in another order, and
+/// the two no longer read as the two documents. A `Deleted` sequence that
+/// would pass a paired one should stay put.
+fn whole_replacement_deletions_first(
+    mut seqs: Vec<atoms::CorrelatedSequence>,
+) -> Vec<atoms::CorrelatedSequence> {
+    if let Some(first_inserted) = seqs
+        .iter()
+        .position(|s| s.correlation_status == CorrelationStatus::Inserted)
+    {
+        let tail = seqs.split_off(first_inserted);
+        let (deleted, rest): (Vec<_>, Vec<_>) = tail
+            .into_iter()
+            .partition(|s| s.correlation_status == CorrelationStatus::Deleted);
+        seqs.extend(deleted);
+        seqs.extend(rest);
+    }
+    seqs
 }
 
 #[cfg(test)]
