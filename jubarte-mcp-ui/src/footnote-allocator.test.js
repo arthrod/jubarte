@@ -124,6 +124,33 @@ describe("the footnote label gives way to the lines still to place (#126)", () =
   });
 });
 
+describe("a restored checkpoint refits the label room to the frame as it is now (#126)", () => {
+  it("restoring a state before the picture was placed, after the frame shrank", () => {
+    const a = allocator([[picture()]]);
+    const before = a.checkpoint();
+    a.beginPage();
+    reference(a, ["1"]);
+    expect(words([a.finishPage(0)])).toEqual(["PIC"]);
+    a.setGeometry({ width: 150, height: 150 });
+    a.restore(before);
+    a.beginPage();
+    reference(a, ["1"], 10);
+    expect(words(drain(a, [a.finishPage(0)], 150))).toEqual(["PIC"]);
+  });
+  it("restoring the filling page's state after the frame shrank keeps the note inside it", () => {
+    const a = allocator([[picture()]]);
+    a.beginPage();
+    reference(a, ["1"], 10);
+    const live = a.checkpoint();
+    a.finishPage(0);
+    a.setGeometry({ width: 150, height: 150 });
+    a.restore(live);
+    const page = a.finishPage(0);
+    inside(page, 150);
+    expect(words([page])).toEqual(["PIC"]);
+  });
+});
+
 describe("a carried paragraph without its own range keeps only the words still to draw (#126)", () => {
   for (const split of [false, true])
     it(`across two refits${split ? ", cut between runs" : ""}`, () => {

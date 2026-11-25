@@ -89,7 +89,9 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  const span = (id, offset, count) => { let sum = 0; for (let i = 0; i < count; i++) sum += lineAt(id, offset + i); return sum; };
  const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + span(item.id, item.offset, item.count), 0) + between * (items.length - 1) : 0;
  function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active, live}; }
- function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; live = state.live ?? live; }
+ function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; live = state.live ?? live;
+  // The restored notes still to place size the label room again, in the frame as it is now (#126).
+  fitDecoration(); }
  function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; live = true; }
  function referenceIds(lines) {
   const ids = [];
