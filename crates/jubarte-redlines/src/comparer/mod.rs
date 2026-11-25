@@ -1046,6 +1046,14 @@ pub fn try_compare_bodies_faithful_with_notes(
     // moveTo first in the paraRPr, and the paraRPr after pStyle/content props.
     // Otherwise Word reports "unreadable content" (ooxmlsdk tolerates it).
     finalize::fix_paragraph_mark_revision_order(dom, root);
+    // #154: Windows Word 2024 writes a replaced region's trailing insertion
+    // after the deleted region. The paragraph restream stops at a table, so
+    // the insertion lands before it; moving it now, before the Mac ladder's
+    // story-tail passes, keeps those passes from folding it into the
+    // region's first deleted paragraph.
+    if settings.merge_replaced_paragraphs && settings.word_platform == WordPlatform::Windows {
+        finalize::windows_replaced_region_tail(dom, root);
+    }
     // Match Word's replacement order. Mac Word writes the insertion (new)
     // before the deletion (old); Windows Word 2024 the deletion first
     // (#2550).
@@ -1085,6 +1093,7 @@ pub fn try_compare_bodies_faithful_with_notes(
             root,
             &settings.author_for_revisions,
             story_final_paired || revised_close_paired,
+            settings.word_platform == WordPlatform::Windows,
         );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).

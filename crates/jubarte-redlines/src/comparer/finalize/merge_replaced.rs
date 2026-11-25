@@ -22,7 +22,7 @@ use super::*;
 /// calls [`merge_replaced_paragraphs_in`] directly with both flags
 /// pinned from the body tokenizer.
 pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &str) {
-    merge_replaced_paragraphs_in(dom, root, comparer_author, false);
+    merge_replaced_paragraphs_in(dom, root, comparer_author, false, false);
 }
 
 /// [`merge_replaced_paragraphs`] for a body whose two final paragraph marks
@@ -48,6 +48,7 @@ pub fn merge_replaced_paragraphs_in(
     root: NodeId,
     comparer_author: &str,
     story_final_paired: bool,
+    windows: bool,
 ) {
     let body = dom.element(root, &W::body());
     let mut containers: Vec<NodeId> = body.into_iter().collect();
@@ -56,7 +57,7 @@ pub fn merge_replaced_paragraphs_in(
     }
     for c in containers {
         let fold_boundary = !(story_final_paired && Some(c) == body);
-        merge_replaced_in_container(dom, c, comparer_author, fold_boundary);
+        merge_replaced_in_container(dom, c, comparer_author, fold_boundary, windows);
     }
 }
 
@@ -2104,6 +2105,7 @@ pub(super) fn merge_replaced_in_container(
     container: NodeId,
     comparer_author: &str,
     fold_boundary: bool,
+    windows: bool,
 ) {
     // #1686: a cell that gains or loses an empty paragraph must keep it.
     // The story-end fold below treats the end of a cell as the end of the
@@ -2136,6 +2138,13 @@ pub(super) fn merge_replaced_in_container(
             }
             let dels = &children[del_start..ins_start];
             let inss = &children[ins_start..i];
+            // #154: a deleted body under an INSERTED mark is a revised-side
+            // paragraph — a restreamed region's cell closed by the next
+            // empty paragraph's mark (Windows Word 2024's `[-b-]¶+`). The
+            // cluster passes leave such a gap where the stream put it.
+            if windows && para_mark_revision(dom, children[del_start], &W::ins()) {
+                continue;
+            }
             if gap_has_live_blank_cell_tail(dom, container, &children[i..]) {
                 continue;
             }

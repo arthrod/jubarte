@@ -47,6 +47,7 @@ mod pure_revision_peels;
 mod revision_wrappers;
 mod schema_order;
 mod validity;
+mod windows_region_tail;
 
 pub use alignment_peels::*;
 pub use free_mesh::*;
@@ -61,6 +62,7 @@ pub use pure_revision_peels::*;
 pub use revision_wrappers::*;
 pub use schema_order::*;
 pub use validity::*;
+pub use windows_region_tail::*;
 
 // Per-paragraph pure-del / mixed classification cache for finalize peels.
 // Enabled only inside `with_para_classification_cache` so multi-pass peels
