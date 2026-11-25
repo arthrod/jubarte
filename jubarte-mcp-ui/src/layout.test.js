@@ -497,7 +497,7 @@ describe("Arabic-Indic digits are Arabic numbers, class AN (#60)", () => {
 describe("keep with next reaches past the spacer (#62)", () => {
   it("a keep-next heading moves to the page of the paragraph after it", () => {
     const { composed, done } = compose(
-      `---\nview: tracked\npage: 6x3in landscape, margins 0.5in, header/footer 0.5in\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines\n---\n\n<!-- p0 -->\nBEFORE_ONE\n\n<!-- p1 -->\nBEFORE_TWO\n\n<!-- p2 -->\n# KEEP_HEADING\n\n<!-- p3 -->\nFOLLOWING_BODY\n`,
+      `---\nview: tracked\npage: 6x3in landscape, margins 0.5in, header/footer 0.5in\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  "#": Heading1, Calibri bold 16pt, before 12pt, after 4pt, keep-next, keep-lines\n---\n\n<!-- p0 -->\nBEFORE_ONE\n\n<!-- p1 -->\nBEFORE_TWO\n\n<!-- p2 -->\nBEFORE_3\n\n<!-- p3 -->\nBEFORE_4\n\n<!-- p4 -->\nBEFORE_5\n\n<!-- p5 -->\n# KEEP_HEADING\n\n<!-- p6 -->\nFOLLOWING_BODY\n`,
     );
     const pageOf = (text) =>
       composed.layout.pages.findIndex((page) =>
@@ -733,7 +733,7 @@ describe("a row Word keeps on one page moves whole (#71)", () => {
   it("a table's first row, kept on one page, leaves the text above it and moves whole", () => {
     const cell = Array.from({ length: 5 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
     const source = (clause) =>
-      `---\nview: tracked\npage: 6x4in landscape, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- t0 1x1, cells p1-p1 by row, width auto${clause} -->\n|${cell}|\n|-|\n\n<!-- p2 empty -->\n`;
+      `---\nview: tracked\npage: 6x4in landscape, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\nFIRST  \nSECOND  \nTHIRD\n\n<!-- t0 1x1, cells p1-p1 by row, width auto${clause} -->\n|${cell}|\n|-|\n\n<!-- p2 empty -->\n`;
     const split = compose(source(""));
     expect(pagesOf(split.composed, "ROW2_LINE_")).toEqual([0, 1]);
     split.done();
@@ -770,14 +770,14 @@ describe("a keep-lines paragraph is not split across pages (#75)", () => {
     );
   it("without keep-lines the paragraph still splits", () => {
     const { composed, done } = compose(
-      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\n${lines75("BEFORE", 22)}\n\n<!-- p1 -->\n${lines75("KEPT", 10)}\n`,
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\n${lines75("BEFORE", 40)}\n\n<!-- p1 -->\n${lines75("KEPT", 10)}\n`,
     );
     expect(pages75(composed, "KEPT_")).toHaveLength(2);
     done();
   });
   it("a kept paragraph taller than a page still flows across pages", () => {
     const { composed, done } = compose(
-      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\nBEFORE\n\n<!-- p1 KeepAll -->\n${lines75("KEPT", 40)}\n`,
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\nBEFORE\n\n<!-- p1 KeepAll -->\n${lines75("KEPT", 60)}\n`,
     );
     const pages = pages75(composed, "KEPT_");
     expect(pages[0]).toBe(0);
@@ -787,7 +787,7 @@ describe("a keep-lines paragraph is not split across pages (#75)", () => {
   it("moves whole to the next page when it fits there", () => {
     const lines = (tag, n) => Array.from({ length: n }, (_, i) => `${tag}_${i}`).join("  \n");
     const { composed, done } = compose(
-      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\n${lines("BEFORE", 22)}\n\n<!-- p1 KeepAll -->\n${lines("KEPT", 10)}\n`,
+      `---\nview: tracked\npage: Letter portrait, margins 1in, header/footer 0.5in\nstyles:\n  KeepAll: Calibri 11pt, keep-lines\n---\n\n<!-- p0 -->\n${lines("BEFORE", 40)}\n\n<!-- p1 KeepAll -->\n${lines("KEPT", 10)}\n`,
     );
     const pagesOf = (tag) =>
       new Set(
@@ -1063,6 +1063,109 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
     const cells = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells;
     for (const cell of cells) expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
     expect(spacingOf(composed, "LEAD").afterPt).toBe(8);
+    done();
+  });
+});
+
+describe("paragraphs take Word's line heights and spacing, not the 29px grid (#102)", () => {
+  const PX = 4 / 3;
+  const doc = (body, extra = "") =>
+    `---\nview: tracked\npage: Letter portrait\n${extra}styles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n${body}`;
+  const at = (composed, text) => {
+    for (const page of composed.layout.pages)
+      for (const f of page.frames[0].fragments)
+        for (const l of f.lines || [])
+          if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, y: l.y, advance: l.advance };
+    return null;
+  };
+  // Calibri 11pt at 1.08: hhea 1.2207 x 11 x 1.08 = 14.50pt (Word draws 14.40).
+  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  it("a Normal line is Calibri 11pt at 1.08, and the next paragraph follows after 8pt", () => {
+    const { composed, done } = compose(doc("<!-- p0 -->\nALPHA\n\n<!-- p1 -->\nBETA\n"));
+    expect(at(composed, "ALPHA")).toMatchObject({ page: 0, y: 0 });
+    expect(at(composed, "ALPHA").advance).toBeCloseTo(NORMAL, 2);
+    expect(at(composed, "BETA").y).toBeCloseTo(NORMAL + 8 * PX, 2);
+    done();
+  });
+  it("the gap is the larger of space after and space before, not their sum", () => {
+    const { composed, done } = compose(
+      doc("<!-- p0 after 36pt -->\nONE\n\n<!-- p1 before 18pt -->\nTWO\n\n<!-- p2 after 6pt -->\nTHREE\n\n<!-- p3 before 24pt -->\nFOUR\n"),
+    );
+    expect(at(composed, "TWO").y - at(composed, "ONE").y).toBeCloseTo(NORMAL + 36 * PX, 2);
+    expect(at(composed, "FOUR").y - at(composed, "THREE").y).toBeCloseTo(NORMAL + 24 * PX, 2);
+    done();
+  });
+  it("contextual spacing drops the gap between paragraphs of one style", () => {
+    const { composed, done } = compose(
+      doc(
+        "<!-- p0 Item -->\nFIRST\n\n<!-- p1 Item -->\nSECOND\n\n<!-- p2 -->\nAFTER\n",
+        "",
+      ).replace("left\n", "left\n  Item: Calibri 11pt, after 18pt, contextual spacing\n"),
+    );
+    expect(at(composed, "SECOND").y - at(composed, "FIRST").y).toBeCloseTo(NORMAL, 2);
+    expect(at(composed, "AFTER").y - at(composed, "SECOND").y).toBeCloseTo(NORMAL + 18 * PX, 2);
+    done();
+  });
+  it("exact and at-least rules set the line, and auto spacing is 14pt", () => {
+    const { composed, done } = compose(
+      doc("<!-- p0 line 18pt exact -->\nEXACT\n\n<!-- p1 line 40pt atLeast, after auto -->\nLEAST\n\n<!-- p2 -->\nNEXT\n"),
+    );
+    expect(at(composed, "EXACT").advance).toBeCloseTo(18 * PX, 2);
+    expect(at(composed, "LEAST").advance).toBeCloseTo(40 * PX, 2);
+    expect(at(composed, "NEXT").y - at(composed, "LEAST").y).toBeCloseTo(40 * PX + 14 * PX, 2);
+    done();
+  });
+  it("space before is dropped at the top of a page after a break, kept after a section break", () => {
+    const fill = Array.from({ length: 60 }, (_, i) => `<!-- p${i} -->\nFILL${i}\n`).join("\n");
+    const { composed, done } = compose(
+      doc(
+        `${fill}\n<!-- p60 before 36pt -->\nFLOWED\n\n<!-- p61 before 36pt -->\nBREAKER\n\n` +
+          "<!-- p62 section-break -->\n\n<!-- p63 before 36pt -->\nSECTIONED\n",
+        "sections:\n  2: {p63-p63}\n",
+      ).replace("<!-- p61 before 36pt -->", "<!-- p61 before 36pt, page-break -->"),
+    );
+    const flowed = at(composed, "FLOWED");
+    expect(flowed.page).toBeGreaterThan(0);
+    const sectioned = at(composed, "SECTIONED");
+    expect(sectioned.y).toBeCloseTo(36 * PX, 2);
+    done();
+  });
+  it("a paragraph that breaks the page before itself starts at the top, without its space before", () => {
+    const { composed, done } = compose(
+      doc("<!-- p0 -->\nLEAD\n\n<!-- p1 Brk -->\nBROKEN\n").replace(
+        "left\n",
+        "left\n  Brk: Calibri 11pt, before 36pt, page-break-before\n",
+      ),
+    );
+    expect(at(composed, "BROKEN")).toMatchObject({ page: 1, y: 0 });
+    done();
+  });
+  it("a paragraph that does not fit starts the next page at its top, without its space before", () => {
+    // 24 Normal paragraphs take 720px of the 864px page; TOPPED needs 160px even without its 48px before.
+    const fill = Array.from({ length: 24 }, (_, i) => `<!-- p${i} -->\nFILL${i}\n`).join("\n");
+    const { composed, done } = compose(doc(`${fill}\n<!-- p24 before 36pt, line 120pt exact -->\nTOPPED\n`));
+    expect(at(composed, "FILL23").page).toBe(0);
+    const topped = at(composed, "TOPPED");
+    expect(topped.page).toBe(1);
+    expect(topped.y).toBe(0);
+    done();
+  });
+  it("the page draws a paragraph's lines at their composed tops, not 29px apart", () => {
+    const words = Array.from({ length: 40 }, (_, i) => `word${i}`).join(" ");
+    const { container, done } = compose(doc(`<!-- p0 -->\n${words}\n`));
+    const lines = [...container.querySelectorAll(".paged-block .paged-line")];
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines[1].parentElement).toBe(lines[0].parentElement);
+    expect(parseFloat(lines[1].style.top)).toBeCloseTo(NORMAL, 2);
+    expect(parseFloat(lines[0].parentElement.style.height)).toBeCloseTo(lines.length * NORMAL, 2);
+    done();
+  });
+  it("a line taller than the page takes a page of its own and the document goes on", () => {
+    const { composed, done } = compose(
+      doc("<!-- p0 -->\nBEFORE\n\n<!-- p1 line 700pt exact -->\nHUGE\n\n<!-- p2 -->\nAFTER\n"),
+    );
+    expect(at(composed, "HUGE")).toMatchObject({ page: 1, y: 0 });
+    expect(at(composed, "AFTER").page).toBe(2);
     done();
   });
 });
