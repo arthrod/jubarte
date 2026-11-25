@@ -3242,8 +3242,9 @@ pub(super) fn referenced_theme_part(out: &PartFs, main: &str) -> Option<String> 
 /// A setting the revised document lacks removes the original's, except
 /// `w:compat`: that one is written at compatibility mode 12 when the revision
 /// has none. The theme and `w:docDefaults` are replaced only when both
-/// packages have them. The revision's parts are the ones its main document
-/// relates, wherever it keeps them.
+/// packages have them, and the styles' current properties follow the
+/// `w:docDefaults` (#170): [`adopt_revised_style_properties`]. The revision's
+/// parts are the ones its main document relates, wherever it keeps them.
 pub(super) fn adopt_revised_package_defaults(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
     let revised_main = pkg2
         .main_document_part()
@@ -3419,7 +3420,9 @@ fn insert_settings_child(dom: &mut Dom, root: NodeId, child: NodeId) {
 }
 
 /// Replace the output stylesheet's `w:docDefaults` with the revised
-/// document's, when both have them.
+/// document's, when both have them. The styles then show the revised
+/// document's current properties under them:
+/// [`adopt_revised_style_properties`].
 fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs, revised_main: &str) {
     const STYLES: &str = "word/styles.xml";
     let (Some(out_xml), Some(revised_xml)) = (
@@ -3441,7 +3444,132 @@ fn adopt_revised_doc_defaults(out: &mut PartFs, pkg2: &PartFs, revised_main: &st
         dom.element(revised_root, &defaults),
     ) {
         dom.replace_with(current, &[revised]);
+        adopt_revised_style_properties(&mut dom, out_root, revised_root);
         out.set_part(STYLES, dom.serialize_element(out_root).into_bytes());
+    }
+}
+
+/// #170: under the adopted `w:docDefaults`, each style the revision defines
+/// shows the revision's own `w:pPr`, `w:rPr` and `w:basedOn`.
+///
+/// Windows Word's redline is built on the revised package, so its styles
+/// resolve as the revised document's do: through the `w:basedOn` the revision
+/// gives each and the revision's `w:docDefaults`. The original's properties
+/// are in the `w:pPrChange` / `w:rPrChange` records, which stay as the passes
+/// above wrote them.
+///
+/// Those passes write a style's current properties as a difference against
+/// the ORIGINAL's `w:docDefaults`, which `word` keeps: a property the
+/// original's defaults supply is left out of the current block. Under the
+/// revised defaults it then resolves to another value (a Normal that declares
+/// `sz 24` where the original's defaults set it came out at 10pt; a `line
+/// 240` the original's defaults supplied became 276).
+///
+/// A style pairs with the revision's style of the same (type, name), as
+/// everywhere else. Its current `w:pPr` and `w:rPr` become the revised
+/// style's declared children; a block left with nothing to show goes, unless
+/// it holds a record. Its `w:basedOn` is the revised style's, naming that
+/// style's counterpart in the output; when the output has no style of that
+/// type and name, the style has none, so that no chain can close. A `w:rStyle`
+/// the revised block names is sent to its counterpart's id the same way. A
+/// style the revision lacks stays as the original defines it.
+fn adopt_revised_style_properties(dom: &mut Dom, out_root: NodeId, revised_root: NodeId) {
+    let style_nm = W::name("style");
+    let style_id = W::style_id();
+    let mut out_by_key: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    for s in dom.elements(out_root, Some(&style_nm)) {
+        if let (Some(key), Some(id)) = (style_match_key(dom, s), dom.attribute(s, &style_id)) {
+            out_by_key.entry(key).or_insert_with(|| id.to_string());
+        }
+    }
+    let mut revised_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    // Where a reference to the revised style of a key points in the output:
+    // the revised id, and the id that style's counterpart has there.
+    let mut out_id_of_revised: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for s in dom.elements(revised_root, Some(&style_nm)) {
+        let Some(key) = style_match_key(dom, s) else {
+            continue;
+        };
+        revised_by_key.entry(key.clone()).or_insert(s);
+        if let (Some(id), Some(out_id)) = (dom.attribute(s, &style_id), out_by_key.get(&key)) {
+            out_id_of_revised
+                .entry(id.to_string())
+                .or_insert_with(|| out_id.clone());
+        }
+    }
+
+    for style in dom.elements(out_root, Some(&style_nm)) {
+        let Some(revised) = style_match_key(dom, style).and_then(|k| revised_by_key.get(&k)) else {
+            continue;
+        };
+        let revised = *revised;
+        for (local, change_local) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            let block_nm = W::name(local);
+            let block = dom.element(style, &block_nm);
+            let record = block.and_then(|b| dom.element(b, &W::name(change_local)));
+            let mut declared = Vec::new();
+            if let Some(revised_block) = dom.element(revised, &block_nm) {
+                for c in dom.elements(revised_block, None) {
+                    if dom.name(c).is_none_or(|n| is_style_prop_noise(&n)) {
+                        continue;
+                    }
+                    let c = dom.clone_subtree(c);
+                    if let Some(r_style) = dom.element(c, &W::name("rStyle"))
+                        && let Some(out_id) = dom
+                            .attribute(r_style, &W::val())
+                            .and_then(|v| out_id_of_revised.get(v))
+                    {
+                        dom.set_attribute_value(r_style, &W::val(), Some(out_id));
+                    }
+                    declared.push(c);
+                }
+            }
+            if record.is_none() && declared.is_empty() {
+                if let Some(block) = block {
+                    dom.remove(block);
+                }
+                continue;
+            }
+            let block = match block {
+                Some(block) => {
+                    dom.remove_nodes(block);
+                    block
+                }
+                None => {
+                    let block = dom.new_element(block_nm.clone());
+                    insert_child_by_rank(dom, style, block, local, &style_child_rank);
+                    block
+                }
+            };
+            for c in declared {
+                dom.add(block, c);
+            }
+            if let Some(record) = record {
+                dom.add(block, record);
+            }
+        }
+
+        let based_nm = W::name("basedOn");
+        let current = dom.element(style, &based_nm);
+        let adopted = dom
+            .element(revised, &based_nm)
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|id| out_id_of_revised.get(id));
+        match (adopted, current) {
+            (Some(out_id), Some(current)) => {
+                dom.set_attribute_value(current, &W::val(), Some(out_id));
+            }
+            (Some(out_id), None) => {
+                let based = dom.new_element(based_nm);
+                dom.set_attribute_value(based, &W::val(), Some(out_id));
+                insert_child_by_rank(dom, style, based, "basedOn", &style_child_rank);
+            }
+            (None, Some(current)) => dom.remove(current),
+            (None, None) => {}
+        }
     }
 }
 

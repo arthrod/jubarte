@@ -1720,8 +1720,9 @@ fn compare_documents_impl(
 
     // #153: Windows Word 2024's Compare builds its result on the revised
     // package: its theme, its `w:docDefaults` and its layout settings are
-    // the redline's. Mac Word 16's (`word`) keeps the original's, as every
-    // pass above wrote them.
+    // the redline's, and under those `w:docDefaults` each style's current
+    // properties are the revised style's own (#170). Mac Word 16's (`word`)
+    // keeps the original's, as every pass above wrote them.
     if settings.word_platform == WordPlatform::Windows {
         adopt_revised_package_defaults(&mut out, &pkg2, &main1);
     }

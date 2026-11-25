@@ -10,6 +10,11 @@
 //! alone is written, at compatibility mode 12, when the revised document has
 //! none. `--mode word` keeps the redline Mac Word 16 gives, which is built on
 //! the original package.
+//!
+//! #170 — with the revised `w:docDefaults` go the styles' current
+//! properties: each style the revision defines shows the revision's own
+//! `w:pPr`, `w:rPr` and `w:basedOn`, and resolves as it does in the revised
+//! document; the original's properties are in the change records.
 
 use jubarte::comparer::{CompareMode, WmlComparerSettings};
 use jubarte::document_comparer::compare_documents_with_settings;
@@ -1405,6 +1410,362 @@ fn a_picture_the_revision_cannot_resolve_is_not_shown_as_the_originals() {
         theme_blip_id(&out, "word/theme/theme1.xml"),
         "",
         "the reference goes, rather than resolving to the original's picture"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+// #170 — the styles under the adopted `w:docDefaults`.
+//
+// The passes above resolve a style's current properties against the
+// ORIGINAL's `w:docDefaults`, which the redline keeps under `word`. Once
+// `word-windows` ships the revision's `w:docDefaults` instead, a property
+// that pass left out because the original's defaults supplied it resolves
+// to the revision's defaults: Windows Word's redline writes each style's
+// current properties as the revision defines the style, and keeps the
+// original's in the change records.
+
+/// A stylesheet from its parts: the `w:docDefaults` `defaults`, what the
+/// Normal style declares in `normal_rpr`, and the styles after Normal.
+fn stylesheet_parts(defaults: &str, normal_rpr: &str, styles: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="{W_NS}">{defaults}<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/>{normal_rpr}</w:style>{styles}</w:styles>"#
+    )
+}
+
+const THEME_FONTS: &str = r#"<w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:hAnsiTheme="minorHAnsi" w:cstheme="minorBidi"/>"#;
+const LANGUAGE: &str = r#"<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="ar-SA"/>"#;
+/// A paragraph after which nothing is added, on single lines.
+const SINGLE_SPACING: &str = r#"<w:spacing w:after="0" w:line="240" w:lineRule="auto"/>"#;
+
+/// The run defaults of a `w:docDefaults`: the theme fonts and the language,
+/// with a run size of `size` half-points when it is `Some`.
+fn run_defaults(size: Option<&str>) -> String {
+    let size = size
+        .map(|size| format!(r#"<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>"#))
+        .unwrap_or_default();
+    format!("<w:rPrDefault><w:rPr>{THEME_FONTS}{size}{LANGUAGE}</w:rPr></w:rPrDefault>")
+}
+
+/// The paragraph defaults of a `w:docDefaults`: a `w:pPrDefault` whose
+/// `w:pPr` is `ppr`.
+fn paragraph_defaults(ppr: &str) -> String {
+    format!("<w:pPrDefault><w:pPr>{ppr}</w:pPr></w:pPrDefault>")
+}
+
+/// A `w:docDefaults` of a run default and a paragraph default.
+fn defaults(run: &str, paragraph: &str) -> String {
+    format!("<w:docDefaults>{run}{paragraph}</w:docDefaults>")
+}
+
+/// The style `w:styleId="id"` of the stylesheet `root`.
+fn style(dom: &Dom, root: NodeId, id: &str) -> Option<NodeId> {
+    dom.elements(root, Some(&W::name("style")))
+        .into_iter()
+        .find(|&s| attr(dom, s, W::URI, "styleId") == id)
+}
+
+/// The style `id` and each `w:basedOn` ancestor of it the stylesheet
+/// defines, nearest first; at most twelve, and never twice one.
+fn chain(dom: &Dom, root: NodeId, id: &str) -> Vec<NodeId> {
+    let mut chain = Vec::new();
+    let mut current = style(dom, root, id);
+    while let Some(s) = current {
+        if chain.len() >= 12 || chain.contains(&s) {
+            break;
+        }
+        chain.push(s);
+        current = child(dom, s, "basedOn")
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|v| style(dom, root, v));
+    }
+    chain
+}
+
+/// The run size the style `id` resolves to, in half-points: its own `w:sz`,
+/// else the nearest up its `w:basedOn` chain, else the one `w:docDefaults`
+/// set, else Word's default of 20. Change records are not read.
+fn run_size(dom: &Dom, root: NodeId, id: &str) -> String {
+    let size = |block: Option<NodeId>| {
+        block
+            .and_then(|b| child(dom, b, "sz"))
+            .map(|sz| val(dom, Some(sz)).to_string())
+    };
+    let doc_default = child(dom, root, "docDefaults")
+        .and_then(|d| child(dom, d, "rPrDefault"))
+        .and_then(|d| child(dom, d, "rPr"));
+    chain(dom, root, id)
+        .into_iter()
+        .find_map(|s| size(child(dom, s, "rPr")))
+        .or_else(|| size(doc_default))
+        .filter(|size| !size.is_empty())
+        .unwrap_or_else(|| "20".to_string())
+}
+
+/// The `w:spacing` the paragraph style `id` resolves to, as (before, after,
+/// line): each attribute from the nearest style up its `w:basedOn` chain
+/// that sets it, else from `w:docDefaults`, else Word's defaults of 0, 0
+/// and 240.
+fn spacing(dom: &Dom, root: NodeId, id: &str) -> (String, String, String) {
+    let doc_default = child(dom, root, "docDefaults")
+        .and_then(|d| child(dom, d, "pPrDefault"))
+        .and_then(|d| child(dom, d, "pPr"));
+    let mut holders: Vec<Option<NodeId>> = chain(dom, root, id)
+        .into_iter()
+        .map(|s| child(dom, s, "pPr"))
+        .collect();
+    holders.push(doc_default);
+    let mut resolved = ["0", "0", "240"].map(String::from);
+    for holder in holders.iter().rev().flatten() {
+        let Some(spacing) = child(dom, *holder, "spacing") else {
+            continue;
+        };
+        for (slot, name) in resolved.iter_mut().zip(["before", "after", "line"]) {
+            let value = attr(dom, spacing, W::URI, name);
+            if !value.is_empty() {
+                *slot = value.to_string();
+            }
+        }
+    }
+    let [before, after, line] = resolved;
+    (before, after, line)
+}
+
+/// What the `w:pPr`/`w:rPr` `block` declares of itself, each child as XML:
+/// its change records do not count.
+fn declared(dom: &Dom, block: Option<NodeId>) -> Vec<String> {
+    block
+        .map(|b| {
+            dom.elements(b, None)
+                .into_iter()
+                .filter(|&c| {
+                    dom.name(c)
+                        .is_some_and(|n| !matches!(n.local_name(), "pPrChange" | "rPrChange"))
+                })
+                .map(|c| dom.serialize_element(c))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A document of one paragraph whose stylesheet is `styles_xml`.
+fn styled(styles_xml: &str) -> Vec<u8> {
+    package(
+        &docx::para("Alpha beta gamma"),
+        &Chrome {
+            theme: None,
+            styles: Some(styles_xml.to_string()),
+            settings: None,
+        },
+    )
+}
+
+/// #170: the revision's `w:docDefaults` leave the run size to Word's default
+/// and its Normal declares `sz 24`, where the original's `w:docDefaults` set
+/// it and its Normal declares nothing. The size the revision gives its text
+/// by its Normal is what the redline's text keeps: Normal's current `w:rPr`
+/// is the revision's, under the revision's `w:docDefaults`, and the
+/// original's properties are in the change records. Before #170 the current
+/// `w:rPr` was a difference against the ORIGINAL's `w:docDefaults` (which
+/// left `sz 24` out as their default), so the text came out at 10pt.
+#[test]
+fn a_size_the_revision_declares_on_normal_survives_the_adopted_doc_defaults() {
+    let original = styled(&stylesheet_parts(
+        &defaults(
+            &run_defaults(Some("24")),
+            &paragraph_defaults(SINGLE_SPACING),
+        ),
+        "",
+        "",
+    ));
+    let revised = styled(&stylesheet_parts(
+        &defaults(&run_defaults(None), &paragraph_defaults(SINGLE_SPACING)),
+        r#"<w:rPr><w:sz w:val="24"/></w:rPr>"#,
+        "",
+    ));
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let out_styles = part(&out, "word/styles.xml");
+    let (dom, root) = parse(&out_styles);
+    assert_eq!(
+        doc_defaults(&out_styles).0,
+        "",
+        "the redline's docDefaults are the revision's, which set no size"
+    );
+    assert_eq!(
+        run_size(&dom, root, "Normal"),
+        "24",
+        "Normal resolves to the size the revision declares on it"
+    );
+    let normal = style(&dom, root, "Normal").expect("a Normal style");
+    let (revised_dom, revised_root) = parse(&part(&revised, "word/styles.xml"));
+    assert_eq!(
+        declared(&dom, child(&dom, normal, "rPr")),
+        declared(
+            &revised_dom,
+            child(
+                &revised_dom,
+                style(&revised_dom, revised_root, "Normal").expect("a Normal style"),
+                "rPr"
+            )
+        ),
+        "Normal's current run properties are the revision's own"
+    );
+    let record = child(&dom, normal, "rPr")
+        .and_then(|r| child(&dom, r, "rPrChange"))
+        .and_then(|c| child(&dom, c, "rPr"));
+    assert_eq!(
+        val(&dom, record.and_then(|r| child(&dom, r, "sz"))),
+        "24",
+        "the original's size, which its docDefaults set, is in the record"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // `word` is built on the original package: its docDefaults are the
+    // original's, under which Normal's size is 24 as well.
+    let out = redline(&original, &revised, CompareMode::Word);
+    let (dom, root) = parse(&part(&out, "word/styles.xml"));
+    assert_eq!(run_size(&dom, root, "Normal"), "24");
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")).0,
+        "24",
+        "`word` keeps the original's docDefaults"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// #170: the revision's paragraph defaults space a paragraph `after 200` on
+/// `line 276`, where the original's space it single; its `heading 2`
+/// declares `line 240`, where the original's has no spacing; `Body Text`
+/// declares no spacing in either. Under the revision's `w:docDefaults`:
+/// `heading 2` keeps the line the revision declares (before #170 `line 240`
+/// was left out as the original's default, and the heading resolved to
+/// 276), and `Body Text` resolves to the revision's paragraph defaults.
+#[test]
+fn a_spacing_the_revision_declares_on_a_style_survives_the_adopted_doc_defaults() {
+    const AIRED: &str = r#"<w:spacing w:after="200" w:line="276" w:lineRule="auto"/>"#;
+    const HEADING_SPACING: &str =
+        r#"<w:spacing w:before="240" w:after="120" w:line="240" w:lineRule="auto"/>"#;
+    let body_text = r#"<w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>"#;
+    let heading = |spacing: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:keepNext/>{spacing}<w:outlineLvl w:val="1"/></w:pPr></w:style>{body_text}"#
+        )
+    };
+    let original = styled(&stylesheet_parts(
+        &defaults(
+            &run_defaults(Some("22")),
+            &paragraph_defaults(SINGLE_SPACING),
+        ),
+        "",
+        &heading(""),
+    ));
+    let revised = styled(&stylesheet_parts(
+        &defaults(&run_defaults(Some("22")), &paragraph_defaults(AIRED)),
+        "",
+        &heading(HEADING_SPACING),
+    ));
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let (dom, root) = parse(&part(&out, "word/styles.xml"));
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")),
+        ("22".to_string(), "200".to_string()),
+        "the redline's docDefaults are the revision's"
+    );
+    assert_eq!(
+        spacing(&dom, root, "Heading2"),
+        ("240".to_string(), "120".to_string(), "240".to_string()),
+        "heading 2 resolves to the spacing the revision declares on it"
+    );
+    assert_eq!(
+        spacing(&dom, root, "BodyText"),
+        ("0".to_string(), "200".to_string(), "276".to_string()),
+        "a style without spacing of its own takes the revision's paragraph defaults"
+    );
+    let heading = style(&dom, root, "Heading2").expect("a heading 2 style");
+    let (revised_dom, revised_root) = parse(&part(&revised, "word/styles.xml"));
+    let revised_heading = style(&revised_dom, revised_root, "Heading2").expect("a heading 2 style");
+    assert_eq!(
+        declared(&dom, child(&dom, heading, "pPr")),
+        declared(&revised_dom, child(&revised_dom, revised_heading, "pPr")),
+        "heading 2's current paragraph properties are the revision's own"
+    );
+    let record = child(&dom, heading, "pPr")
+        .and_then(|p| child(&dom, p, "pPrChange"))
+        .and_then(|c| child(&dom, c, "pPr"));
+    assert!(
+        record.is_some_and(|p| child(&dom, p, "spacing").is_none()),
+        "the original's paragraph properties, which have no spacing, are in the record"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    // `word` is built on the original package, whose docDefaults it keeps.
+    let out = redline(&original, &revised, CompareMode::Word);
+    let out_styles = part(&out, "word/styles.xml");
+    let (dom, root) = parse(&out_styles);
+    assert_eq!(
+        doc_defaults(&out_styles),
+        ("22".to_string(), "0".to_string()),
+        "`word` keeps the original's docDefaults"
+    );
+    assert_eq!(
+        spacing(&dom, root, "Heading2"),
+        ("240".to_string(), "120".to_string(), "240".to_string()),
+        "`word` gives heading 2 the revision's spacing against the original's docDefaults"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// #170: the revision bases `List Paragraph` on Normal, whose size it sets to
+/// 24, where the original's `List Paragraph` has no base and its Normal
+/// declares nothing. The redline's `List Paragraph` is based on Normal as the
+/// revision's is, so it resolves to the revision's 24. Before #170 it kept
+/// the original's definition, without the base, and took 22 from the
+/// docDefaults.
+#[test]
+fn a_base_the_revision_gives_a_style_is_adopted_with_the_doc_defaults() {
+    let list_paragraph = |base: &str| {
+        format!(
+            r#"<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/>{base}<w:uiPriority w:val="34"/><w:qFormat/><w:pPr><w:ind w:left="720"/></w:pPr></w:style>"#
+        )
+    };
+    let original = styled(&stylesheet_parts(
+        &defaults(
+            &run_defaults(Some("22")),
+            &paragraph_defaults(SINGLE_SPACING),
+        ),
+        "",
+        &list_paragraph(""),
+    ));
+    let revised = styled(&stylesheet_parts(
+        &defaults(
+            &run_defaults(Some("22")),
+            &paragraph_defaults(SINGLE_SPACING),
+        ),
+        r#"<w:rPr><w:sz w:val="24"/></w:rPr>"#,
+        &list_paragraph(r#"<w:basedOn w:val="Normal"/>"#),
+    ));
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let (dom, root) = parse(&part(&out, "word/styles.xml"));
+    let adopted = style(&dom, root, "ListParagraph").expect("a List Paragraph style");
+    assert_eq!(
+        val(&dom, child(&dom, adopted, "basedOn")),
+        "Normal",
+        "List Paragraph is based on Normal, as the revision's is"
+    );
+    assert_eq!(
+        run_size(&dom, root, "ListParagraph"),
+        "24",
+        "List Paragraph resolves to the size the revision gives it through Normal"
+    );
+    crate::common::validity::assert_word_valid_package(&out);
+
+    let out = redline(&original, &revised, CompareMode::Word);
+    assert_eq!(
+        doc_defaults(&part(&out, "word/styles.xml")),
+        ("22".to_string(), "0".to_string()),
+        "`word` keeps the original's docDefaults"
     );
     crate::common::validity::assert_word_valid_package(&out);
 }
