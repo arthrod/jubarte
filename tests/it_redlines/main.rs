@@ -360,3 +360,4 @@ mod s2_bake_respects_basedon_chain;
 mod s2_bonly_style_docdefaults_bake;
 mod sha1_key_invariant;
 mod word_package_notes_settings_coherence;
+mod word_windows_equal_table_after_gap;

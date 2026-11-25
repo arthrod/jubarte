@@ -19,7 +19,9 @@
 //! 3. [`process_correlated_hashes`] / `process_correlated_hashes_in_story`
 //!    — pair runs of groups by `pt:CorrelatedSHA1Hash`;
 //! 4. [`find_common_at_beginning_and_end`] — front / back common runs;
-//! 5. [`do_lcs_algorithm`] — paragraph-text LCS with all the C-step guards.
+//! 5. [`find_common_end_by_text`] — under Windows Word, whole blocks
+//!    that end the region and read the same (arthrod/jubarte#156);
+//! 6. [`do_lcs_algorithm`] — paragraph-text LCS with all the C-step guards.
 //!
 //! [`detect_unrelated_sources`] / [`detect_unrelated_sources_word_mode`] short-circuit
 //! wholesale del+ins when the two documents are disjoint at the group level.
@@ -155,7 +157,7 @@ fn do_lcs(cul1: &[ComparisonUnitAtom], cul2: &[ComparisonUnitAtom], out: &mut Ve
 
 use super::atoms::{ComparisonUnit, CorrelatedSequence};
 use super::lcs_table;
-use super::{ComparisonUnitGroupType, WmlComparerSettings};
+use super::{ComparisonUnitGroupType, WmlComparerSettings, WordPlatform};
 use super::{WORD_LEVEL_KEPT_RATIO, atoms};
 use crate::namespaces::{M, PT, W};
 use crate::xmllinq::{Dom, NodeId};
@@ -275,7 +277,9 @@ pub fn set_after_unids(dom: &mut Dom, unknown: &CorrelatedSequence) {
 /// 3. `process_correlated_hashes_in_story` — pre-correlate runs of
 ///    groups by `pt:CorrelatedSHA1Hash`;
 /// 4. [`find_common_at_beginning_and_end`] — front / back common runs;
-/// 5. [`do_lcs_algorithm`] — paragraph-text LCS.
+/// 5. [`find_common_end_by_text`] — under Windows Word, the whole blocks
+///    that end the region and read the same (arthrod/jubarte#156);
+/// 6. [`do_lcs_algorithm`] — paragraph-text LCS.
 ///
 /// Bare-row (`Container`) `Unknown`s whose horizontal partitions differ get
 /// the table row-context specialisation first, preserving source geometry.
@@ -345,7 +349,10 @@ pub fn resolve_correlated_sequences(
                 Ok(r) => r,
                 Err(unknown) => match find_common_at_beginning_and_end(dom, &unknown, settings) {
                     Some(r) => r,
-                    None => do_lcs_algorithm(dom, unknown, settings),
+                    None => match find_common_end_by_text(dom, &unknown, settings) {
+                        Some(r) => r,
+                        None => do_lcs_algorithm(dom, unknown, settings),
+                    },
                 },
             },
         };
@@ -402,6 +409,11 @@ mod indexed_lcr_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/story_final_mark_tests.rs"]
 mod story_final_mark_tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/common_end_by_text_tests.rs"]
+mod common_end_by_text_tests;
 
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
