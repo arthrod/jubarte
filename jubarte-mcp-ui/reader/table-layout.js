@@ -282,12 +282,14 @@ export function composeWithTables(snapshot,runtime,input){
  return {layout,measured,fallback,tableFragments,footnoteFragments,footnoteBands,diagnostics};
 }
 
+// Word breaks after a hyphen inside a word, never after "." or "/" (#110).
+const HYPHEN=/^[-\u2010]$/;
 const graphemes=text=>typeof Intl.Segmenter==='function'?[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text)].map(s=>s.segment):Array.from(text);
 
 /** Upstream's word-boundary repair may exceed the slot for long unbroken
  * words, and a line can end a hair past it on a trailing space. Wrap only
  * those lines, preserving code points, marks and PM spans. Spaces hang past
- * the edge as Word lets them, a line breaks after its last space, and only a
+ * the edge as Word lets them, a line breaks after its last space or hyphen (#110), and only a
  * word wider than the slot is cut by grapheme (b106: "(i" / "f "). */
 /** `indent` ({first, rest}, px): where the block's first line and its following lines begin,
  * so a line rebuilt here keeps the paragraph's indents (#72). */
@@ -308,7 +310,7 @@ export function constrainLines(lines,w,lh,glyphWidth,indent={first:0,rest:0}){
     const pieces=[];
     for(let start=0;start<chars.length;){
       let end=start,used=0,lastBreak=-1;const room=w-at(out.length+pieces.length);
-      while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>room+0.01)break;used+=c.cw;end++;if(space(c.ch))lastBreak=end;}
+      while(end<chars.length){const c=chars[end];if(!space(c.ch)&&end>start&&used+c.cw>room+0.01)break;used+=c.cw;end++;if(space(c.ch)||(HYPHEN.test(c.ch)&&end-1>start&&!space(chars[end-2].ch)))lastBreak=end;}
       if(end<chars.length&&lastBreak>start)end=lastBreak;
       // Kinsoku, as Word wraps East Asian text: closing punctuation never starts a line and an
       // opening bracket never ends one; the break moves back a character (#82).

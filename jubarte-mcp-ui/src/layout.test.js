@@ -953,7 +953,7 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
     const { container, done } = compose(styled("Calibri bold italic underline strike 11pt"));
     const run = drawn(container);
     expect(run.style.font).toContain("italic");
-    expect(run.style.font).toContain("600");
+    expect(run.style.font).toContain("700");
     expect([...run.classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
     done();
   });
@@ -969,7 +969,7 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
       );
       expect(run.style.font, mark).not.toContain("italic");
       expect(run.style.font, mark).toContain("400");
-      expect(inherited.style.font, mark).toContain(mark === "bold" ? "600" : "italic");
+      expect(inherited.style.font, mark).toContain(mark === "bold" ? "700" : "italic");
       done();
     }
   });
@@ -995,6 +995,38 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
     expect(run.style.font).not.toContain("italic");
     expect(run.style.font).toContain("400");
     expect([...run.classList]).not.toContain("underline");
+    done();
+  });
+});
+
+describe("a paragraph draws in its style's font: local first, then the bundled twin (#99)", () => {
+  const doc = (styles, body) =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${styles}---\n\n${body}`;
+  const runOf = (container, text) =>
+    [...container.querySelectorAll(".premirror-run")].find((r) => r.textContent.includes(text));
+  it("an implicit Normal paragraph is Calibri, then Jubarte Page C", () => {
+    const { container, done } = compose(doc("", "<!-- p0 -->\nPLAIN\n"));
+    expect(runOf(container, "PLAIN").style.font).toContain('"Calibri", "Jubarte Page C", sans-serif');
+    done();
+  });
+  it("a named style's family reaches its runs, with its twin behind it", () => {
+    const { container, done } = compose(
+      doc("  Body: Arial 11pt\n  Legal: Times New Roman 12pt\n", "<!-- p0 Body -->\nSANS\n\n<!-- p1 Legal -->\nSERIF\n"),
+    );
+    expect(runOf(container, "SANS").style.font).toContain('"Arial", "Jubarte Page Sans", sans-serif');
+    expect(runOf(container, "SERIF").style.font).toContain('"Times New Roman", "Jubarte Page Serif", serif');
+    expect(container.innerHTML).not.toContain("Source Serif 4");
+    done();
+  });
+  it("a family with no twin falls back by class and the card says so", () => {
+    const { container, composed, done } = compose(doc("  Body: Georgia 11pt\n", "<!-- p0 Body -->\nCLASSIC\n"));
+    expect(runOf(container, "CLASSIC").style.font).toContain('"Georgia", "Jubarte Page Serif", serif');
+    expect(composed.warnings.join(" ")).toMatch(/Georgia/);
+    done();
+  });
+  it("bold is Word's 700, which the bundled bold faces carry", () => {
+    const { container, done } = compose(doc("", "<!-- p0 -->\n**HEAVY**\n"));
+    expect(runOf(container, "HEAVY").style.font).toMatch(/^700 /);
     done();
   });
 });
