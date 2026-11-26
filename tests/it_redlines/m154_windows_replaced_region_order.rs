@@ -609,6 +609,73 @@ fn mac_015_closing_paragraph_that_holds_content_keeps_its_own_order() {
     }
 }
 
+// ─── the review of #160: the closing paragraph's property history ─────────
+
+/// `w:after` of the story's closing paragraph's `w:spacing`, if any, in the
+/// document part of `docx`.
+fn closing_spacing_after(docx: &[u8]) -> Option<String> {
+    let (dom, root) = parse(&part(docx, "word/document.xml"));
+    let body = dom.element(root, &W::body()).expect("a body");
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&child| dom.name_is(child, &W::p()))
+        .expect("the story closes on a paragraph");
+    let spacing = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::spacing_el()))?;
+    dom.attribute(spacing, &W::name("after"))
+        .map(str::to_string)
+}
+
+/// The original's closing paragraph keeps spacing the revision drops; the
+/// pipeline parks that spacing in a `w:pPrChange` before the tail pass
+/// runs. The tail still moves behind the table, and the moved paragraph
+/// stands for the closing one: Reject All restores the spacing, and Accept
+/// All reads the revision without it (the review of #160: the history went
+/// away with the paragraph, and Reject All lost the spacing).
+#[test]
+fn windows_015_closing_paragraph_keeps_its_property_history_on_reject() {
+    let (original, revised) =
+        pair_015_closing(r#"<w:p><w:pPr><w:spacing w:after="720"/></w:pPr></w:p>"#);
+    let out = compared(&original, &revised, CompareMode::WordWindows, &[]);
+    assert_reads_as_both_sides(&out, &docx_with(&original, &[]), &docx_with(&revised, &[]));
+    let (dom, root) = parse(&part(&out, "word/document.xml"));
+    let mut expected = WINDOWS_015_THROUGH_THE_TABLE.map(String::from).to_vec();
+    expected.push("{+add a comment to this one too.+}¶ ".to_string());
+    assert_eq!(body_shape(&dom, root), expected);
+    let rejected = reject_revisions(&out).expect("Reject All succeeds");
+    assert_eq!(
+        closing_spacing_after(&rejected).as_deref(),
+        Some("720"),
+        "Reject All restores the original's closing spacing"
+    );
+    let accepted = accept_revisions(&out).expect("Accept All succeeds");
+    assert_eq!(
+        closing_spacing_after(&accepted),
+        None,
+        "Accept All reads the revision's closing paragraph"
+    );
+}
+
+/// Mac Word 16's redline of the same pair (snapshot: must not move): the
+/// closing paragraph stays, with its history, and Reject All restores the
+/// spacing as it does on Windows.
+#[test]
+fn mac_015_closing_paragraph_keeps_its_property_history() {
+    let (original, revised) =
+        pair_015_closing(r#"<w:p><w:pPr><w:spacing w:after="720"/></w:pPr></w:p>"#);
+    let (dom, root) = redline(&original, &revised, CompareMode::Word);
+    assert_eq!(
+        body_shape(&dom, root).last().map(String::as_str),
+        Some("¶ ")
+    );
+    let out = compared(&original, &revised, CompareMode::Word, &[]);
+    let rejected = reject_revisions(&out).expect("Reject All succeeds");
+    assert_eq!(closing_spacing_after(&rejected).as_deref(), Some("720"));
+}
+
 // ─── the review of #160: a paragraph behind the replaced region ───────────
 
 /// [`pair_001`] with `tail` appended to the original.
@@ -775,4 +842,62 @@ fn four_argument_finalizer_keeps_its_signature_and_its_result() {
     let (mut dom, root) = parse(&document(&body));
     merge_replaced_paragraphs_for_platform(&mut dom, root, "Editor", false, WordPlatform::Windows);
     assert_eq!(body_shape(&dom, root), ["[-b-]¶+", "{+Item 2+}¶+"]);
+}
+
+// ─── the review of #160: a zero-pair region that adds a paragraph ─────────
+
+/// A zero-pair region between two kept paragraphs: one original paragraph
+/// against two revised ones, sharing a word with it and no paragraph.
+fn pair_zero_pair() -> (String, String) {
+    let original = [
+        para("Intro line stays."),
+        para("alpha will omega"),
+        para("Outro line stays."),
+    ]
+    .concat();
+    let revised = [
+        para("Intro line stays."),
+        para("beta will gamma"),
+        para("delta epsilon"),
+        para("Outro line stays."),
+    ]
+    .concat();
+    (original, revised)
+}
+
+/// The public pipeline keeps this short replacement as whole paragraphs,
+/// with deletions first on Windows. Both source documents must still be
+/// recovered. The isolated render test in `cross_para.rs` exercises C77's
+/// expanding zero-pair stream; its intermediate cells are not a snapshot
+/// of the final public redline for this fixture.
+#[test]
+fn windows_zero_pair_region_that_adds_a_paragraph_preserves_both_sources() {
+    let (original, revised) = pair_zero_pair();
+    let (dom, root) = windows_redline(&original, &revised, &[]);
+    assert_eq!(
+        body_shape(&dom, root),
+        [
+            "Intro line stays.¶ ",
+            "[-alpha will omega-]¶-",
+            "{+beta will gamma+}¶+",
+            "{+delta epsilon+}¶+",
+            "Outro line stays.¶ ",
+        ]
+    );
+}
+
+/// Mac Word 16's redline of the same pair (snapshot: must not move).
+#[test]
+fn mac_zero_pair_region_that_adds_a_paragraph_keeps_its_own_order() {
+    let (original, revised) = pair_zero_pair();
+    let (dom, root) = redline(&original, &revised, CompareMode::Word);
+    assert_eq!(
+        body_shape(&dom, root),
+        [
+            "Intro line stays.¶ ",
+            "{+beta+}[-alpha-] will {+gamma+}[-omega-]¶ ",
+            "{+delta epsilon+}¶+",
+            "Outro line stays.¶ ",
+        ]
+    );
 }

@@ -66,6 +66,13 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
         return;
     }
     let run: Vec<NodeId> = kids[r..d].to_vec();
+    // A section break is a barrier, as it is for the paragraph reorder: the
+    // moved run would carry its section's end behind the deleted region,
+    // and the last moved mark, losing its insertion, would leave Reject All
+    // a section break the original never had (the review of #160).
+    if run.iter().any(|&p| para_ends_a_section(dom, p)) {
+        return;
+    }
     let last_run = *run.last().expect("the run is not empty");
     for &p in &run {
         dom.remove(p);
@@ -88,6 +95,16 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
             dom.add(last_run, child);
         }
     }
+    // The closing paragraph's property history moves with its final mark:
+    // the moved run's last paragraph stands for that paragraph once Reject
+    // All reads it (the review of #160: the history used to go away with the
+    // paragraph, and Reject All lost the original's closing formatting).
+    let history = dom
+        .element(final_pilcrow, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()));
+    if let Some(history) = history {
+        dom.remove(history);
+    }
     dom.remove(final_pilcrow);
     // The moved run's last mark closes the story now: its insertion would
     // have Reject All join the tail away and leave the story with no
@@ -104,13 +121,83 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
             dom.remove(ppr);
         }
     }
+    if let Some(history) = history {
+        // The paragraph's own history, if any, recorded one Reject All
+        // removed with its inserted mark; the closing paragraph's stands.
+        let ppr = match dom.element(last_run, &W::p_pr()) {
+            Some(ppr) => ppr,
+            None => {
+                let ppr = dom.new_element(W::p_pr());
+                dom.add_first(last_run, ppr);
+                ppr
+            }
+        };
+        if let Some(own) = dom.element(ppr, &W::p_pr_change()) {
+            dom.remove(own);
+        }
+        dom.add(ppr, history);
+    }
 }
 
-/// The text accepting the revisions reads: any non-blank `w:t` under `node`.
-fn live_text(dom: &Dom, node: NodeId) -> bool {
-    dom.descendants(node, Some(&W::t()))
-        .into_iter()
-        .any(|t| !dom.value(t).trim().is_empty())
+/// A block of the deleted region: a table whose rows are all deleted, or a
+/// paragraph Accept All removes. It carries a deletion, its mark is
+/// deleted, every run of it is deleted and nothing else in it survives: a
+/// live page break, a drawing or a field reads as no `w:t`, and a mark that
+/// survives leaves an empty paragraph behind. The tail stays ahead of both,
+/// where Accept All reads it (the review of #160).
+fn deleted_block(dom: &Dom, node: NodeId) -> bool {
+    if dom.name_is(node, &W::tbl()) {
+        return super::table_is_deleted(dom, node);
+    }
+    dom.name_is(node, &W::p())
+        && carries_deletion(dom, node)
+        && super::para_mark_revision(dom, node, &W::del())
+        && dom
+            .descendants(node, Some(&W::r()))
+            .iter()
+            .all(|&r| first_wrapper_is(dom, r, node, &W::del()))
+        && dom
+            .elements(node, None)
+            .into_iter()
+            .filter(|&c| !dom.name_is(c, &W::p_pr()))
+            .all(|c| goes_with_the_deletion(dom, c))
+}
+
+/// Accept All removes `node` with its paragraph, or it carries no content:
+/// a deletion or a move-from wrapper and whatever sits under one, a
+/// hyperlink or a simple field whose every child does, a bookmark, a
+/// comment anchor, a proofing or permission mark, or a deletion's own range
+/// markers. Anything else — a run, an insertion, a content control, a
+/// drawing — survives.
+fn goes_with_the_deletion(dom: &Dom, node: NodeId) -> bool {
+    let Some(name) = dom.name(node) else {
+        return false;
+    };
+    if name.namespace_name() != W::URI {
+        return false;
+    }
+    match name.local_name() {
+        "del"
+        | "moveFrom"
+        | "bookmarkStart"
+        | "bookmarkEnd"
+        | "commentRangeStart"
+        | "commentRangeEnd"
+        | "proofErr"
+        | "permStart"
+        | "permEnd"
+        | "moveFromRangeStart"
+        | "moveFromRangeEnd"
+        | "customXmlDelRangeStart"
+        | "customXmlDelRangeEnd"
+        | "customXmlMoveFromRangeStart"
+        | "customXmlMoveFromRangeEnd" => true,
+        "hyperlink" | "fldSimple" => dom
+            .elements(node, None)
+            .into_iter()
+            .all(|c| goes_with_the_deletion(dom, c)),
+        _ => false,
+    }
 }
 
 /// The story's final mark pairs over this paragraph, the original's closing
@@ -123,11 +210,12 @@ fn pairs_the_final_marks(dom: &Dom, node: NodeId) -> bool {
     if !dom.descendants(node, Some(&W::ins())).is_empty() {
         return false;
     }
-    let ppr = dom.element(node, &W::p_pr());
-    if ppr.is_some_and(|p| dom.element(p, &W::sect_pr()).is_some()) {
+    if para_ends_a_section(dom, node) {
         return false;
     }
-    let mark = ppr.and_then(|p| dom.element(p, &W::r_pr()));
+    let mark = dom
+        .element(node, &W::p_pr())
+        .and_then(|p| dom.element(p, &W::r_pr()));
     if mark.is_some_and(|m| dom.element(m, &W::del()).is_some()) {
         return false;
     }
@@ -136,13 +224,11 @@ fn pairs_the_final_marks(dom: &Dom, node: NodeId) -> bool {
         .all(|run| first_wrapper_is(dom, run, node, &W::del()))
 }
 
-/// A block of the deleted region: a table whose rows are all deleted, or a
-/// paragraph that reads nothing accepted and carries a deletion.
-fn deleted_block(dom: &Dom, node: NodeId) -> bool {
-    if dom.name_is(node, &W::tbl()) {
-        return super::table_is_deleted(dom, node);
-    }
-    dom.name_is(node, &W::p()) && !live_text(dom, node) && carries_deletion(dom, node)
+/// The paragraph carries its section's properties: a section ends with its
+/// mark.
+fn para_ends_a_section(dom: &Dom, node: NodeId) -> bool {
+    dom.element(node, &W::p_pr())
+        .is_some_and(|ppr| dom.element(ppr, &W::sect_pr()).is_some())
 }
 
 /// A `w:del` anywhere under `node`: deleted runs, or the paragraph mark's.
@@ -217,19 +303,74 @@ mod tests {
         format!("<w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid>{row}</w:tbl>")
     }
 
-    /// `body` serialized, after the pass when `pass`.
-    fn serialized(body: &str, pass: bool) -> String {
-        let xml = format!(
+    /// A document parsed, with its root element.
+    fn document(xml: &str) -> (Dom, NodeId) {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(xml);
+        let root = dom.root(doc).unwrap();
+        (dom, root)
+    }
+
+    /// `body` in a document, parsed, with its root element.
+    fn parsed(body: &str) -> (Dom, NodeId) {
+        document(&format!(
             r#"<w:document xmlns:w="{}"><w:body>{body}<w:sectPr/></w:body></w:document>"#,
             W::URI
-        );
-        let mut dom = Dom::new();
-        let doc = dom.parse_xdocument(&xml);
-        let root = dom.root(doc).unwrap();
+        ))
+    }
+
+    /// `body` serialized, after the pass when `pass`.
+    fn serialized(body: &str, pass: bool) -> String {
+        let (mut dom, root) = parsed(body);
         if pass {
             windows_replaced_region_tail(&mut dom, root);
         }
         dom.serialize_element(root)
+    }
+
+    /// The story's last paragraph of the document `xml`, once Accept All
+    /// (`accept`) or Reject All read it.
+    fn resolved_closing(xml: &str, accept: bool) -> (Dom, NodeId) {
+        let (mut dom, root) = document(xml);
+        let root = if accept {
+            crate::revision_processor::accept_revisions_document(&mut dom, root)
+        } else {
+            crate::revision_processor::reject_revisions_document(&mut dom, root)
+        };
+        let body = dom.element(root, &W::body()).unwrap();
+        let last = dom
+            .elements(body, None)
+            .into_iter()
+            .rev()
+            .find(|&k| dom.name_is(k, &W::p()))
+            .expect("the story closes on a paragraph");
+        (dom, last)
+    }
+
+    /// `w:after` of the paragraph's `w:spacing`, if any.
+    fn spacing_after(dom: &Dom, p: NodeId) -> Option<String> {
+        let spacing = dom
+            .element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::spacing_el()))?;
+        dom.attribute(spacing, &W::name("after"))
+            .map(str::to_string)
+    }
+
+    /// The text of the paragraph's `w:t` and `w:delText`, in order.
+    fn text_of(dom: &Dom, p: NodeId) -> String {
+        dom.descendants(p, None)
+            .into_iter()
+            .filter(|&n| dom.name_is(n, &W::t()) || dom.name_is(n, &W::del_text()))
+            .map(|n| dom.value(n))
+            .collect()
+    }
+
+    /// The `w:after` the paragraph's history records, if it carries one.
+    fn history_spacing_after(dom: &Dom, history: NodeId) -> Option<String> {
+        let old = dom.element(history, &W::p_pr())?;
+        let spacing = dom.element(old, &W::spacing_el())?;
+        dom.attribute(spacing, &W::name("after"))
+            .map(str::to_string)
     }
 
     /// Each direct `w:p`/`w:tbl` child of the body, in order: its text and
@@ -470,5 +611,238 @@ mod tests {
             shapes(&serialized(&before, true)),
             ["Gone¶-", "T", "Tail¶."]
         );
+    }
+
+    /// `body` with the pass when `pass`, then Accept All (`accept`) or
+    /// Reject All: what each paragraph reads, in order.
+    fn resolved(body: &str, accept: bool, pass: bool) -> Vec<String> {
+        let (mut dom, root) = parsed(body);
+        if pass {
+            windows_replaced_region_tail(&mut dom, root);
+        }
+        let root = if accept {
+            crate::revision_processor::accept_revisions_document(&mut dom, root)
+        } else {
+            crate::revision_processor::reject_revisions_document(&mut dom, root)
+        };
+        outlined(&dom.serialize_element(root))
+    }
+
+    /// The story's last paragraph of the document `xml`, parsed.
+    fn last_paragraph(xml: &str) -> (Dom, NodeId) {
+        let (dom, root) = document(xml);
+        let body = dom.element(root, &W::body()).unwrap();
+        let last = dom
+            .elements(body, None)
+            .into_iter()
+            .rev()
+            .find(|&k| dom.name_is(k, &W::p()))
+            .expect("the story closes on a paragraph");
+        (dom, last)
+    }
+
+    // ─── the review of #160 ─────────────────────────────────────────────
+
+    /// The original's closing paragraph, with the history the pipeline
+    /// writes before the tail pass (M92: the closing spacing the revision
+    /// drops goes into a `w:pPrChange`).
+    fn closing_with_history() -> String {
+        format!(
+            r#"<w:p><w:pPr><w:pPrChange w:id="7" {BY}><w:pPr><w:spacing w:after="720"/></w:pPr></w:pPrChange></w:pPr></w:p>"#
+        )
+    }
+
+    /// The original's closing paragraph carries its formatting history. The
+    /// moved run's last paragraph stands for that closing paragraph once its
+    /// mark closes the story, so the history goes with the mark (the review
+    /// of #160: it used to go away with the paragraph, and Reject All lost
+    /// the original's closing spacing). A history of the moved paragraph's
+    /// own gives way to it: accepted, it is dropped either way.
+    #[test]
+    fn closing_property_history_moves_to_the_surviving_carrier() {
+        let own_history = format!(
+            r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" {BY}/></w:rPr><w:pPrChange w:id="9" {BY}><w:pPr><w:jc w:val="center"/></w:pPr></w:pPrChange></w:pPr><w:ins w:id="2" {BY}><w:r><w:t>Tail</w:t></w:r></w:ins></w:p>"#
+        );
+        for tail in [inserted("Tail"), own_history] {
+            let before = format!(
+                "{}{tail}{}{}",
+                deleted("Gone"),
+                table(true),
+                closing_with_history()
+            );
+            let after = serialized(&before, true);
+            assert_eq!(shapes(&after), ["Gone¶-", "T", "Tail¶."], "{tail}");
+            let (dom, last) = last_paragraph(&after);
+            let history = dom
+                .element(last, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+                .expect("the closing history survives on the carrier");
+            assert_eq!(dom.attribute(history, &W::id()), Some("7"), "{tail}");
+            assert_eq!(
+                history_spacing_after(&dom, history).as_deref(),
+                Some("720"),
+                "{tail}"
+            );
+            // Reject All closes the original's way, Accept All the revision's.
+            let (dom, closing) = resolved_closing(&after, false);
+            assert_eq!(
+                spacing_after(&dom, closing).as_deref(),
+                Some("720"),
+                "{tail}"
+            );
+            let (dom, closing) = resolved_closing(&after, true);
+            assert_eq!(spacing_after(&dom, closing), None, "{tail}");
+        }
+    }
+
+    /// A closing paragraph that holds deletions of its own beside its
+    /// history: Reject All restores both, the deletions ahead of the tail
+    /// (#2550's order) and the spacing with the final mark.
+    #[test]
+    fn closing_deletions_and_history_both_survive_on_the_carrier() {
+        let closing = format!(
+            r#"<w:p><w:pPr><w:pPrChange w:id="7" {BY}><w:pPr><w:spacing w:after="720"/></w:pPr></w:pPrChange></w:pPr><w:del w:id="4" {BY}><w:r><w:delText>Old close</w:delText></w:r></w:del></w:p>"#
+        );
+        let before = format!(
+            "{}{}{}{closing}",
+            deleted("Gone"),
+            inserted("Tail"),
+            table(true)
+        );
+        let after = serialized(&before, true);
+        assert_eq!(
+            outlined(&after),
+            [
+                "[-Gone-]¶-".to_string(),
+                "T".to_string(),
+                "[-Old close-]{+Tail+}¶.".to_string(),
+            ]
+        );
+        let (dom, closing) = resolved_closing(&after, false);
+        assert_eq!(text_of(&dom, closing), "Old close");
+        assert_eq!(spacing_after(&dom, closing).as_deref(), Some("720"));
+    }
+
+    /// A paragraph behind the tail may read as no `w:t` and still hold what
+    /// Accept All keeps: a page break, a tab, a line break, a drawing, a
+    /// field, a space, an insertion with or without a break. None of them
+    /// makes it a block of the deleted region: the tail stays ahead of it,
+    /// where Accept All reads it (the review of #160: the tail moved behind
+    /// a live page break). The same for a paragraph whose mark survives
+    /// acceptance, which Accept All leaves behind, empty.
+    #[test]
+    fn live_payload_behind_the_tail_keeps_the_tail_ahead_of_it() {
+        let payloads = [
+            r#"<w:r><w:br w:type="page"/></w:r>"#.to_string(),
+            "<w:r><w:tab/></w:r>".to_string(),
+            "<w:r><w:br/></w:r>".to_string(),
+            "<w:r><w:drawing/></w:r>".to_string(),
+            r#"<w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple>"#.to_string(),
+            r#"<w:r><w:t xml:space="preserve"> </w:t></w:r>"#.to_string(),
+            format!(r#"<w:ins w:id="6" {BY}><w:r><w:t xml:space="preserve"> </w:t></w:r></w:ins>"#),
+            format!(r#"<w:ins w:id="6" {BY}/>"#),
+            format!(r#"<w:ins w:id="6" {BY}><w:r><w:br w:type="page"/></w:r></w:ins>"#),
+        ];
+        for payload in payloads {
+            let mixed = format!(
+                r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {BY}/></w:rPr></w:pPr><w:del w:id="4" {BY}><w:r><w:delText>Old</w:delText></w:r></w:del>{payload}</w:p>"#
+            );
+            let before = format!(
+                "{}{}{}{mixed}<w:p/>",
+                deleted("Gone"),
+                inserted("Tail"),
+                table(true)
+            );
+            assert_eq!(
+                serialized(&before, true),
+                serialized(&before, false),
+                "{payload}"
+            );
+        }
+        let emptied = format!(
+            r#"<w:p><w:del w:id="4" {BY}><w:r><w:delText>Old</w:delText></w:r></w:del></w:p>"#
+        );
+        let before = format!(
+            "{}{}{}{emptied}<w:p/>",
+            deleted("Gone"),
+            inserted("Tail"),
+            table(true)
+        );
+        assert_eq!(serialized(&before, true), serialized(&before, false));
+    }
+
+    /// The page break keeps its place behind the tail: Accept All reads the
+    /// tail, then the break — the revised document's order — and Reject All
+    /// the original, with or without the pass.
+    #[test]
+    fn accepted_order_keeps_the_tail_ahead_of_a_live_page_break() {
+        let mixed = format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {BY}/></w:rPr></w:pPr><w:del w:id="4" {BY}><w:r><w:delText>Old</w:delText></w:r></w:del><w:r><w:br w:type="page"/></w:r></w:p>"#
+        );
+        let before = format!(
+            "{}{}{}{mixed}<w:p/>",
+            deleted("Gone"),
+            inserted("Tail"),
+            table(true)
+        );
+        assert_eq!(
+            resolved(&before, true, true),
+            ["Tail¶.".to_string(), "<BR>¶.".to_string()],
+            "Accept All: the tail, then the break"
+        );
+        assert_eq!(
+            resolved(&before, true, true),
+            resolved(&before, true, false)
+        );
+        assert_eq!(
+            resolved(&before, false, true),
+            resolved(&before, false, false)
+        );
+    }
+
+    /// A deleted paragraph that carries bookmarks is still a block of the
+    /// region: the markers hold no content, and the tail moves behind it.
+    #[test]
+    fn deleted_paragraph_with_bookmarks_still_belongs_to_the_region() {
+        let marked = format!(
+            r#"<w:p><w:pPr><w:rPr><w:del w:id="3" {BY}/></w:rPr></w:pPr><w:bookmarkStart w:id="0" w:name="_GoBack"/><w:del w:id="4" {BY}><w:r><w:delText>Old</w:delText></w:r></w:del><w:bookmarkEnd w:id="0"/></w:p>"#
+        );
+        let before = format!(
+            "{}{}{}{marked}<w:p/>",
+            deleted("Gone"),
+            inserted("Tail"),
+            table(true)
+        );
+        assert_eq!(
+            shapes(&serialized(&before, true)),
+            ["Gone¶-", "T", "Old¶-", "Tail¶."]
+        );
+    }
+
+    /// The tail carries a section break: last, or with a paragraph behind
+    /// it. Moving the run would carry the section's end behind the deleted
+    /// table, and the last moved mark, losing its insertion, would leave
+    /// Reject All a section break the original never had (the review of
+    /// #160). A section is a barrier: nothing moves.
+    #[test]
+    fn tail_carrying_a_section_break_keeps_everything() {
+        let section = |text: &str| {
+            format!(
+                r#"<w:p><w:pPr><w:sectPr><w:pgSz w:w="12240" w:h="15840"/></w:sectPr><w:rPr><w:ins w:id="1" {BY}/></w:rPr></w:pPr><w:ins w:id="2" {BY}><w:r><w:t>{text}</w:t></w:r></w:ins></w:p>"#
+            )
+        };
+        for (lead, tail) in [
+            (None, section("Tail")),
+            (Some(section("Lead")), inserted("Tail")),
+            (Some(inserted("Lead")), section("Tail")),
+        ] {
+            let lead = lead.unwrap_or_default();
+            let before = format!("{}{lead}{tail}{}<w:p/>", deleted("Gone"), table(true));
+            assert_eq!(
+                serialized(&before, true),
+                serialized(&before, false),
+                "{tail}"
+            );
+        }
     }
 }
