@@ -49,6 +49,7 @@ function showEmpty(title, text = "", { busy = false, failed = false } = {}) {
   $("empty-text").textContent = text;
   // A failed document opened from the list keeps the way back to it (#36).
   $("empty-back").hidden = !(failed && listing);
+  $("empty-tracked").hidden = true;
   $("result").hidden = true;
   $("files").hidden = true;
   // The drawer sits outside #result: an empty state retires the previous document's
@@ -307,6 +308,18 @@ async function show(view) {
     drawMode = "tracked";
   } else {
     preview = previews.get("tracked");
+    // The note names parent revisions but not their kinds. Only the engine
+    // can decide an accepted/original projection of that ancestry safely.
+    if (parseJubarte(preview.markdown).critic.changes.some((c) => c.parentRevisions?.length)) {
+      showEmpty(
+        "This view is unavailable",
+        "Nested revisions require the engine's preview. Return to Tracked to try again.",
+      );
+      $("empty-tracked").hidden = false;
+      $("empty-tracked").onclick = () =>
+        document.querySelector('.view[data-mode="tracked"]').click();
+      return;
+    }
     drawMode = view;
   }
   render();

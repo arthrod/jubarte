@@ -134,8 +134,8 @@ function pmPosAtRunOffset(run: StyledRun, charFrom: number, charTo: number): { f
 // Jubarte: letters, digits and combining marks of every script that puts
 // spaces between words; the upstream /[A-Za-z0-9]/ let a line end inside
 // "São". Scripts that may break between any two characters (Han, kana,
-// Thai and its neighbours) stay breakable. A UTF-16 surrogate half counts as
-// part of a word, so a pair is never cut.
+// Thai and its neighbours) stay breakable. Classify whole code points;
+// grapheme boundaries, rather than surrogate halves, protect joined emoji.
 const LETTER = /[\p{L}\p{N}\p{M}]/u;
 const BREAKS_ANYWHERE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
@@ -146,8 +146,6 @@ export const NO_LINE_END = /^[([{（〔［｛〈《「『【〘〖〝‘“｟«
 
 export function isWordChar(ch: string | undefined): boolean {
   if (ch === undefined || ch === "") return false;
-  const unit = ch.charCodeAt(0);
-  if (unit >= 0xd800 && unit <= 0xdfff) return true;
   return LETTER.test(ch) && !BREAKS_ANYWHERE.test(ch);
 }
 
@@ -328,9 +326,11 @@ function fixWordBoundarySplits(
 ): void {
   const lineText = (line: LineDraft): string => line.runs.map((r) => r.text).join("");
   const firstWordCharIndex = (text: string): number => {
-    for (let i = 0; i < text.length; i++) {
-      if (isWordChar(text[i])) return i;
-      if (text[i] === "\n") return -1;
+    let i = 0;
+    for (const ch of text) {
+      if (isWordChar(ch)) return i;
+      if (ch === "\n") return -1;
+      i += ch.length;
     }
     return -1;
   };
@@ -342,36 +342,40 @@ function fixWordBoundarySplits(
 
     const currentText = lineText(current);
     const nextText = lineText(next);
-    const tail = currentText.at(-1);
+    const tail = [...currentText].at(-1);
     const nextFirstWord = firstWordCharIndex(nextText);
     if (nextFirstWord < 0) continue;
-    const head = nextText[nextFirstWord];
+    const head = String.fromCodePoint(nextText.codePointAt(nextFirstWord)!);
     const glued = (NO_BREAK.test(tail ?? "") && binds(nextText[0])) || (binds(tail) && NO_BREAK.test(nextText[0] ?? ""));
     if (!glued && (!isWordChar(tail) || !isWordChar(head))) continue;
 
-    const kept = [...current.runs];
-
+    // Classify the whole line so a formatting boundary cannot detach a
+    // combining mark or variation selector from its base in another run.
+    // Without a segmenter, keep the original wrap rather than guess a cut.
+    if (typeof Intl.Segmenter !== "function") continue;
+    const segments = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(currentText)];
+    let cut = currentText.length;
+    for (let k = segments.length - 1; k >= 0; k--) {
+      const segment = segments[k]!;
+      if (![...segment.segment].every(binds)) break;
+      cut = segment.index;
+    }
+    // A word longer than the line stays where it was broken; never empty it.
+    if (cut === 0 || cut === currentText.length) continue;
+    let remaining = currentText.length - cut;
     const moved: PlacedRun[] = [];
-    while (current.runs.length > 0) {
+    while (remaining > 0) {
       const last = current.runs[current.runs.length - 1]!;
-      let j = last.text.length;
-      while (j > 0 && binds(last.text[j - 1])) j--;
-      if (j === last.text.length) break;
-      if (j === 0) {
+      if (last.text.length <= remaining) {
+        remaining -= last.text.length;
         moved.unshift(last);
         current.runs.pop();
-        continue;
+      } else {
+        const { left, right } = splitPlacedRunAtWordBoundary(last, last.text.length - remaining, measured);
+        current.runs[current.runs.length - 1] = left;
+        moved.unshift(right);
+        remaining = 0;
       }
-      const { left, right } = splitPlacedRunAtWordBoundary(last, j, measured);
-      current.runs[current.runs.length - 1] = left;
-      moved.unshift(right);
-      break;
-    }
-    if (moved.length === 0) continue;
-    // A word longer than the line stays where it was broken; the line is never emptied.
-    if (current.runs.length === 0) {
-      current.runs = kept;
-      continue;
     }
     next.runs = [...moved, ...next.runs];
     recalcLineDraft(current, measured);

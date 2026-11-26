@@ -279,3 +279,30 @@ it("a theme-only host update keeps the card's fixed height (#73)", () => {
   host.app.onhostcontextchanged({ containerDimensions: { width: 320 } });
   expect(document.body.classList.contains("fixed")).toBe(false);
 });
+
+it("K65 refuses a reconstructed accepted view with unresolved nested revisions", async () => {
+  host.app.ontoolinput({ arguments: { path: "nested.docx" } });
+  host.app.ontoolresult({ structuredContent: { path: "nested.docx" } });
+  host.pending.at(-1).resolve({
+    structuredContent: {
+      ...tracked.structuredContent,
+      path: "nested.docx",
+      markdown: "---\nview: tracked\n---\n\nKeep {--outer--}{r3 @B}{++INNER++}{r4 @A re r3 @B}\n",
+    },
+  });
+  await settle();
+  const mounted = host.mounts.length;
+  pick("accepted").click();
+  host.pending.at(-1).resolve({ isError: true });
+  await settle();
+  expect(host.mounts.length).toBe(mounted);
+  expect($("result").hidden).toBe(true);
+  expect($("empty-title").textContent).toMatch(/view.*unavailable/i);
+  expect($("empty-tracked")?.hidden).toBe(false);
+  $("empty-tracked").click();
+  await settle();
+  expect($("result").hidden).toBe(false);
+  expect(host.mounts.at(-1).dataView).toBe("tracked");
+  expect(pick("tracked").getAttribute("aria-pressed")).toBe("true");
+  expect(pick("accepted").getAttribute("aria-pressed")).toBe("false");
+});

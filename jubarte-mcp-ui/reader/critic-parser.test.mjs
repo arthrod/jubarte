@@ -367,3 +367,10 @@ test('move tags and two-author tags attach to their change (#17)', () => {
   // ` move` followed by two words is not a move clause.
   assert.equal(prepareCritic('{++a++}{r1 @A move two words}', { agentView: true }).markdown, 'a{r1 @A move two words}');
 });
+
+test('K75 a brace at the start of a deletion is literal, not the preceding insertion tag', () => {
+  const p = prepareCritic('{++a++}{--{r2 @B}b--}', { agentView: true });
+  assert.equal(p.markdown, 'a{r2 @B}b');
+  assert.deepEqual(p.changes[0].revisionIds, []);
+  assert.deepEqual(prepareCritic('{++a++}{r1 @A}', { agentView: true }).changes[0].revisionIds, ['1']);
+});

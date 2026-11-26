@@ -122,3 +122,9 @@ test('an inserted paragraph mark ¶{tag} is an insertion of the paragraph break'
   // Outside the agent view nothing is read as a tag.
   assert.equal(prepareCritic('A¶{r1 @A}\n\nB').markdown, 'A¶{r1 @A}\n\nB');
 });
+
+test('K65 retains parent revisions separately from the change author', () => {
+  const p = prepareCritic('{++x++}{r4 @A re r3 @B}', { agentView: true });
+  assert.deepEqual(p.changes[0].revisionIds, ['4']);
+  assert.deepEqual(p.changes[0].parentRevisions?.map(r => r.ids), [['3']]);
+});

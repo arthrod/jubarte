@@ -168,7 +168,15 @@ export function composeWithTables(snapshot,runtime,input){
    for(let r=ri;r<ri+rowspan;r++){occupied[r]||=[];for(let c=ci;c<ci+colspan;c++)occupied[r][c]=cell;}cursor=ci+colspan;columns=Math.max(columns,cursor);
   }}
   if(!columns)return {cells:[],rowHeights:[],rowTops:[0],columnWidths:[],total:0,headerHeight:0};
-  const mins=Array.from({length:columns},()=>0);for(const c of cells){if(c.colspan!==1)continue;for(const block of c.blocks||[])for(const run of block.runs||[])for(const word of run.text.split(/\s+/))if(word)mins[c.columnIndex]=Math.max(mins[c.columnIndex],glyphWidth(word,run.font))}
+  const mins=Array.from({length:columns},()=>0);
+  for(const c of cells){if(c.colspan!==1)continue;
+   for(const block of c.blocks||[]){let wordWidth=0;
+    for(const run of block.runs||[])for(const part of run.text.split(/(\s+)/)){
+     if(/\s/.test(part))wordWidth=0;
+     else if(part){wordWidth+=glyphWidth(part,run.font);mins[c.columnIndex]=Math.max(mins[c.columnIndex],wordWidth)}
+    }
+   }
+  }
   const weights=table.columnWidths||table.attrs?.columnWidths,maxWidth=width+Math.max(0,margins.rightPx-12),base=tableWidth(weights,width,margins.rightPx),src=table.attrs?.sourceData||{},fixed=src.layoutFixed===true&&Array.isArray(weights)&&weights.length>0;
   // A fixed layout keeps its grid: no growth, words break inside their column (#67).
   const fit=fitTable(mins,base,fixed?base:maxWidth),drawn=fixed?base:Math.max(base,fit.width);

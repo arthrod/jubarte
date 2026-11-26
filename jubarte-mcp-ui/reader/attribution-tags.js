@@ -334,9 +334,9 @@ function ownTags(note) {
   const tags = revisionTags(note);
   if (tags) return tags;
   const nested = nestedRevisionTags(note);
-  if (nested) return [nested[0]];
+  if (nested) return [{ ...nested[0], parents: nested.slice(1) }];
   const nestedPlain = nestedPlainRevisions(note);
-  if (nestedPlain) return [nestedPlain[0]];
+  if (nestedPlain) return [{ ...nestedPlain[0], parents: nestedPlain.slice(1) }];
   return plainRevisions(note);
 }
 

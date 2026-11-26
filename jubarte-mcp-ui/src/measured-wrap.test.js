@@ -230,3 +230,16 @@ it("text is measured unkerned, as the page draws it (#94)", () => {
   expect(contexts.length).toBeGreaterThan(0);
   for (const context of contexts) expect(context.fontKerning).toBe("none");
 });
+
+it("K73 a word split by formatting reserves its entire width in an autofit column", () => {
+  const { composed, done } = compose(
+    "---\nview: tracked\n---\n\n<!-- t0 1x2, cells p0-p1 by row, widths 0.5in 3.5in, width auto -->\n|**inter**national|x|\n|-|-|\n",
+  );
+  try {
+    const cell = composed.tableFragments[0].cells[0];
+    expect(cell.width).toBeGreaterThanOrEqual(13 * 8 + 16);
+    expect(cell.lines.map((l) => l.runs.map((r) => r.text).join(""))).toEqual(["international"]);
+  } finally {
+    done();
+  }
+});

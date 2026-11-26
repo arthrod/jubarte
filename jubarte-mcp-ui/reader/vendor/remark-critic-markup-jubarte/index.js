@@ -122,6 +122,7 @@ function revisionOf(tag, options) {
     : { author: tag.author || options.planAuthor || 'Modified User' };
   return {
     type: 'revision', story, ids,
+    ...(tag.parents?.length ? { parentRevisions: tag.parents.map(parent => revisionOf(parent, options)) } : {}),
     referenceIds: tag.ids.map((id) => `${id.story || story}:rev:${id.wid}`),
     ...who, ...(tag.date ? { date: tag.date } : {}),
   };
@@ -251,6 +252,7 @@ export function prepareCritic(input, options = {}) {
       author: tag.author, authorHandle: tag.authorHandle,
       revisionIds: tag.ids, referenceIds: tag.referenceIds,
       story: tag.story, isNew: false,
+      ...(tag.parentRevisions ? { parentRevisions: tag.parentRevisions } : {}),
       ...(tag.date ? { date: tag.date } : {}),
     };
     if (group.kind === 'substitution') {
@@ -368,6 +370,8 @@ export function prepareCritic(input, options = {}) {
   }
 
   function render(from, until, allowed) {
+    tagAnchor = null;
+    tagGap = '';
     let at = from;
     let previous = null;
     while (at < until) {

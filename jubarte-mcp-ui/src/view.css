@@ -256,11 +256,11 @@ body.fixed {
 }
 .premirror-run.hl-darkyellow {
     background: #808000;
-    color: #fff;
+    color: #000;
 }
 .premirror-run.hl-darkgray {
     background: #808080;
-    color: #fff;
+    color: #000;
 }
 .premirror-run.hl-lightgray {
     background: #c0c0c0;
