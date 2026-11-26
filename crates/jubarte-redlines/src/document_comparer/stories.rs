@@ -1133,6 +1133,11 @@ pub(super) fn mark_adopted_hf_content_as_inserted(
 /// holds per (kind, type) slot: a first-page footer does not preserve A's
 /// default footer (#1837). A part in `dead_only` (only
 /// deleted section breaks reference it) goes as a whole story (#1833).
+///
+/// Every platform writes the same shape, Windows Word 2024 included (#155):
+/// a story left untracked outlives Accept All. A live section keeps its
+/// reference, and an accepted break hands its references on to the section
+/// after it, so the text itself has to carry the deletion.
 pub(super) fn mark_a_only_hf_content_as_deleted(
     out: &mut PartFs,
     pkg1: &PartFs,
@@ -1159,6 +1164,106 @@ pub(super) fn mark_a_only_hf_content_as_deleted(
         }
         mark_hf_part_content_as_deleted(out, part, settings, whole_story);
     }
+}
+
+/// #155 — mark a header/footer story only the revised document holds as
+/// inserted, for `--mode word-windows`: Windows Word 2024 wraps the revised
+/// story's runs in `w:ins` with inserted paragraph marks. The adopt pass
+/// wraps the parts it copies; a story the main-document reconcile carried
+/// over (a section break the revision inserts) skipped it, and Mac Word
+/// keeps them untracked. Already-marked parts stay untouched.
+///
+/// The stories are found by what the redline references, never by the revised
+/// part's name. A revised `header1.xml` lands under another name wherever the
+/// output already holds the original's own `header1.xml` (`header2.xml` from
+/// the adopt pass, `redlineB_header1.xml` from the reconcile), and the output
+/// `header1.xml` is then the original's story: by name, this pass left the
+/// revised story untracked and marked the original's inserted, and Reject
+/// All erased it.
+pub(super) fn mark_b_only_hf_content_as_inserted_for_windows(
+    out: &mut PartFs,
+    out_main: &str,
+    pkg1: &PartFs,
+    settings: &WmlComparerSettings,
+) {
+    for part in revised_only_story_parts(out, out_main, pkg1) {
+        let Some(xml) = out.part_string(&part) else {
+            continue;
+        };
+        if crate::revision_processor::xml_has_tracked_revisions(&xml) {
+            continue;
+        }
+        mark_adopted_hf_content_as_inserted(out, &part, settings);
+        // A story with nothing to wrap (a blank paragraph) stays as it came.
+        if out
+            .part_string(&part)
+            .is_some_and(|marked| !crate::revision_processor::xml_has_tracked_revisions(&marked))
+        {
+            out.set_part(&part, xml.into_bytes());
+        }
+    }
+}
+
+/// The output parts that stand for a header/footer story only the revised
+/// document holds: the parts the redline's sections reference in a (kind,
+/// `w:type`) slot the original never sets, less every part the original's own
+/// document references. Such a part is the original's story (the adopt pass
+/// reuses a byte-identical one), shown untracked in the original's own slot.
+fn revised_only_story_parts(
+    out: &PartFs,
+    out_main: &str,
+    original: &PartFs,
+) -> std::collections::BTreeSet<String> {
+    let mut parts = std::collections::BTreeSet::new();
+    let original_refs = header_footer_refs(original);
+    let original_slots: std::collections::HashSet<(String, String)> = original_refs
+        .iter()
+        .map(|(kind, ty, _)| (kind.clone(), ty.clone()))
+        .collect();
+    let original_parts: std::collections::HashSet<&String> =
+        original_refs.iter().map(|(_, _, part)| part).collect();
+    let Some(xml) = out.part_string(out_main) else {
+        return parts;
+    };
+    let Some(rels) = out.read_rels_for(out_main) else {
+        return parts;
+    };
+    let id_to_target: std::collections::HashMap<&str, &str> = rels
+        .items
+        .iter()
+        .map(|r| (r.id.as_str(), r.target.as_str()))
+        .collect();
+    let mut d = Dom::new();
+    let doc = d.parse_xdocument(&xml);
+    let Some(root) = d.root(doc) else {
+        return parts;
+    };
+    for sect in section_props(&d, root) {
+        for r in d.elements(sect, None) {
+            let kind = if d.name_is(r, &W::header_reference()) {
+                "header"
+            } else if d.name_is(r, &W::footer_reference()) {
+                "footer"
+            } else {
+                continue;
+            };
+            let ty = d.attribute(r, &W::type_()).unwrap_or("default");
+            if original_slots.contains(&(kind.to_string(), ty.to_string())) {
+                continue;
+            }
+            let Some(rid) = d.attribute(r, &R::id()) else {
+                continue;
+            };
+            let Some(&target) = id_to_target.get(rid) else {
+                continue;
+            };
+            let part = referenced_part(out, out_main, target);
+            if !original_parts.contains(&part) {
+                parts.insert(part);
+            }
+        }
+    }
+    parts
 }
 
 /// Word's redline of a header/footer whose revised story ends with a table:
