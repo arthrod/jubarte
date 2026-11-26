@@ -2,17 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import "../../../../../test-support/environment";
 
-import type {
-  LayoutInput,
-  MeasuredDocumentSnapshot,
-  PremirrorOptions,
-} from "@premirror/core";
-import {
-  createLayoutInputFromOptions,
-  defaultPremirrorOptions,
-} from "@premirror/core";
+import type { LayoutInput, MeasuredDocumentSnapshot, PremirrorOptions } from "@premirror/core";
+import { createLayoutInputFromOptions, defaultPremirrorOptions } from "@premirror/core";
 
 import { composeLayout } from "./index";
 
@@ -53,8 +48,8 @@ function makeSnapshot(text: string): MeasuredDocumentSnapshot {
 describe("@premirror/composer", () => {
   it("produces at least one page and frame", () => {
     const out = composeLayout(makeSnapshot("Hello Premirror"), null, makeInput());
-    expect(out.pages.length).toBeGreaterThan(0);
-    expect(out.pages[0]?.frames.length).toBe(1);
+    assert.ok(out.pages.length > 0);
+    assert.equal(out.pages[0]?.frames.length, 1);
   });
 
   it("is deterministic for page+fragment structure", () => {
@@ -62,7 +57,7 @@ describe("@premirror/composer", () => {
     const input = makeInput();
     const a = composeLayout(snapshot, null, input);
     const b = composeLayout(snapshot, null, input);
-    expect(JSON.stringify(a.pages)).toBe(JSON.stringify(b.pages));
+    assert.equal(JSON.stringify(a.pages), JSON.stringify(b.pages));
   });
 
   it("applies manual page break before a block", () => {
@@ -105,15 +100,15 @@ describe("@premirror/composer", () => {
       },
     };
     const out = composeLayout(snapshot, null, makeInput());
-    expect(out.pages.length).toBeGreaterThanOrEqual(2);
+    assert.ok(out.pages.length >= 2);
   });
 
   it("round-trips mapping positions for a line", () => {
     const out = composeLayout(makeSnapshot("Mapping"), null, makeInput());
     const point = out.mapping.pmPosToLayout(2);
-    expect(point).not.toBeNull();
+    assert.notEqual(point, null);
     if (!point) return;
     const back = out.mapping.layoutToPmPos(point);
-    expect(back).toBe(2);
+    assert.equal(back, 2);
   });
 });

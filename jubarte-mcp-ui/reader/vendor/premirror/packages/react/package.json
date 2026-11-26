@@ -10,7 +10,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "bun test"
+    "test": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude='**/*.test.*' --test-coverage-exclude='**/test-support/**' src/*.test.tsx"
   },
   "dependencies": {
     "@premirror/composer": "workspace:*",

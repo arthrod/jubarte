@@ -10,8 +10,8 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "bun test",
-    "benchmark": "bun scripts/benchmark.ts"
+    "test": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude='**/*.test.*' --test-coverage-exclude='**/test-support/**' src/*.test.ts",
+    "benchmark": "node --import tsx scripts/benchmark.ts"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.5",

@@ -8,3 +8,8 @@ Local integration changes:
 - Other runtime source retained from the pinned arthrod commit.
 
 Security maintenance (2026-10-14): composer and adapter pretext dependencies are pinned to patched 0.0.5; upstream source revision is unchanged. See https://github.com/chenglou/pretext/security/advisories/GHSA-5478-66c3-rhxr.
+
+Test toolchain maintenance: vendored suites use node:test and node:assert/strict
+through tsx, with Node types and coverage. The benchmark also runs through tsx.
+The adapter pins prosemirror-model to the workspace version (1.25.12) so its
+Node tests and ProseMirror transforms share compatible Fragment instances.

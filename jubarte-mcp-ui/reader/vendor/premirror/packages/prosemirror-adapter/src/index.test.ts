@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import "../../../../../test-support/environment";
 
 import { defaultPremirrorOptions } from "@premirror/core";
 import { Schema } from "prosemirror-model";
@@ -50,32 +52,32 @@ describe("@premirror/prosemirror-adapter", () => {
     });
 
     const snapshot = runtime.toSnapshot(state);
-    expect(snapshot.blocks.length).toBe(1);
-    expect(snapshot.blocks[0]?.runs.length).toBeGreaterThanOrEqual(2);
+    assert.equal(snapshot.blocks.length, 1);
+    const firstBlock = snapshot.blocks[0];
+    assert.ok(firstBlock);
+    assert.ok(firstBlock.runs.length >= 2);
   });
 
   it("measures snapshot runs", () => {
     const runtime = createPremirror(defaultPremirrorOptions());
     const state = EditorState.create({
       schema,
-      doc: schema.node("doc", null, [
-        schema.node("paragraph", null, [schema.text("Measure me")]),
-      ]),
+      doc: schema.node("doc", null, [schema.node("paragraph", null, [schema.text("Measure me")])]),
       plugins: runtime.plugins,
     });
     const measured = runtime.measureSnapshot(runtime.toSnapshot(state));
     const firstKey = Object.keys(measured.measuredRuns)[0];
-    expect(firstKey).toBeDefined();
-    expect(measured.measuredRuns[firstKey!]?.widthPx).toBeGreaterThanOrEqual(0);
+    assert.ok(firstKey);
+    const firstRun = measured.measuredRuns[firstKey];
+    assert.ok(firstRun);
+    assert.equal(firstRun.widthPx, "Measure me".length * 7);
   });
 
   it("insertPageBreak command dispatches a transaction", () => {
     const runtime = createPremirror(defaultPremirrorOptions());
     const state = EditorState.create({
       schema,
-      doc: schema.node("doc", null, [
-        schema.node("paragraph", null, [schema.text("One")]),
-      ]),
+      doc: schema.node("doc", null, [schema.node("paragraph", null, [schema.text("One")])]),
       plugins: runtime.plugins,
     });
 
@@ -84,25 +86,23 @@ describe("@premirror/prosemirror-adapter", () => {
       nextState = state.apply(tr);
     });
 
-    expect(didRun).toBe(true);
-    expect(nextState).toBeDefined();
+    assert.equal(didRun, true);
+    assert.notEqual(nextState, undefined);
     if (!nextState) return;
-    expect(nextState.doc.childCount).toBeGreaterThanOrEqual(2);
+    assert.ok(nextState.doc.childCount >= 2);
   });
 
   it("tracks invalidation range on doc change", () => {
     const runtime = createPremirror(defaultPremirrorOptions());
     const state = EditorState.create({
       schema,
-      doc: schema.node("doc", null, [
-        schema.node("paragraph", null, [schema.text("abc")]),
-      ]),
+      doc: schema.node("doc", null, [schema.node("paragraph", null, [schema.text("abc")])]),
       plugins: runtime.plugins,
     });
     const tr = state.tr.insertText("x", 2);
     const next = state.apply(tr);
     const inval = premirrorInvalidationKey.getState(next) ?? null;
-    expect(inval).not.toBeNull();
-    expect(runtime.getInvalidationRange(next)).toEqual(inval);
+    assert.notEqual(inval, null);
+    assert.deepEqual(runtime.getInvalidationRange(next), inval);
   });
 });

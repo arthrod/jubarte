@@ -257,9 +257,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: 2.4.0
         version: 2.4.0
-      '@types/bun':
-        specifier: ^1.4.5
-        version: 1.4.5
+      '@types/node':
+        specifier: 26.6.7
+        version: 26.6.7
       '@types/react':
         specifier: ^19.3.1
         version: 19.3.1
@@ -282,7 +282,7 @@ importers:
         specifier: 7.3.8
         version: 7.3.8(@types/node@26.6.7)(tsx@4.23.15)(yaml@2.8.3)
       vite-plugin-console-pipe:
-        specifier: ^2.1.0
+        specifier: 2.1.0
         version: 2.1.0(esbuild@0.28.2)(rollup@4.68.8)(vite@7.3.8(@types/node@26.6.7)(tsx@4.23.15)(yaml@2.8.3))
       vite-plugin-singlefile:
         specifier: 2.3.4
@@ -314,8 +314,8 @@ importers:
         specifier: ^1.2.0
         version: 1.2.3
       prosemirror-model:
-        specifier: ^1.25.0
-        version: 1.25.13
+        specifier: 1.25.12
+        version: 1.25.12
       prosemirror-state:
         specifier: ^1.4.3
         version: 1.4.4
@@ -736,9 +736,6 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@types/bun@1.4.5':
-    resolution: {integrity: sha512-DpgwNI9z0L1S0gtb45QLCWgwCUcMLnsHYMJHQvpNj7erGiCGBvpggltAIeARrtobNMKMuy0UP7i56tKKgwFs/Q==}
-
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
@@ -815,9 +812,6 @@ packages:
 
   bail@2.0.2:
     resolution: {integrity: sha512-0xO6mYd7JB2YesxDKplafRpsiOzPt9V02ddPCLbY1xYGPOX24NTyN50qnUxgCPcSoYMhKpAuBTjQoRZCAkUDRw==}
-
-  bun-types@1.4.5:
-    resolution: {integrity: sha512-ECHn+9dhL3wv0G6u0+7dQvrnaimXiRDxxerYBmhTaLyJEEuvTPWk2Fye3XIf5Y++JIIiHKfQw4Z7V5D8KuiXbg==}
 
   ccount@2.0.1:
     resolution: {integrity: sha512-eyrF0jiFpY+3drT6383f1qhkbGsLSifNAjA61IUjZjmLCWjItY6LB9ft9YhoDgwfmclB2zhu51Lc7+95b8NRAg==}
@@ -1142,9 +1136,6 @@ packages:
   prosemirror-model@1.25.12:
     resolution: {integrity: sha512-Ue2gTmXMa7EhpLNhC7J+h4+ykD8ha12K6rrZFFKKJHBForfIStw5gJ6Zrf1mqqAa9NmpmEB4wp9bKmA4eUVjWg==}
 
-  prosemirror-model@1.25.13:
-    resolution: {integrity: sha512-MlDMWGjYXaYOeCiO17jcybntCOzPnN+97U0809ke2QsgPtxW3n5/sD6ZKyJONUgMw1iP93ohZTjeKjnRJ7L6kQ==}
-
   prosemirror-remark@0.7.0:
     resolution: {integrity: sha512-rgk5E/OsWP5a6LOuVYR2jbscdyVevmUmj0V3Uvzk9KjEB9fcAqdnJzk2PI9eltyjOgbwENOxiUk03Qh9QJMngQ==}
     engines: {node: '>=22'}
@@ -1280,9 +1271,6 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
-
-  undici-types@8.13.1:
-    resolution: {integrity: sha512-wEtfquPVc1e9umZh73XVwnPauVuGQp20M/u/4ENuWMRkZ8NZx0ut6q3HLLdMUb9awNlxxHcsaGVhaerZu/2SSw==}
 
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
@@ -1708,10 +1696,6 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@types/bun@1.4.5':
-    dependencies:
-      bun-types: 1.4.5
-
   '@types/chai@5.2.3':
     dependencies:
       '@types/deep-eql': 4.0.2
@@ -1785,11 +1769,6 @@ snapshots:
       js-tokens: 10.0.1
 
   bail@2.0.2: {}
-
-  bun-types@1.4.5:
-    dependencies:
-      '@types/node': 26.6.7
-      undici-types: 8.13.1
 
   ccount@2.0.1: {}
 
@@ -2313,10 +2292,6 @@ snapshots:
     dependencies:
       orderedmap: 2.1.1
 
-  prosemirror-model@1.25.13:
-    dependencies:
-      orderedmap: 2.1.1
-
   prosemirror-remark@0.7.0(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-unified@0.10.0(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)):
     dependencies:
       '@types/mdast': 4.0.4
@@ -2501,8 +2476,6 @@ snapshots:
       fsevents: 2.3.3
 
   typescript@5.9.3: {}
-
-  undici-types@8.13.1: {}
 
   undici-types@8.9.0: {}
 

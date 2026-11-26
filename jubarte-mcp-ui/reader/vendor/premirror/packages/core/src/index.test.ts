@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { describe, expect, it } from "bun:test";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
 
 import {
   DEFAULT_LAYOUT_POLICIES,
@@ -16,15 +17,15 @@ describe("@premirror/core", () => {
   it("resolves page presets", () => {
     const letter = pageSpecForPreset("letter");
     const a4 = pageSpecForPreset("a4");
-    expect(letter.widthPx).toBe(LETTER_PAGE_PX.widthPx);
-    expect(a4.widthPx).not.toBe(letter.widthPx);
+    assert.equal(letter.widthPx, LETTER_PAGE_PX.widthPx);
+    assert.notEqual(a4.widthPx, letter.widthPx);
   });
 
   it("creates default options", () => {
     const options = defaultPremirrorOptions();
-    expect(options.page.widthPx).toBeGreaterThan(0);
-    expect(options.typography.defaultLineHeightPx).toBeGreaterThan(0);
-    expect(options.policies?.slotSelectionPolicy).toBe("single_slot_flow");
+    assert.ok(options.page.widthPx > 0);
+    assert.ok(options.typography.defaultLineHeightPx > 0);
+    assert.equal(options.policies?.slotSelectionPolicy, "single_slot_flow");
   });
 
   it("merges layout input policies with defaults", () => {
@@ -32,9 +33,7 @@ describe("@premirror/core", () => {
       policies: { keepWithNextEnabled: false },
     });
     const input = createLayoutInputFromOptions(options);
-    expect(input.policies.keepWithNextEnabled).toBe(false);
-    expect(input.policies.widowLinesMin).toBe(
-      DEFAULT_LAYOUT_POLICIES.widowLinesMin,
-    );
+    assert.equal(input.policies.keepWithNextEnabled, false);
+    assert.equal(input.policies.widowLinesMin, DEFAULT_LAYOUT_POLICIES.widowLinesMin);
   });
 });
