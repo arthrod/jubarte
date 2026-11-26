@@ -18,7 +18,10 @@ function textMap(raw,value,start){
  // Inline-code whitespace normalization and indented/fenced blocks retain a best-effort source map.
  let cursor=0;const aligned=[];for(let i=0;i<value.length;i++){const ch=value[i];let at=raw.indexOf(ch,cursor);if(at<0)at=cursor;aligned.push(start+at);cursor=Math.min(raw.length,at+1)}return aligned;
 }
-const safeUrl=url=>/^(?:https?:|mailto:|#)/i.test(url||'') ? url : /^(?![a-z][a-z\d+.-]*:)[^\s]+$/i.test(url||'') ? url : '';
+const safeUrl = value => {
+ const url=String(value??'').replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g,'').replace(/[\t\r\n]/g,'');
+ return /^(?:https?:|mailto:|#)/i.test(url) || /^(?![a-z][a-z\d+.-]*:)[^\s]+$/i.test(url) ? url : '';
+};
 export function projectDialect(tree, critic, document){
  const markdown=critic.markdown;
  const changes=critic.changes||[],highlights=critic.highlights||[],comments=critic.comments||[];
@@ -66,7 +69,7 @@ export function projectDialect(tree, critic, document){
    if(n.type==='break'){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
    if(n.type==='html'){
     const raw=n.value.trim();const m=raw.match(/^<(\/)?(u|sup|sub)\s*>$/i);if(m){const key={u:'underline',sup:'superscript',sub:'subscript'}[m[2].toLowerCase()];if(m[1]){active[key]=stacks[key]?.pop()||false}else{(stacks[key]??=[]).push(active[key]||false);active[key]=true}continue}
-    if(/^<br\s*\/?\s*>$/i.test(raw)){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
+    if(/^<br\s*(?:\/\s*)?>$/i.test(raw)){out.push({...active,text:'\n',...marksAt(offset(n))});continue}
     out.push(...leaves(n.value,offset(n),n.value,{...active,htmlLiteral:true}));continue;
    }
    if(n.type==='link'||n.type==='linkReference'){

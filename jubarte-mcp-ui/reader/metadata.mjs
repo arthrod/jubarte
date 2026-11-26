@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from 'yaml';
+import {fromMarkdown} from 'mdast-util-from-markdown';
 
 /**
  * Lossless reader for Jubarte's YAML legend and agent-view ID lines.
@@ -468,21 +469,9 @@ function frontmatterAtStart(source, warnings) {
 }
 
 function fencedCodeRanges(body) {
-  const ranges = [];
-  const lines = body.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g);
-  let fence = null;
-  for (const line of lines) {
-    if (!line[0]) continue;
-    const text = line[0].replace(/[\r\n]+$/, '');
-    const match = text.match(/^ {0,3}(?:(?:[-+*]|\d+[.)]) +)?(`{3,}|~{3,})(.*)$/);
-    if (!match) continue;
-    if (fence) {
-      if (match[1][0] === fence.character && match[1].length >= fence.length && !match[2].trim()) {
-        ranges.push({start: fence.start, end: line.index + line[0].length}); fence = null;
-      }
-    } else if (match[1][0] !== '`' || !match[2].includes('`')) fence = {start: line.index, character: match[1][0], length: match[1].length};
-  }
-  if (fence) ranges.push({start: fence.start, end: body.length});
+  const ranges=[];
+  const visit=node=>{if(node.type==='code')ranges.push({start:node.position.start.offset,end:node.position.end.offset});else for(const child of node.children||[])visit(child);};
+  visit(fromMarkdown(body));
   return ranges;
 }
 
@@ -502,23 +491,45 @@ export function parseDocumentMetadata(source, options = {}) {
   const directives = [];
   if (agentView) {
     const codeRanges = fencedCodeRanges(body);
-    const commentPattern = /^ {0,3}<!--[\s\S]*?-->[ \t]*(?=\r?$)/gm;
+    const commentPattern = /^ {0,3}<!--(?:(?!-->)[\s\S])*-->[ \t]*(?=\r?$)/gm;
     const replacements = [];
     for (const match of body.matchAll(commentPattern)) {
       const range = {start: match.index, end: match.index + match[0].length};
       if (codeRanges.some(code => range.start >= code.start && range.start < code.end)) continue;
       const directive = parseDirective(match[0], {range, warnings});
       if (!directive) continue;
-      const duplicate = directives.find(previous => previous.type === directive.type && (directive.type === 'paragraph' ? previous.story === directive.story && previous.index <= directive.endIndex && directive.index <= previous.endIndex : directive.type === 'table' && previous.id === directive.id));
-      if (duplicate) warn(warnings, 'duplicate-directive-id', `Repeated or overlapping ID ${directive.id} is preserved.`, range);
       directives.push(directive);
       replacements.push(range);
     }
-    for (let i = replacements.length - 1; i >= 0; i--) {
-      const {start, end} = replacements[i];
-      body = body.slice(0, start) + blank(body.slice(start, end)) + body.slice(end);
-    }
+    const duplicates=duplicateDirectiveFlags(directives);
+    duplicates.forEach((duplicate,i)=>{if(duplicate)warn(warnings,'duplicate-directive-id',`Repeated or overlapping ID ${directives[i].id} is preserved.`,replacements[i]);});
+    const chunks=[];let cursor=0;
+    for(const {start,end} of replacements){chunks.push(body.slice(cursor,start),blank(body.slice(start,end)));cursor=end;}
+    chunks.push(body.slice(cursor));body=chunks.join('');
   }
   const frontmatter = parsedFrontmatter ? Object.fromEntries(Object.entries(parsedFrontmatter).filter(([key]) => key !== 'document')) : null;
   return {body, frontmatter, metadata, directives, warnings, agentView};
+}
+
+/** Offline coordinate compression keeps interval duplicate checks O(n log n). */
+export function duplicateDirectiveFlags(items) {
+ const stories=new Map(), tables=new Set();
+ for(const d of items)if(d.type==='paragraph'){
+  if(!stories.has(d.story))stories.set(d.story,{starts:[],tree:[]});
+  stories.get(d.story).starts.push(d.index);
+ }
+ for(const state of stories.values()){
+  state.starts=[...new Set(state.starts)].sort((a,b)=>a-b);
+  state.tree=Array(state.starts.length+1).fill(-Infinity);
+ }
+ const bound=(xs,x,inclusive)=>{let lo=0,hi=xs.length;while(lo<hi){const mid=(lo+hi)>>>1;if(xs[mid]<x||(inclusive&&xs[mid]===x))lo=mid+1;else hi=mid;}return lo;};
+ return items.map(d=>{
+  if(d.type==='table'){const duplicate=tables.has(d.id);tables.add(d.id);return duplicate;}
+  if(d.type!=='paragraph')return false;
+  const {starts,tree}=stories.get(d.story), start=d.index, end=d.endIndex;
+  let max=-Infinity;
+  for(let i=bound(starts,end,true);i>0;i-=i&-i)max=Math.max(max,tree[i]);
+  for(let i=bound(starts,start,false)+1;i<tree.length;i+=i&-i)tree[i]=Math.max(tree[i],end);
+  return max>=start;
+ });
 }

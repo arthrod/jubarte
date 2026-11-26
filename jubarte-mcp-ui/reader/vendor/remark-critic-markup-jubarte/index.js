@@ -120,7 +120,7 @@ export function parseAgentTag(note, options = {}) {
   }
 
   // Split at the colon AFTER the optional timestamp, not an ISO time's colon.
-  const comment = text.match(/^(\S+)\s+@([^\s:]+)((?:\s+(?:re\s+\S+|resolved|\d{4}-\d\d-\d\d(?:T\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?))*)\s*:\s*([\s\S]*)$/);
+  const comment = text.match(/^(\S+)\s+@([^\s:]+)((?:\s+(?:re\s+[^\s:]+|resolved|\d{4}-\d\d-\d\d(?:T\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:\d\d)?)?))*)\s*:\s*([\s\S]*)$/);
   if (!comment) return null;
   const ref = identifier(comment[1], 'comment', options.story);
   if (!ref) return null;
@@ -201,7 +201,7 @@ export function prepareCritic(input, options = {}) {
       author: tag.author, authorHandle: tag.authorHandle,
       revisionIds: tag.ids, referenceIds: tag.referenceIds,
       story: tag.story, isNew: false,
-      ...(tag.date ? { date: tag.date } : {}),
+      date: tag.date ?? options.date,
     };
     if (group.kind === 'substitution') {
       if (noteIndex === 0) {
@@ -386,6 +386,22 @@ export function prepareCritic(input, options = {}) {
       markdown = protectedChunks.join('');
     }
   }
+  // Resolve after parsing so a forward reply and a reply-to-reply share a root.
+  const byReference=new Map(comments.map(c=>[c.referenceId||c.id,c]));
+  const roots=new Map();
+  for(const comment of comments){
+    const chain=[],seen=new Set();let current=comment;
+    while(current.replyToReference&&!roots.has(current)&&!seen.has(current)){
+      seen.add(current);chain.push(current);
+      const parent=byReference.get(current.replyToReference);
+      if(!parent)break;
+      current=parent;
+    }
+    const root=roots.get(current)||{id:current.replyTo||current.id,reference:current.replyToReference||current.referenceId||current.id};
+    roots.set(current,root);for(const member of chain)roots.set(member,root);
+    roots.set(comment,root);
+  }
+  for(const [comment,root] of roots){comment.threadId=root.id;comment.threadReference=root.reference;}
   return {
     markdown, source, sourceMap, changes, comments, highlights,
     groups, anchors, warnings, diagnostics, sentinelPositions, sentinels, insertedEscapes, agentView: !!options.agentView,
