@@ -7,7 +7,20 @@
 // families (crates/jubarte-render/src/convert/font.rs `mapped_face`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { faceFor } from "./faces.mjs";
+import { BUNDLED, faceFor } from "./faces.mjs";
+
+test("inherited property names are approximate families with valid fallback stacks (K89)", () => {
+  for (const family of Object.getOwnPropertyNames(Object.prototype)) {
+    const face = faceFor(family);
+    assert.equal(typeof face.bundled, "string", family);
+    assert.ok(Object.hasOwn(BUNDLED, face.bundled), family);
+    assert.equal(face.exact, false, family);
+    assert.equal(
+      face.stack,
+      `${JSON.stringify(family)}, "Jubarte Page Serif", serif`,
+    );
+  }
+});
 
 test("a family with a metric twin draws locally first, then the twin, exactly", () => {
   for (const [family, twin] of [

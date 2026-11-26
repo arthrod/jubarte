@@ -88,7 +88,7 @@ function byClass(key) {
 export function faceFor(family) {
   const name = firstName(family) || "Calibri";
   const key = squash(name);
-  const twin = TWINS[key];
+  const twin = Object.hasOwn(TWINS, key) ? TWINS[key] : undefined;
   const bundled = twin ?? byClass(key);
   const names = [name, bundled].filter((n, i, all) => all.indexOf(n) === i);
   return {
