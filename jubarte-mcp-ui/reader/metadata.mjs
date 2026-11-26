@@ -331,7 +331,15 @@ function parsePage(raw, warnings, path = 'page', inherited = false) {
     warn(warnings, 'unsupported-page-value', `${path} must be a Jubarte page legend string; its original value is preserved.`, undefined, raw);
     return page;
   }
-  for (const original of splitClauses(raw)) {
+  // A tracked change follows the current setup: `; was: <earlier>; fmt <tags>` (#132).
+  const [current, ...tracked] = splitClauses(raw, ';');
+  for (const part of tracked) {
+    const value = part.trim();
+    if (value.startsWith('was: ')) page.was = value.slice(5);
+    else if (value.startsWith('fmt ')) page.change = value.slice(4);
+    else { page.unknown.push(part); warn(warnings, 'unknown-page-clause', `Unrecognized ${path} clause is preserved: ${value}`); }
+  }
+  for (const original of splitClauses(current ?? '')) {
     const value = original.trim();
     let match;
     let clause;

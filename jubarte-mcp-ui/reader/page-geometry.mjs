@@ -64,7 +64,8 @@ export function resolvePageGeometry(result = {}) {
     } else for (const side of SIDES) margin(side, value);
   };
   if (typeof raw === 'string') {
-    for (const clause of raw.split(',').map(part => part.trim()).filter(Boolean)) {
+    // A tracked change follows the current setup: `; was: <earlier>; fmt <tags>` (#132).
+    for (const clause of raw.split(';')[0].split(',').map(part => part.trim()).filter(Boolean)) {
       let match;
       if (PAPER_START.test(clause) || CUSTOM_SIZE.test(clause)) size(clause);
       else if (/^(portrait|landscape)$/i.test(clause)) orient(clause);

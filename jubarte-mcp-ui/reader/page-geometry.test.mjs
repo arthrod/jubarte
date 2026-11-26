@@ -121,3 +121,12 @@ test('every paper the engine names, and its WxHin custom size (#42)', () => {
     assert.equal(value.label, page);
   }
 });
+test('a tracked page change draws the current setup, not the one after `; was:` (#132)', () => {
+  // b102: the engine writes `<current>; was: <earlier>; fmt <tags>` (header.rs part_two).
+  const g = read('A4 portrait, margins top 0.984in, right 1.181in, bottom 0.984in, left 1.181in, header/footer 0.492in; was: 11.694x8.269in landscape, margins 0.5in, header/footer 0.492in; fmt r464 @M');
+  close(g.page.widthPx, 210 * 96 / 25.4);
+  close(g.margins.topPx, 0.984 * 96);
+  close(g.margins.leftPx, 1.181 * 96);
+  assert.deepEqual(g.warnings, []);
+  close(read('Letter portrait, margins 1in; fmt r3 @A').margins.leftPx, 96);
+});
