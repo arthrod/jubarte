@@ -14,16 +14,28 @@ const theme = q.get("theme") === "dark" ? "dark" : "light";
 const fixed = q.get("height") ? Number(q.get("height")) : null;
 const MAX = 800;
 
-const record = (window.__host = { events: [], opened: [], refused: [], initialized: false, resultSent: false });
+const record = (window.__host = {
+  events: [],
+  opened: [],
+  refused: [],
+  initialized: false,
+  resultSent: false,
+});
 const log = (kind, detail) => record.events.push({ kind, detail, at: performance.now() });
 
 document.body.classList.toggle("dark", theme === "dark");
 document.getElementById("call").textContent = `${tool} ${JSON.stringify(args)}`;
 
 const config = await (await fetch("/api/config")).json();
-const visibility = Object.fromEntries(config.tools.map((t) => [t.name, t._meta?.ui?.visibility ?? ["model", "app"]]));
-const call = async (name, a) => {
-  const res = await fetch("/api/call", { method: "POST", body: JSON.stringify({ name, arguments: a }) });
+const visibility = Object.fromEntries(
+  config.tools.map((t) => [t.name, t._meta?.ui?.visibility ?? ["model", "app"]]),
+);
+const call = async (name, a, authorization) => {
+  const res = await fetch("/api/call", {
+    method: "POST",
+    headers: { "x-jubarte-session": config.token },
+    body: JSON.stringify({ name, arguments: a, authorization }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 };
@@ -37,14 +49,22 @@ let context = {
   containerDimensions: fixed ? { height: fixed } : { maxHeight: MAX },
   toolInfo: { tool: config.tools.find((t) => t.name === tool) },
 };
-const bridge = new AppBridge(null, { name: "jubarte-e2e-host", version: "0" }, { serverTools: {}, openLinks: {}, logging: {} }, { hostContext: context });
+const bridge = new AppBridge(
+  null,
+  { name: "jubarte-e2e-host", version: "0" },
+  { serverTools: {}, openLinks: {}, logging: {} },
+  { hostContext: context },
+);
 
 bridge.oncalltool = async (params) => {
   log("calltool", params.name);
   // A view may call only the tools the server lets it see (SEP-1865).
   if (!(visibility[params.name] ?? []).includes("app")) {
     record.refused.push(params.name);
-    return { isError: true, content: [{ type: "text", text: `${params.name} is not visible to apps` }] };
+    return {
+      isError: true,
+      content: [{ type: "text", text: `${params.name} is not visible to apps` }],
+    };
   }
   return call(params.name, params.arguments ?? {});
 };
@@ -65,7 +85,7 @@ bridge.oninitialized = async () => {
   record.initialized = true;
   log("initialized");
   await bridge.sendToolInput({ arguments: args });
-  const result = await call(tool, args);
+  const result = await call(tool, args, q.get("authorization"));
   record.toolResult = result;
   await bridge.sendToolResult(result);
   record.resultSent = true;

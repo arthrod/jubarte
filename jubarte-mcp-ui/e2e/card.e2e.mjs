@@ -4,7 +4,8 @@
 
 // The card end to end: the real jubarte-mcp, a two-origin MCP Apps host and
 // the installed Chrome. Run with `pnpm e2e` (Chrome required; set
-// JUBARTE_MCP to a jubarte-mcp other than jubarte-python's .venv).
+// JUBARTE_MCP and JUBARTE to the server and CLI executables for an
+// installation other than jubarte-python's .venv).
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -70,7 +71,7 @@ async function open(tool, args, { theme = "light", height } = {}) {
     if (r.status() >= 400) errors.push(`${r.status()} ${r.url()}`);
   });
   page.on("pageerror", (e) => errors.push(String(e)));
-  const q = new URLSearchParams({ tool, args: JSON.stringify(args), theme });
+  const q = new URLSearchParams({ tool, args: JSON.stringify(args), theme, authorization: h.authorizeCall(tool, args) });
   if (height) q.set("height", String(height));
   await page.goto(`${h.hostUrl}?${q}`);
   await page.waitForFunction(() => window.__host?.resultSent, null, { timeout: 60_000 });
@@ -223,4 +224,27 @@ describe("the document card in a sandboxed host", () => {
     assert.deepEqual(errors.filter((e) => !e.includes(target)), []);
     await page.close();
   });
+});
+
+
+test("K70 an outer sandbox blocks top navigation after inner self-unsandboxing", async () => {
+  const { page, view } = await open("docx_view", { path: "original.docx" });
+  try {
+    await view.evaluate((target) => {
+      const inner = window.frameElement;
+      inner.removeAttribute("sandbox");
+      // Reload the inner document so its removed sandbox no longer applies.
+      // Clicking then supplies activation: only the outer sandbox should stop it.
+      inner.srcdoc = `<button id="escape">Escape</button><script>
+        document.getElementById('escape').onclick = function () {
+          try { top.location.href = ${JSON.stringify(target)}; this.dataset.outcome = 'attempted'; }
+          catch (error) { this.dataset.outcome = error.name; }
+        };
+      <\/script>`;
+    }, `${h.hostUrl}?escaped=1`);
+    const button = page.frameLocator('#card').frameLocator('iframe').locator('#escape');
+    await button.click();
+    assert.equal(await button.getAttribute('data-outcome'), "SecurityError");
+    assert.ok(!page.url().includes('escaped=1'));
+  } finally { await page.close(); }
 });

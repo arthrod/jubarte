@@ -33,8 +33,19 @@ pnpm e2e     # the card in Chrome, under the MCP Apps sandbox and CSP
 `pnpm e2e` starts `jubarte-mcp` (`$JUBARTE_MCP`, or
 `../jubarte-python/.venv/bin/jubarte-mcp`) and drives Google Chrome through
 Playwright. It needs a built `document.html` and a Chrome install; Playwright's
-own browsers are not downloaded. `node e2e/serve.mjs ROOT` serves the same
-test host for a look by hand, on documents under `ROOT`.
+own browsers are not downloaded. The comparison assertions also run the CLI
+(`$JUBARTE`, or `../jubarte-python/.venv/bin/jubarte`). For an external installation,
+set both executable paths:
+
+```sh
+JUBARTE_MCP=/path/to/jubarte-mcp JUBARTE=/path/to/jubarte pnpm e2e
+```
+
+`node e2e/serve.mjs ROOT` serves the same
+test host for a look by hand, on documents under `ROOT`. URL-driven calls are
+limited to read-only app-visible tools. Automated tests authorize a write with
+`h.authorizeCall(tool, args)`; its one-use credential permits only those exact
+arguments. The browser API also requires the host origin and a session credential.
 
 The build is reproducible, so the same sources give the same bytes. After
 changing anything here, rebuild and commit `document.html` with the change.
