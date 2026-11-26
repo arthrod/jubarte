@@ -307,9 +307,15 @@ export function parseTableLegend(raw) {
   for (const piece of splitClauses(raw)) {
     const value = piece.trim();
     let match;
-    if (current && !hasSpacing && (match = value.match(/^cell paragraphs\s+(.+)$/s))) {
-      const spacing = parseSpacing(match[1]);
-      if (spacing) { current.cellSpacing = spacing; hasSpacing = true; continue; }
+    if ((match = value.match(/^cell paragraphs\s+(.+)$/s))) {
+      // A cell-paragraphs clause is consumed whole: malformed, duplicate
+      // attribute, or repeated, it is dropped and never becomes a style id
+      // (R2-F1/F2/F3). It only belongs to a current style entry.
+      if (current && !hasSpacing) {
+        const spacing = parseSpacing(match[1]);
+        if (spacing) { current.cellSpacing = spacing; hasSpacing = true; }
+      }
+      continue;
     }
     if (current && value === 'borders vary') continue;
     if (current && !hasBorder && tableBorderClause(value)) { hasBorder = true; continue; }

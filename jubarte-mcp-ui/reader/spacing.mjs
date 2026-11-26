@@ -47,7 +47,13 @@ export function takeSpacing(text) {
     for (const [pattern, read] of WORDS) {
       const m = rest.match(pattern);
       if (!m) continue;
-      spacing = { ...spacing, ...read(m) };
+      const fields = read(m);
+      // A repeated attribute makes the clause malformed: reject it, as
+      // cell_spacing_attrs does in Rust (R2-F3).
+      if (spacing && Object.keys(fields).some((key) => key in spacing)) {
+        return { spacing, rest };
+      }
+      spacing = { ...spacing, ...fields };
       rest = rest.slice(m[0].length).trim();
       matched = true;
       break;

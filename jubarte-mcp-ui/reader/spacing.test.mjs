@@ -233,3 +233,13 @@ test('K126 border space +5pt is accepted like Rust u32 parsing', () => {
   assert.deepEqual(styles.A.cellSpacing, {afterPt: 6});
   assert.deepEqual(styles.B.cellSpacing, {afterPt: 0});
 });
+
+test('R2-F3 shared table legend cases (JS reads same fixture as Rust)', () => {
+  const cases = JSON.parse(readFileSync(new URL('../../tests/fixtures/table_legend_cases.json', import.meta.url), 'utf8'));
+  for (const c of cases) {
+    const styles = parseTableLegend(c.legend);
+    const got = Object.fromEntries(Object.entries(styles).map(([id, s]) => [id, s.cellSpacing ?? null]));
+    const want = Object.fromEntries(Object.entries(c.styles).map(([id, s]) => [id, s.spacing ?? null]));
+    assert.deepEqual(got, want, c.name);
+  }
+});

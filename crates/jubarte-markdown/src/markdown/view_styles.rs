@@ -713,14 +713,15 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
                 .and_then(|named| unquote(named.trim()))
         {
             name = Some(named);
-        } else if cells.is_none()
-            && let Some(words) = clause.strip_prefix("cell paragraphs ")
-        {
-            let Some(attrs) = cell_spacing_attrs(words) else {
-                // A rejected spacing clause is not the next style's id.
-                return Some(((id, (border, name, cells)), next));
-            };
-            cells = Some(attrs);
+        } else if let Some(words) = clause.strip_prefix("cell paragraphs ") {
+            // A cell-paragraphs clause is consumed whole: malformed, duplicated,
+            // or repeated, it is dropped and parsing continues on this style.
+            // No clause text ever becomes a style id (R2-F1/F2).
+            if cells.is_none()
+                && let Some(attrs) = cell_spacing_attrs(words)
+            {
+                cells = Some(attrs);
+            }
         } else if clause != "borders vary" {
             return Some(((id, (border, name, cells)), rest));
         }
@@ -2340,6 +2341,96 @@ mod branch_tests {
             table_style("styles:\n  table: Custom, cell paragraphs after 0pt after 6pt\n"),
             Some(("Custom".to_string(), (None, None, None)))
         );
+    }
+
+    /// R2-F1: a rejected spacing clause is consumed, but the same style's
+    /// later clauses still parse (a border here), in plural and singular form.
+    #[test]
+    fn r2_f1_rejected_spacing_keeps_same_style_border_clause() {
+        let border = TableBorders::Sides(vec![BorderSide {
+            side: "top".into(),
+            val: "single".into(),
+            size: None,
+            color: None,
+            space: None,
+        }]);
+        let yaml =
+            "styles:\n  tables: Custom, cell paragraphs after 0pt after 6pt, borders top single\n";
+        assert_eq!(
+            table_legend(yaml),
+            std::collections::BTreeMap::from([(
+                "Custom".to_string(),
+                (Some(border.clone()), None, None)
+            )])
+        );
+        assert_eq!(
+            table_style(
+                "styles:\n  table: Custom, cell paragraphs after 0pt after 6pt, borders top single\n"
+            ),
+            Some(("Custom".to_string(), (Some(border), None, None)))
+        );
+    }
+
+    /// R2-F2: a repeated `cell paragraphs` clause is dropped like a repeated
+    /// attribute - the style keeps its first spacing, no spurious id.
+    #[test]
+    fn r2_f2_repeated_cell_paragraphs_clause_is_dropped() {
+        let yaml = "styles:\n  tables: A, cell paragraphs after 6pt, cell paragraphs after 0pt\n";
+        assert_eq!(
+            table_legend(yaml),
+            std::collections::BTreeMap::from([(
+                "A".to_string(),
+                (None, None, Some(" w:after=\"120\"".to_string()))
+            )])
+        );
+        assert_eq!(
+            table_style(
+                "styles:\n  table: A, cell paragraphs after 6pt, cell paragraphs after 0pt\n"
+            ),
+            Some((
+                "A".to_string(),
+                (None, None, Some(" w:after=\"120\"".to_string()))
+            ))
+        );
+    }
+
+    /// R2-F3: shared legend cases - Rust and JS read the same fixture so the
+    /// two parsers cannot drift on malformed, duplicated, or repeated clauses.
+    #[test]
+    fn r2_f3_shared_table_legend_cases() {
+        let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/table_legend_cases.json"
+        ))
+        .expect("fixture parses");
+        for case in &cases {
+            let name = case["name"].as_str().unwrap_or("<unnamed>");
+            let legend = case["legend"].as_str().expect("legend");
+            let expected = case["styles"].as_object().expect("styles object");
+            let kind = case["kind"].as_str().unwrap_or("tables");
+            let actual: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+                if kind == "table" {
+                    let yaml = format!("styles:\n  table: {legend}\n");
+                    table_style(&yaml)
+                        .into_iter()
+                        .map(|(id, (_border, _name, spacing))| (id, (None, spacing)))
+                        .collect()
+                } else {
+                    let yaml = format!("styles:\n  tables: {legend}\n");
+                    table_legend(&yaml)
+                        .into_iter()
+                        .map(|(id, (_border, _name, spacing))| (id, (None, spacing)))
+                        .collect()
+                };
+            let wanted: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+                expected
+                    .iter()
+                    .map(|(id, v)| {
+                        let spacing = v["spacingAttrs"].as_str().map(str::to_string);
+                        (id.clone(), (None, spacing))
+                    })
+                    .collect();
+            assert_eq!(actual, wanted, "{name}");
+        }
     }
 
     #[test]
