@@ -7,7 +7,7 @@
 // ui://jubarte/document.html. Nothing in it is fetched: hosts render it under
 // a default-deny CSP.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
@@ -60,18 +60,18 @@ function licenceOf(dir) {
 }
 
 /** The package directory that owns a bundled module, or null for our own files. */
-function packageDirOf(id) {
-  const path = id.replace(/^\0/, "").split("?")[0];
-  const nm = path.lastIndexOf(`${sep}node_modules${sep}`);
+export function packageDirOf(id, root = here) {
+  const path = id.replace(/^\0/, "").replaceAll("\\", "/").split("?")[0];
+  const nm = path.lastIndexOf("/node_modules/");
   if (nm >= 0) {
-    const rest = path.slice(nm + 14).split(sep);
+    const rest = path.slice(nm + 14).split("/");
     const n = rest[0].startsWith("@") ? 2 : 1;
-    return path.slice(0, nm + 14) + rest.slice(0, n).join(sep);
+    return path.slice(0, nm + 14) + rest.slice(0, n).join("/");
   }
-  const premirror = join(here, "reader/vendor/premirror");
-  if (path.startsWith(premirror + sep)) return premirror;
-  const critic = join(here, "reader/vendor/remark-critic-markup-jubarte");
-  if (path.startsWith(critic + sep)) return critic;
+  const premirror = root.replaceAll("\\", "/") + "/reader/vendor/premirror";
+  if (path.startsWith(premirror + "/")) return premirror;
+  const critic = root.replaceAll("\\", "/") + "/reader/vendor/remark-critic-markup-jubarte";
+  if (path.startsWith(critic + "/")) return critic;
   return null;
 }
 
@@ -96,7 +96,7 @@ function licenceBanner() {
     transformIndexHtml: {
       order: "post",
       handler(html) {
-        const sections = [];
+        const sections = [readFileSync(join(repo, "NOTICE"), "utf8").trim()];
         const missing = [];
         for (const dir of [...dirs].sort()) {
           const pkgFile = join(dir, "package.json");

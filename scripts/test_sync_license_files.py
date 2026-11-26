@@ -50,6 +50,8 @@ class SyncLicenseFiles(unittest.TestCase):
         self.write("NOTICE", "Jubarte\nCopyright 2026 Jandira Technologies, LLC\n")
         self.write("crates/jubarte-render/assets/fonts/LICENSE-Carlito", "Carlito: SIL OPEN FONT LICENSE\n")
         self.write("crates/jubarte-render/assets/fonts/LICENSE-Liberation", "Liberation: SIL OPEN FONT LICENSE\n")
+        self.write("jubarte-mcp-ui/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("jubarte-x", "Distinct MCP UI notice").replace("Upstream Author", "UI Author"))
+        self.write("jubarte-mcp-ui/src/port.rs", PORTED.replace("Upstream Author", "UI Author"))
         self.write("crates/jubarte-x/Cargo.toml", MANIFEST)
         self.write("crates/jubarte-x/src/lib.rs", OWN + "pub mod port;\n")
         self.write("crates/jubarte-x/src/port.rs", PORTED + "pub fn f() {}\n")
@@ -89,6 +91,12 @@ class SyncLicenseFiles(unittest.TestCase):
             self.assertIn("Copyright (c) 2020 Upstream Author", bundle)
             self.assertIn("Carlito: SIL OPEN FONT LICENSE", bundle)
             self.assertIn("Liberation: SIL OPEN FONT LICENSE", bundle)
+
+    def test_ui_notice_is_shipped_only_in_the_python_bundle(self) -> None:
+        python = (self.root / "jubarte-python/python/jubarte/THIRD_PARTY_NOTICES.md").read_text()
+        npm = (self.root / "jubarte-wasm/npm/THIRD_PARTY_NOTICES.md").read_text()
+        self.assertIn("Distinct MCP UI notice", python)
+        self.assertNotIn("Distinct MCP UI notice", npm)
 
     def test_the_package_notice_unlinks_repository_paths_and_writes_a_shared_notice_once(self) -> None:
         self.write("crates/jubarte-y/Cargo.toml", MANIFEST.replace("jubarte-x", "jubarte-y"))
