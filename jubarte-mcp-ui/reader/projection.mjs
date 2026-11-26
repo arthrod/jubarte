@@ -144,12 +144,19 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  if(paragraphs.at(-1)?.structuralChange){const last=paragraphs.at(-1),previous=paragraphs.at(-2);last.structuralChange.lastParagraphMarkProtected=true;if(previous){last.structuralChange.markTransferredTo=previous.sourceRange.sourceStart;(previous.paragraphMarks??=[]).push({...last.structuralChange,transferredFrom:last.sourceRange.sourceStart})}}
  // Agent directives bind to the next appropriate source block. All clauses remain in metadata.
  // An empty paragraph's page break starts the next paragraph on a new page (#48).
- // An empty paragraph whose tracked mark is all it holds (`¶{r6 @M}` right after its ID line) is empty too (#133).
- const markOnly=new Set((document.directives||[]).filter(d=>d.type==='paragraph'&&!d.empty&&changes.some(c=>c.paragraphMark&&c.sourceStart>=d.end&&c.sourceStart-d.end<=2)));
+ // A tracked mark alone after an ID line denotes an empty paragraph (#133).
+ // Check the intervening text, not its length; stop before the next directive.
+ const markOnly=new Map();
+ const directives=document.directives||[];
+ for(const [i,d] of directives.entries())if(d.type==='paragraph'&&!d.empty){
+  const mark=changes.find(c=>c.paragraphMark&&c.sourceStart>=d.end&&c.sourceStart<(directives[i+1]?.start??Infinity)&&!words(document.body.slice(d.end,c.sourceStart)));
+  if(mark)markOnly.set(d,mark);
+ }
  const emptyParagraph=d=>d.type==='paragraph'&&(d.empty||markOnly.has(d));
  let carriedBreak=false;
  for(const d of document.directives||[]){
-  if(emptyParagraph(d)){if((d.properties||d.parsed||d).pageBreak)carriedBreak=true;continue;}
+  // A tracked mark has its own visible empty line, which owns its page break.
+  if(emptyParagraph(d)){if(!markOnly.has(d)&&(d.properties||d.parsed||d).pageBreak)carriedBreak=true;continue;}
   const de=d.range?.end?.offset??d.range?.end??d.end??0;const dt=d.type||d.kind;const eligible=blocks.filter(b=>b.sourceRange.sourceStart>=de&&(dt==='table'?b.type==='table':dt==='page'?true:!['tr','td','th','table','li','footnote'].includes(b.type))).sort((a,b)=>a.sourceRange.sourceStart-b.sourceRange.sourceStart);
   const target=eligible[0];if(target&&carriedBreak&&d.type==='paragraph'){target.pageBreakBefore=true;carriedBreak=false}
   // A paragraph directive with no text of its own binds to the next block, whose own directive then replaces it: keep its break.
@@ -197,7 +204,12 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  // Apply the browser-expressible portion of the style legend; preserve everything else as metadata.
  const applyStyle=node=>{if(node.type){const key=/^h[1-6]$/.test(node.type)?'#'.repeat(Number(node.type[1])):node.wordStyle||'Normal';node.documentStyle=document.metadata.styles?.[key]||document.metadata.styles?.[node.wordStyle]||(/^(h[1-6]|code_block)$/.test(node.type)?null:document.metadata.styles?.Normal)||null;}for(const child of node.children||[])if(child.type)applyStyle(child)};value.forEach(applyStyle);
  // Empty ID ranges denote real empty paragraphs. Keep their identities instead of attaching to the next text.
- for(const d of document.directives||[])if(emptyParagraph(d)){for(let i=d.index;i<=d.endIndex;i++){const empty={type:'p',agentId:(d.story==='body'?'':d.story+'.')+'p'+i,empty:true,directives:[d],paragraphProperties:d.properties,sourceRange:{sourceStart:d.start,sourceEnd:d.end,start:d.start,end:d.end},children:[{text:''}]};let at=value.findIndex(n=>n.sourceRange?.sourceStart>d.start);if(at<0)at=value.length;value.splice(at,0,empty)}}
+ for(const d of document.directives||[])if(emptyParagraph(d)){for(let i=d.index;i<=d.endIndex;i++){
+  const empty={type:'p',agentId:(d.story==='body'?'':d.story+'.')+'p'+i,empty:true,directives:[d],paragraphProperties:d.properties,sourceRange:{sourceStart:d.start,sourceEnd:d.end,start:d.start,end:d.end},children:[{text:''}]};
+  const mark=markOnly.get(d);
+  if(mark)empty.structuralChange={kind:mark.kind,changeIds:[mark.id],wholeBlock:true,includesParagraphMark:true};
+  let at=value.findIndex(n=>n.sourceRange?.sourceStart>d.start);if(at<0)at=value.length;value.splice(at,0,empty);
+ }}
  // Carry comment records on the closest block, including zero-width point comments.
  for(const c of comments){let block=paragraphs.find(b=>b.sourceRange.start<=c.end&&c.end<=b.sourceRange.end)||paragraphs.find(b=>b.sourceRange.start>=c.end)||paragraphs.at(-1);if(block)(block.commentRecords??=[]).push(c)}
  // Changes of footnote references propagate to their definition metadata.

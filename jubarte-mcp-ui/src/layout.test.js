@@ -168,6 +168,25 @@ describe("an empty paragraph whose mark alone is tracked (#133)", () => {
 });
 
 describe("an empty paragraph's page break (#48)", () => {
+  it("K156: a mark-only paragraph causes one page transition and keeps its empty line", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 -->\nBEFORE\n\n<!-- p1 page-break -->\n¶{r3 @A}\n\n<!-- p2 -->\nAFTER\n`,
+    );
+    try {
+      expect(composed.layout.pages.length).toBe(2);
+      const blocks = composed.snapshot.blocks.filter((b) => !b.attrs.spacer);
+      expect(blocks.map((b) => b.attrs.sourceData.agentId)).toEqual(["p0", "p1", "p2"]);
+      expect(blocks.filter((b) => b.attrs.manualPageBreakBefore)).toHaveLength(1);
+      const fragments = composed.layout.pages[1].frames.flatMap((f) => f.fragments);
+      const empty = fragments.find((f) => f.blockId === blocks[1].id);
+      const after = fragments.find((f) => f.blockId === blocks[2].id);
+      expect(empty.lines.length).toBeGreaterThan(0);
+      expect(after.lines[0].y).toBeGreaterThan(empty.lines[0].y);
+    } finally {
+      done();
+    }
+  });
+
   it("starts the next paragraph on a new page, as in b107", () => {
     const { composed, done } = compose(
       `${header()}<!-- p0 -->\nheader-no-rels\n\n<!-- p1 page-break -->\n\n<!-- p2 -->\nSecond page\n`,

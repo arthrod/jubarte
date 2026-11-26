@@ -14,6 +14,17 @@ const runs = (snapshot) =>
     .map((r) => ({ text: r.text, ...snapshot.runMap.get(r.id) }));
 
 describe("buildSnapshot", () => {
+  it("K157: omits an inserted empty paragraph only in the original fallback", () => {
+    const result = view("<!-- p0 -->\nBEFORE\n\n<!-- p1 -->\n¶{r3 @A}\n\n<!-- p2 -->\nAFTER");
+    for (const mode of ["tracked", "accepted", "original"]) {
+      const blocks = buildSnapshot(result, mode).blocks.filter((b) => !b.attrs.spacer);
+      expect(blocks.map((b) => b.attrs.sourceData.agentId)).toEqual(
+        mode === "original" ? ["p0", "p2"] : ["p0", "p1", "p2"],
+      );
+      expect(blocks.flatMap((b) => b.runs.map((r) => r.text))).toEqual(["BEFORE", "AFTER"]);
+    }
+  });
+
   it("marks an image's alt text as an image, not body text (b100)", () => {
     const snapshot = buildSnapshot(
       view("![dot_green.png](data:image/png;base64,AA==)Centered images"),
