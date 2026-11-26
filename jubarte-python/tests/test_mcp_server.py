@@ -39,6 +39,7 @@ TOOLS = {
     "docx_audit",
     "docx_view",
     "docx_preview",
+    "docx_image",
 }
 READ_ONLY = {
     "docx_capabilities",
@@ -50,6 +51,7 @@ READ_ONLY = {
     "docx_audit",
     "docx_view",
     "docx_preview",
+    "docx_image",
 }
 
 

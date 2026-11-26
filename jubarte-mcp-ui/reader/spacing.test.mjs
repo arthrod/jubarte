@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { parseSpacing, takeSpacing, resolveSpacing } from "./spacing.mjs";
-import { parseDirective, parseDocumentMetadata as parseSourceDocument } from "./metadata.mjs";
+import { parseDirective, parseDocumentMetadata as parseSourceDocument, parseTableLegend } from "./metadata.mjs";
 
 const VIEWS = new URL("../word-metrics/views/", import.meta.url);
 
@@ -129,4 +129,43 @@ test("a view's paragraphs carry their spacing, and the legend's styles theirs", 
   assert.deepEqual(table.properties.cellSpacings, [
     { from: 1, to: 8, spacing: { beforePt: 0, afterPt: 0 } },
   ]);
+});
+
+test("a table style's cell paragraph spacing sits above Normal and below the paragraph's own and its style's (#124)", () => {
+  const normal = { afterPt: 10, lineHeight: 1.15 };
+  const table = { afterPt: 0, line: { rule: "auto", multiple: 1 } };
+  const cell = resolveSpacing(undefined, normal, normal, table);
+  assert.equal(cell.afterPt, 0);
+  assert.deepEqual(cell.line, { rule: "auto", multiple: 1 });
+  assert.equal(resolveSpacing({ afterPt: 6 }, normal, normal, table).afterPt, 6);
+  assert.equal(resolveSpacing({}, { afterPt: 3 }, normal, table).afterPt, 3);
+  assert.equal(resolveSpacing({}, normal, normal, undefined).afterPt, 10);
+});
+
+test("the tables legend gives each style its cell paragraph spacing, and a table line its style (#124)", () => {
+  const legend = parseTableLegend(
+    'TableNormal, LightShading-Accent1, borders vary, cell paragraphs after 0pt line 1, "A, B", named X, all borders 0.5pt, Plain, cell paragraphs line 12pt exact',
+  );
+  assert.deepEqual(Object.keys(legend), ["TableNormal", "LightShading-Accent1", "A, B", "Plain"]);
+  assert.deepEqual(legend["LightShading-Accent1"].cellSpacing, { afterPt: 0, line: { rule: "auto", multiple: 1 } });
+  assert.equal(legend.TableNormal.cellSpacing, undefined);
+  assert.deepEqual(legend.Plain.cellSpacing, { line: { rule: "exact", points: 12 } });
+  const view = [
+    "---",
+    "view: tracked",
+    "styles:",
+    "  Normal: Aptos 10.5pt, after 10pt, line 1.15, left  # default",
+    "  tables: TableNormal, MediumShading1-Accent1, borders vary, cell paragraphs after 0pt line 1",
+    "---",
+    "",
+    "<!-- t0 1x1, cells p0-p0 by row, style MediumShading1-Accent1 -->",
+    "| A |",
+    "|---|",
+    "",
+  ].join("\n");
+  const { directives, metadata } = parseSourceDocument(view);
+  const t0 = directives.find((d) => d.type === "table");
+  assert.equal(t0.properties.tableStyle, "MediumShading1-Accent1");
+  assert.equal(t0.properties.unknown?.length ?? 0, 0);
+  assert.deepEqual(metadata.tableStyles["MediumShading1-Accent1"].cellSpacing, { afterPt: 0, line: { rule: "auto", multiple: 1 } });
 });

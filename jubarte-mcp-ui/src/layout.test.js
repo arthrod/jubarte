@@ -1087,6 +1087,30 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
     expect(at(composed, "BETA").y).toBeCloseTo(NORMAL + 8 * PX, 2);
     done();
   });
+  // A cell's line, at its page y.
+  const cellTop = (composed, text) => {
+    for (const f of composed.layout.pages[0].frames[0].fragments)
+      if (f.tableCell) for (const l of f.lines || []) if (l.runs.some((r) => r.text === text)) return l.y;
+    return null;
+  };
+  const rows = (style, legend = "") =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 10pt, line 1.15, left${legend}\n---\n\n<!-- t0 3x1, cells p0-p2 by row${style} -->\n|A0|\n|-|\n|A1|\n|A2|\n`;
+  it("an unstyled table's cells take Word's Table Grid: no space after, single lines (#124)", () => {
+    const single = 1.220703 * 11 * PX;
+    const grid = compose(rows(""));
+    const pitch = cellTop(grid.composed, "A2") - cellTop(grid.composed, "A1");
+    grid.done();
+    const plain = compose(rows(", style TableNormal"));
+    const loose = cellTop(plain.composed, "A2") - cellTop(plain.composed, "A1");
+    plain.done();
+    const named = compose(rows(", style Ledger", "\n  tables: TableNormal, Ledger, cell paragraphs after 2pt line 1"));
+    const ledger = cellTop(named.composed, "A2") - cellTop(named.composed, "A1");
+    named.done();
+    // Rows step one single line, never Normal's 10pt after.
+    expect(pitch).toBeCloseTo(single, 1);
+    expect(loose - pitch).toBeGreaterThan(10 * PX);
+    expect(ledger - pitch).toBeCloseTo(2 * PX, 1);
+  });
   it("the gap is the larger of space after and space before, not their sum", () => {
     const { composed, done } = compose(
       doc("<!-- p0 after 36pt -->\nONE\n\n<!-- p1 before 18pt -->\nTWO\n\n<!-- p2 after 6pt -->\nTHREE\n\n<!-- p3 before 24pt -->\nFOUR\n"),
@@ -1189,26 +1213,39 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
   const head = (extra = "") =>
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${extra}---\n\n`;
   const rowsOf = (composed) => composed.tableFragments[0].rows.map((r) => r.height);
+  // Word's Table Grid, which a table line without a style is (the writer's), sets its cells'
+  // paragraphs single and with no space after (#124); Normal Table sets nothing.
+  const SINGLE = 1.220703 * 11 * PX;
   it("a row is as tall as its cell's lines, with the cell paragraph's own spacing", () => {
     const { composed, done } = compose(
-      `${head()}<!-- t0 2x1, cells p0-p1 by row, p0-p0 before 0pt after 0pt, width auto -->\n|TIGHT|\n|-|\n|LOOSE|\n`,
+      `${head()}<!-- t0 2x1, cells p0-p1 by row, p0-p0 before 0pt after 0pt, width auto, style TableNormal -->\n|TIGHT|\n|-|\n|LOOSE|\n`,
     );
     const [tight, loose] = rowsOf(composed);
     // Word's table fixture: a row with no paragraph spacing is its line (word-metrics, `table`).
     expect(tight).toBeCloseTo(NORMAL, 2);
-    // Normal's space after counts inside a cell too.
+    // Under Normal Table, Normal's space after counts inside a cell too.
     expect(loose).toBeCloseTo(NORMAL + 8 * PX, 2);
     done();
   });
-  it("lines inside a cell advance by Word's line height, not 29px", () => {
-    const { composed, done } = compose(
-      `${head()}<!-- t0 1x1, cells p0-p1 by row, width auto -->\n|CELL_ONE<br/>CELL_TWO|\n|-|\n`,
-    );
-    const cell = composed.tableFragments[0].cells[0];
-    const tops = cell.lines.map((l) => l.y);
-    expect(tops).toHaveLength(2);
-    expect(tops[1] - tops[0]).toBeCloseTo(NORMAL, 2);
+  it("an unstyled table's rows are single lines with no space after: Word's Table Grid (#124)", () => {
+    const { composed, done } = compose(`${head()}<!-- t0 2x1, cells p0-p1 by row, p1-p1 after 4pt, width auto -->\n|GRID|\n|-|\n|OWN|\n`);
+    const [grid, own] = rowsOf(composed);
+    expect(grid).toBeCloseTo(SINGLE, 2);
+    // A cell paragraph's own spacing still wins over the table style's.
+    expect(own).toBeCloseTo(SINGLE + 4 * PX, 2);
     done();
+  });
+  it("lines inside a cell advance by Word's line height, not 29px", () => {
+    for (const [style, height] of [["", SINGLE], [", style TableNormal", NORMAL]]) {
+      const { composed, done } = compose(
+        `${head()}<!-- t0 1x1, cells p0-p1 by row, width auto${style} -->\n|CELL_ONE<br/>CELL_TWO|\n|-|\n`,
+      );
+      const cell = composed.tableFragments[0].cells[0];
+      const tops = cell.lines.map((l) => l.y);
+      expect(tops).toHaveLength(2);
+      expect(tops[1] - tops[0], style).toBeCloseTo(height, 2);
+      done();
+    }
   });
   it("a table whose rows the view names one range each still takes its cells' spacing (b097)", () => {
     // The engine writes `cells t0.row0 p0-p2 …` when a row's cells do not hold one paragraph each.

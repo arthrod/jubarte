@@ -2369,12 +2369,7 @@ impl<'o, 'a> Writer<'o, 'a> {
                     .table_plan
                     .as_ref()
                     .and_then(|plan| plan.style.clone())
-                    .or_else(|| {
-                        self.document
-                            .table_style
-                            .as_ref()
-                            .map(|(id, _, _)| id.clone())
-                    })
+                    .or_else(|| self.document.table_style.as_ref().map(|(id, _)| id.clone()))
                     .or_else(|| Some("TableGrid".to_string()))
                     .filter(|id| id != "TableNormal");
                 if let Some(id) = &style {
@@ -2384,23 +2379,26 @@ impl<'o, 'a> Writer<'o, 'a> {
                         .document
                         .table_style
                         .as_ref()
-                        .filter(|(legend, ..)| legend == id)
-                        .map(|(_, border, name)| (border.clone(), name.clone()))
+                        .filter(|(legend, _)| legend == id)
+                        .map(|(_, look)| look.clone())
                         .or_else(|| self.document.table_legend.get(id).cloned());
-                    let border = legend.as_ref().and_then(|(border, _)| border.clone());
+                    let (border, name, cells) = legend.unwrap_or_default();
                     // Word's thin Table Grid, unless the legend gives it a
-                    // border or a name of its own (`TableGrid, all borders
-                    // 1.5pt`, `TableGrid, named …`).
-                    let name = legend.and_then(|(_, name)| name);
+                    // border, a name or cell spacing of its own (`TableGrid,
+                    // all borders 1.5pt`, `TableGrid, named …`); Word's own
+                    // is `after 0pt line 1` (#124).
                     if id == "TableGrid"
                         && matches!(border, None | Some(view_styles::TableBorders::All(4)))
                         && name.is_none()
+                        && cells.as_deref().is_none_or(|cells| {
+                            cells == " w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\""
+                        })
                     {
                         self.document.styles.insert("TableGrid");
                     } else {
                         self.document
                             .table_styles
-                            .insert(id.clone(), (border, name));
+                            .insert(id.clone(), (border, name, cells));
                     }
                 }
                 let formats = self.table_formats();
@@ -4732,12 +4730,12 @@ impl<'o, 'a> Writer<'o, 'a> {
             .document
             .table_style
             .iter()
-            .filter_map(|(id, _, name)| name.as_ref().map(|name| (id, name)))
+            .filter_map(|(id, (_, name, _))| name.as_ref().map(|name| (id, name)))
             .chain(
                 self.document
                     .table_legend
                     .iter()
-                    .filter_map(|(id, (_, name))| name.as_ref().map(|name| (id, name))),
+                    .filter_map(|(id, (_, name, _))| name.as_ref().map(|name| (id, name))),
             )
             .filter(|(_, name)| name.contains(','))
         {
@@ -4749,7 +4747,7 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         // One of Word's own table styles is written as Word defines it,
         // borders and all.
-        if let Some((id, None, _)) = &self.document.table_style
+        if let Some((id, (None, ..))) = &self.document.table_style
             && !super::package::is_built_in_table_style(id)
             && text.lines().any(|line| {
                 let line = view_styles::without_comment(line).trim();

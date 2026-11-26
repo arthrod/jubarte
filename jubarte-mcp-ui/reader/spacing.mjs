@@ -79,14 +79,19 @@ function styleSpacing(style) {
 
 /**
  * The spacing Word applies to a paragraph: its own value, else its style's,
- * else Normal's, else Word's (none, single), one property at a time. A side
- * is automatic when the winning value there is `auto`.
+ * else its table style's, else Normal's, else Word's (none, single), one
+ * property at a time. A side is automatic when the winning value there is
+ * `auto`. A table style sits above the document defaults and below the
+ * paragraph styles (ECMA-376 §17.7.2); the engine leaves out of its
+ * `cell paragraphs` what Normal itself sets, so it goes above the legend's
+ * Normal, which folds in the defaults (#124).
  * @param {object} [own] the id line's spacing
  * @param {object} [style] the paragraph's legend style
  * @param {object} [normal] the legend's Normal
+ * @param {object} [table] the table style's `cell paragraphs` spacing
  */
-export function resolveSpacing(own, style, normal) {
-  const layers = [own ?? {}, styleSpacing(style), styleSpacing(normal)];
+export function resolveSpacing(own, style, normal, table) {
+  const layers = [own ?? {}, style === normal ? {} : styleSpacing(style), table ?? {}, styleSpacing(normal)];
   const side = (name) => {
     for (const layer of layers) {
       if (layer[`${name}Auto`]) return { pt: 0, auto: true };

@@ -4,6 +4,8 @@
 
 import {pictureMime} from './pictures.mjs';
 import {decodeString} from 'micromark-util-decode-string';
+// Word's Table Grid gives its cells' paragraphs no space after and single lines (#124).
+const WORD_TABLE_GRID_CELLS=Object.freeze({afterPt:0,line:Object.freeze({rule:'auto',multiple:1})});
 const mdTypes={paragraph:'p',heading:'h',blockquote:'blockquote',code:'code_block',listItem:'li',table:'table',tableRow:'tr',tableCell:'td',thematicBreak:'hr',footnoteDefinition:'footnote'};
 const offset=n=>n.position?.start?.offset??0;
 const end=n=>n.position?.end?.offset??offset(n);
@@ -182,6 +184,11 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
   for(const rowGroup of d.cells?.rows||[]){const row=table.children[rowGroup.row];if(!row)continue;const live=row.children.filter(c=>!c.spanCovered);if(rowGroup.paragraphRanges.length===1&&live.length>1){const r=rowGroup.paragraphRanges[0];for(const cell of live)cell.rowParagraphRange=r;continue;}rowGroup.paragraphRanges.forEach((r,i)=>{const cell=row.children.filter(c=>!c.spanCovered)[i];if(cell)cell.paragraphIds=Array.from({length:r.end-r.start+1},(_,n)=>'p'+(r.start+n))})}
   // A cell's paragraphs' own spacing (#101), as their size above.
   if(d.cellSpacings?.length)for(const row of table.children)for(const cell of row.children){const ids=cell.paragraphIds?.length?cell.paragraphIds.map(id=>Number(id.slice(1))):cell.rowParagraphRange?[cell.rowParagraphRange.start,cell.rowParagraphRange.end]:[];const group=d.cellSpacings.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(group)cell.cellSpacing=group.spacing}
+  // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's,
+  // else the writer's Table Grid, Word's own, which the legend leaves unnamed (write.rs; xml.rs `tight`).
+  const tableId=d.tableStyle??document.metadata?.tableStyle??'TableGrid',tableEntry=document.metadata?.tableStyles?.[tableId];
+  const tableSpacing=tableEntry?tableEntry.cellSpacing:tableId==='TableGrid'?WORD_TABLE_GRID_CELLS:undefined;
+  if(tableSpacing)for(const row of table.children)for(const cell of row.children)cell.tableSpacing=tableSpacing;
   if(d.cellSizes?.length)for(const row of table.children)for(const cell of row.children){const ids=cell.paragraphIds?.length?cell.paragraphIds.map(id=>Number(id.slice(1))):cell.rowParagraphRange?[cell.rowParagraphRange.start,cell.rowParagraphRange.end]:[];const size=d.cellSizes.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(size)cell.fontSizePt=size.points}
  }
  // Apply the browser-expressible portion of the style legend; preserve everything else as metadata.

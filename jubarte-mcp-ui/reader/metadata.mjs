@@ -174,6 +174,10 @@ function parseClause(raw, context) {
     return {...scopedBase, type: 'cell-size', from: Number(match[1]), to: Number(match[2] ?? match[1]), points: Number(match[3])};
   }
   if (value === 'mark style') return {...scopedBase, type: 'mark-style'};
+  // A table line's style (`style MediumShading1-Accent1`, agent.rs; quoted when it holds a space), #124.
+  if ((match = value.match(/^style\s+("(?:[^"\\]|\\.)*"|\S+)$/))) {
+    return {...scopedBase, type: 'table-style', styleId: match[1].startsWith('"') ? decodeLabel(match[1].slice(1, -1)) : match[1]};
+  }
   if ((match = value.match(/^widths\s+((?:(?:\d+(?:\.\d*)?|\.\d+)in\s*)+)$/))) {
     return {...scopedBase, type: 'widths', inches: match[1].trim().split(/\s+/).map((w) => Number(w.slice(0, -2)))};
   }
@@ -220,6 +224,7 @@ function normalizeDirective(directive) {
         if (clause.points != null) (properties.cellSizes ??= []).push({from: clause.from, to: clause.to, points: clause.points});
         break;
       case 'widths': properties.columnWidthsIn = clause.inches; break;
+      case 'table-style': properties.tableStyle = clause.styleId; break;
       case 'header-row': properties.headerRowRepeats = true; break;
       case 'cant-split': properties.cantSplitRows = [...(properties.cantSplitRows || []), ...clause.rows]; break;
       case 'merged': properties.merges = [...(properties.merges || []), ...clause.merges]; break;
@@ -284,6 +289,33 @@ export function parseDirective(raw, options = {}) {
   } else if (first) pieces.unshift(first);
   directive.clauses.push(...pieces.filter(value => value.trim()).map(value => parseClause(value, {warnings, range, story: 'body'})));
   return normalizeDirective(directive);
+}
+
+/**
+ * The table styles a legend line names (`tables: A, borders vary, cell
+ * paragraphs after 0pt line 1, B`; header.rs `table_style_line`), keyed by
+ * id: each with the spacing its `w:pPr` gives cell paragraphs that Normal
+ * leaves to it (#124). A clause the writer reads as part of an entry stays
+ * in it; any other starts the next style, as view_styles.rs reads it.
+ * @param {unknown} raw
+ */
+export function parseTableLegend(raw) {
+  const out = {};
+  if (typeof raw !== 'string') return out;
+  let current = null;
+  for (const piece of splitClauses(raw)) {
+    const value = piece.trim();
+    let match;
+    if (current && (match = value.match(/^cell paragraphs\s+(.+)$/s))) {
+      const spacing = parseSpacing(match[1]);
+      if (spacing) { current.cellSpacing = spacing; continue; }
+    }
+    if (current && (value === 'borders vary' || /^(all borders|borders|named)\s/.test(value))) continue;
+    const id = value.startsWith('"') && value.endsWith('"') && value.length > 1 ? decodeLabel(value.slice(1, -1)) : value;
+    if (!id) { current = null; continue; }
+    current = out[id] ??= {styleId: id};
+  }
+  return out;
 }
 
 function parsePage(raw, warnings, path = 'page', inherited = false) {
@@ -448,6 +480,9 @@ function normalizeMetadata(data, yamlDocument, options, warnings, agentView) {
     source,
     page: parsePage(data.page, warnings, 'page', !!source),
     styles,
+    // The `table:` legend's style, which a table line without its own takes, and both lines' entries (#124).
+    tableStyle: Object.keys(parseTableLegend(mapping(data.styles) ? data.styles.table : null))[0] ?? null,
+    tableStyles: mapping(data.styles) ? {...parseTableLegend(data.styles.tables), ...parseTableLegend(data.styles.table)} : {},
     headers: parseStories(data.headers, warnings, 'headers'),
     footers: parseStories(data.footers, warnings, 'footers'),
     sections: parseSections(data.sections, warnings, source),
