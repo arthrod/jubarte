@@ -300,7 +300,7 @@ def list_documents(root: Path) -> tuple[list[dict[str, Any]], bool]:
                     continue
                 path = f"{rel}/{name}" if rel else name
                 if stat.S_ISDIR(st.st_mode):
-                    if depth + 1 < _LIST_DEPTH:
+                    if depth + 1 <= _LIST_DEPTH:
                         subfolders.append((path, depth + 1))
                     else:
                         truncated = True

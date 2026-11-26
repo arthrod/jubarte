@@ -663,7 +663,7 @@ def test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path: Path) -> None:
             if "id" in reply:
                 replies[reply["id"]] = reply
             # The server answers concurrently: tools/list can overtake the read.
-            if {2, 3} <= replies.keys():
+            if {1, 2, 3} <= replies.keys():
                 break
         proc.stdin.close()
         stderr = proc.stderr.read()
@@ -672,7 +672,13 @@ def test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path: Path) -> None:
         watchdog.cancel()
         if proc.poll() is None:
             proc.kill()
-    assert 2 in replies and 3 in replies, stderr
+    assert {1, 2, 3} <= replies.keys(), stderr
+    assert "error" not in replies[1], replies[1]
+    initialized = replies[1].get("result", {})
+    assert initialized.get("protocolVersion") == "2025-06-18", initialized
+    assert isinstance(initialized.get("capabilities"), dict), initialized
+    assert initialized.get("serverInfo", {}).get("name"), initialized
+    assert initialized.get("serverInfo", {}).get("version"), initialized
     (item,) = replies[2]["result"]["contents"]
     assert item["uri"] == UI_URI and item["mimeType"] == UI_MIME
     assert item["text"].startswith("<!doctype html>")
@@ -778,3 +784,98 @@ def test_preview_serves_the_engines_accepted_and_original_views(tmp_path: Path) 
     assert "OneTwo" in accepted.structured_content["markdown"]
     assert "{--" not in original.structured_content["markdown"]
     assert bad.is_error
+
+
+def test_k61_listing_includes_six_nested_folders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An in-memory scan tree covers the documented boundary and its truncation."""
+    import stat
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    def entry(name: str, directory: bool) -> Any:
+        return SimpleNamespace(
+            name=name,
+            stat=lambda **_: SimpleNamespace(
+                st_mode=stat.S_IFDIR if directory else stat.S_IFREG, st_size=1, st_mtime=0
+            ),
+        )
+
+    @contextmanager
+    def scan(_root: Path, _top: Any, rel: str) -> Any:
+        depth = len(rel.split("/")) if rel else 0
+        yield iter(
+            ([entry("file.docx", False)] if depth in (5, 6, 7) else []) + ([entry("d", True)] if depth < 7 else [])
+        )
+
+    monkeypatch.setattr(server, "_FD_WALK", False)
+    monkeypatch.setattr(server, "_scan", scan)
+    files, truncated = server.list_documents(Path("/virtual"))
+    assert [f["path"] for f in files] == ["d/d/d/d/d/d/file.docx", "d/d/d/d/d/file.docx"]
+    assert truncated
+
+
+@pytest.mark.parametrize(
+    "initialize", [None, {"id": 1, "error": {"code": -1, "message": "no"}}, {"id": 1, "result": {}}]
+)
+def test_k83_stdio_check_rejects_an_invalid_initialize(
+    initialize: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The existing protocol integration check must reject a bad transcript."""
+    import json
+    import subprocess
+    from io import StringIO
+
+    replies = [
+        {
+            "id": 2,
+            "result": {
+                "contents": [
+                    {
+                        "uri": UI_URI,
+                        "mimeType": UI_MIME,
+                        "text": "<!doctype html>",
+                        "_meta": {"ui": {"csp": {}, "prefersBorder": True}},
+                    }
+                ]
+            },
+        },
+        {
+            "id": 3,
+            "result": {
+                "tools": [
+                    {"name": "docx_compare", "_meta": {"ui": {"resourceUri": UI_URI, "visibility": ["model"]}}},
+                    {"name": "docx_preview", "_meta": {"ui": {"visibility": ["app"]}}},
+                ]
+            },
+        },
+    ]
+    if initialize is not None:
+        replies.insert(0, initialize)
+
+    class TranscriptProcess:
+        stdin = StringIO()
+        stdout = StringIO("".join(json.dumps(r) + "\n" for r in replies))
+        stderr = StringIO()
+
+        def wait(self, **_: Any) -> int:
+            return 0
+
+        def poll(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    import threading
+
+    class NoTimer:
+        def start(self) -> None:
+            pass
+
+        def cancel(self) -> None:
+            pass
+
+    monkeypatch.setattr(threading, "Timer", lambda *a, **kw: NoTimer())
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: TranscriptProcess())
+    with pytest.raises(AssertionError):
+        test_a_stdio_client_reads_the_card_and_its_metadata(tmp_path)
