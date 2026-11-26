@@ -230,3 +230,21 @@ it("text is measured unkerned, as the page draws it (#94)", () => {
   expect(contexts.length).toBeGreaterThan(0);
   for (const context of contexts) expect(context.fontKerning).toBe("none");
 });
+
+it("a line breaks after a hyphen between letters, as Word breaks Санкт-|Петербурга (#137)", () => {
+  // a40 + space + b30 + "-" = 572px fits the 624px line; with c30 it would not.
+  const text = `${"a".repeat(40)} ${"b".repeat(30)}-${"c".repeat(30)}`;
+  const { composed, done } = compose(
+    `---\nview: tracked\npage: Letter portrait\n---\n\n<!-- p0 -->\n${text}\n\n<!-- p1 -->\n${"a".repeat(40)} ${"b".repeat(30)}-${"5".repeat(30)}\n`,
+  );
+  const lines = composed.layout.pages[0].frames[0].fragments
+    .flatMap((f) => f.lines || [])
+    .map((l) => l.runs.map((r) => r.text || "").join(""))
+    .filter((t) => t.trim());
+  done();
+  expect(lines[0]).toBe(`${"a".repeat(40)} ${"b".repeat(30)}-`);
+  expect(lines[1]).toBe("c".repeat(30));
+  // No break between a hyphen and a number (UAX #14 HY × NU).
+  expect(lines[2]).toBe(`${"a".repeat(40)} `);
+  expect(lines[3]).toBe(`${"b".repeat(30)}-${"5".repeat(30)}`);
+});

@@ -474,6 +474,12 @@ function breakBlockIntoLineDrafts(
               best = i + 1;
               break;
             }
+            // Jubarte fork: Word breaks after a hyphen between letters (Санкт-|Петербурга), the
+            // hyphen ending the line; never before a number (UAX #14 HY × NU) (#137).
+            if (ch === "-" && isWordChar(piece[i - 1]) && isWordChar(piece[i + 1]) && !/\d/u.test(piece[i + 1] ?? "")) {
+              best = i + 1;
+              break;
+            }
           }
         }
 
