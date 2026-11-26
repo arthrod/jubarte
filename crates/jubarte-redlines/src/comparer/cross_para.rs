@@ -2584,7 +2584,9 @@ mod lexical_pairing_contract_tests {
 
     /// The platform's tie: `x a` against `a x` anchors the original's `x`
     /// on Windows Word 2024 (the earliest shared word, #154) and the `a`
-    /// on Mac Word 16.
+    /// on Mac Word 16. This pins `unit_lcs` itself; pass 1's forwarding of
+    /// the platform is pinned by
+    /// [`windows_segment_anchors_a_paired_paragraph_on_its_earliest_shared_word`].
     #[test]
     fn unit_anchor_ties_break_by_platform() {
         let build = |words: &[&str]| {

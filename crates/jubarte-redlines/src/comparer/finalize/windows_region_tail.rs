@@ -32,8 +32,11 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// away as it is. Holding only what the revision deletes, those deletions
 /// open the moved run's last paragraph, ahead of its insertion, where
 /// Reject All restores them (the review of #160: they used to go away with
-/// the paragraph). Windows Word 2024 only (`--mode word-windows`); the
-/// caller gates the platform.
+/// the paragraph). Its property history moves onto that last mark, and so do
+/// its own live properties, recorded in a `w:pPrChange` the carrier speaks
+/// with its own insertion: Reject All restores the closing paragraph's
+/// formatting and Accept All reads the revision without it. Windows Word
+/// 2024 only (`--mode word-windows`); the caller gates the platform.
 pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
@@ -74,6 +77,34 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
         return;
     }
     let last_run = *run.last().expect("the run is not empty");
+    // The closing paragraph's property history, or, where the pipeline left
+    // the properties live with no history, those properties themselves:
+    // either moves with its final mark onto the carrier. The insertion on
+    // the carrier's mark speaks for the record. Without one the move cannot
+    // preserve the source, and nothing moves (the second review of #160).
+    let history = dom
+        .element(final_pilcrow, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()));
+    let own: Vec<NodeId> = match (history, dom.element(final_pilcrow, &W::p_pr())) {
+        (None, Some(ppr)) => dom
+            .elements(ppr, None)
+            .into_iter()
+            .filter(|&c| {
+                !dom.name_is(c, &W::r_pr())
+                    && !dom.name_is(c, &W::sect_pr())
+                    && !dom.name_is(c, &W::p_pr_change())
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let attribution = if own.is_empty() {
+        None
+    } else {
+        let Some(attribution) = mark_insertion(dom, last_run) else {
+            return;
+        };
+        Some(attribution)
+    };
     for &p in &run {
         dom.remove(p);
         dom.add_before_self(final_pilcrow, p);
@@ -95,16 +126,47 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
             dom.add(last_run, child);
         }
     }
-    // The closing paragraph's property history moves with its final mark:
-    // the moved run's last paragraph stands for that paragraph once Reject
-    // All reads it (the review of #160: the history used to go away with the
-    // paragraph, and Reject All lost the original's closing formatting).
-    let history = dom
-        .element(final_pilcrow, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()));
+    // The closing paragraph's property history moves with its final mark,
+    // where one records it: the moved run's last paragraph stands for that
+    // paragraph once Reject All reads it (the review of #160: the history
+    // used to go away with the paragraph, and Reject All lost the original's
+    // closing formatting). A history holding no such record is empty.
     if let Some(history) = history {
         dom.remove(history);
     }
+    // Where the pipeline left the closing paragraph's properties live, the
+    // record is theirs: the carrier's final mark keeps them for Reject All
+    // and Accept All drops them with the revision (the second review of
+    // #160: the direct properties used to go away with the paragraph).
+    let record = match (history, attribution) {
+        (Some(history), _) => Some(history),
+        (None, Some((author, date))) => {
+            let mut used = std::collections::HashSet::new();
+            dom.for_each_descendant_element(root, None, |element| {
+                if let Some(id) = dom
+                    .attribute(element, &W::id())
+                    .and_then(|id| id.parse::<u64>().ok())
+                {
+                    used.insert(id);
+                }
+            });
+            let id = crate::revision_processor::RevisionIds::from_used(used).allocate();
+            let change = dom.new_element(W::p_pr_change());
+            dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
+            dom.set_attribute_value(change, &W::author(), Some(&author));
+            if let Some(date) = &date {
+                dom.set_attribute_value(change, &W::date(), Some(date));
+            }
+            let recorded = dom.new_element(W::p_pr());
+            for child in own {
+                dom.remove(child);
+                dom.add(recorded, child);
+            }
+            dom.add(change, recorded);
+            Some(change)
+        }
+        (None, None) => None,
+    };
     dom.remove(final_pilcrow);
     // The moved run's last mark closes the story now: its insertion would
     // have Reject All join the tail away and leave the story with no
@@ -121,7 +183,7 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
             dom.remove(ppr);
         }
     }
-    if let Some(history) = history {
+    if let Some(history) = record {
         // The paragraph's own history, if any, recorded one Reject All
         // removed with its inserted mark; the closing paragraph's stands.
         let ppr = match dom.element(last_run, &W::p_pr()) {
@@ -132,8 +194,8 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
                 ppr
             }
         };
-        if let Some(own) = dom.element(ppr, &W::p_pr_change()) {
-            dom.remove(own);
+        if let Some(existing) = dom.element(ppr, &W::p_pr_change()) {
+            dom.remove(existing);
         }
         dom.add(ppr, history);
     }
@@ -256,6 +318,20 @@ fn whole_inserted(dom: &Dom, p: NodeId) -> bool {
     runs.iter().all(|&r| first_wrapper_is(dom, r, p, &W::ins()))
 }
 
+/// The attribution of `p`'s mark insertion — the author, and the date where
+/// it carries one. [`whole_inserted`] guarantees the insertion, so a record
+/// the tail pass writes speaks with the revision that moved the paragraph.
+fn mark_insertion(dom: &Dom, p: NodeId) -> Option<(String, Option<String>)> {
+    let ins = dom
+        .element(p, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .and_then(|rpr| dom.element(rpr, &W::ins()))?;
+    Some((
+        dom.attribute(ins, &W::author()).map(str::to_string)?,
+        dom.attribute(ins, &W::date()).map(str::to_string),
+    ))
+}
+
 /// The first revision wrapper between the run and its paragraph is `rev`;
 /// the other wrapper, or none, first is not.
 fn first_wrapper_is(dom: &Dom, r: NodeId, p: NodeId, rev: &XName) -> bool {
@@ -354,6 +430,14 @@ mod tests {
             .and_then(|ppr| dom.element(ppr, &W::spacing_el()))?;
         dom.attribute(spacing, &W::name("after"))
             .map(str::to_string)
+    }
+
+    /// `w:val` of the paragraph's `w:jc`, if any.
+    fn jc_val(dom: &Dom, p: NodeId) -> Option<String> {
+        let jc = dom
+            .element(p, &W::p_pr())
+            .and_then(|ppr| dom.element(ppr, &W::jc_el()))?;
+        dom.attribute(jc, &W::val()).map(str::to_string)
     }
 
     /// The text of the paragraph's `w:t` and `w:delText`, in order.
@@ -598,19 +682,32 @@ mod tests {
     }
 
     /// A closing paragraph that holds nothing but its properties is the
-    /// empty paragraph: the region's tail moves as it does for `<w:p/>`.
+    /// empty paragraph: the region's tail moves as it does for `<w:p/>`, and
+    /// the carrier records those properties. Reject All restores the
+    /// original's closing paragraph, Accept All reads the revision's (the
+    /// second review of #160: the properties used to go away with the
+    /// paragraph).
     #[test]
-    fn closing_paragraph_with_only_its_properties_is_empty() {
+    fn closing_paragraph_with_only_its_properties_keeps_them_on_reject() {
         let before = format!(
             "{}{}{}<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr></w:p>",
             deleted("Gone"),
             inserted("Tail"),
             table(true)
         );
-        assert_eq!(
-            shapes(&serialized(&before, true)),
-            ["Gone¶-", "T", "Tail¶."]
+        let after = serialized(&before, true);
+        assert_eq!(shapes(&after), ["Gone¶-", "T", "Tail¶."]);
+        let (dom, last) = last_paragraph(&after);
+        assert!(
+            dom.element(last, &W::p_pr())
+                .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
+                .is_some(),
+            "the carrier records the closing properties"
         );
+        let (dom, closing) = resolved_closing(&after, false);
+        assert_eq!(jc_val(&dom, closing).as_deref(), Some("center"));
+        let (dom, closing) = resolved_closing(&after, true);
+        assert_eq!(jc_val(&dom, closing), None);
     }
 
     /// `body` with the pass when `pass`, then Accept All (`accept`) or

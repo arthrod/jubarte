@@ -659,6 +659,63 @@ fn windows_015_closing_paragraph_keeps_its_property_history_on_reject() {
     );
 }
 
+/// `w:val` of the story's closing paragraph's `w:pStyle`, if any.
+fn closing_style(docx: &[u8]) -> Option<String> {
+    let (dom, root) = parse(&part(docx, "word/document.xml"));
+    let body = dom.element(root, &W::body()).expect("a body");
+    let last = dom
+        .elements(body, None)
+        .into_iter()
+        .rev()
+        .find(|&child| dom.name_is(child, &W::p()))
+        .expect("the story closes on a paragraph");
+    let style = dom
+        .element(last, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::p_style()))?;
+    dom.attribute(style, &W::val()).map(str::to_string)
+}
+
+/// The original's closing paragraph carries direct properties — a style and
+/// its spacing — with no history the pipeline parked them in. The tail still
+/// moves behind the table, and the moved paragraph stands for the closing
+/// one: Reject All restores both properties and Accept All reads the
+/// revision's closing paragraph without them (the second review of #160:
+/// the direct properties went away with the paragraph).
+#[test]
+fn windows_015_closing_paragraph_keeps_its_direct_properties_on_reject() {
+    let (original, revised) = pair_015_closing(
+        r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:after="720"/></w:pPr></w:p>"#,
+    );
+    let out = compared(&original, &revised, CompareMode::WordWindows, &[]);
+    assert_reads_as_both_sides(&out, &docx_with(&original, &[]), &docx_with(&revised, &[]));
+    let (dom, root) = parse(&part(&out, "word/document.xml"));
+    let mut expected = WINDOWS_015_THROUGH_THE_TABLE.map(String::from).to_vec();
+    expected.push("{+add a comment to this one too.+}¶ ".to_string());
+    assert_eq!(body_shape(&dom, root), expected);
+    let rejected = reject_revisions(&out).expect("Reject All succeeds");
+    assert_eq!(
+        closing_style(&rejected).as_deref(),
+        Some("Heading2"),
+        "Reject All restores the original's closing style"
+    );
+    assert_eq!(
+        closing_spacing_after(&rejected).as_deref(),
+        Some("720"),
+        "Reject All restores the original's closing spacing"
+    );
+    let accepted = accept_revisions(&out).expect("Accept All succeeds");
+    assert_eq!(
+        closing_style(&accepted),
+        None,
+        "Accept All reads the revision's closing paragraph"
+    );
+    assert_eq!(
+        closing_spacing_after(&accepted),
+        None,
+        "Accept All reads the revision's closing paragraph"
+    );
+}
+
 /// Mac Word 16's redline of the same pair (snapshot: must not move): the
 /// closing paragraph stays, with its history, and Reject All restores the
 /// spacing as it does on Windows.
@@ -873,7 +930,9 @@ fn pair_zero_pair() -> (String, String) {
 #[test]
 fn windows_zero_pair_region_that_adds_a_paragraph_preserves_both_sources() {
     let (original, revised) = pair_zero_pair();
-    let (dom, root) = windows_redline(&original, &revised, &[]);
+    let out = compared(&original, &revised, CompareMode::WordWindows, &[]);
+    assert_reads_as_both_sides(&out, &docx_with(&original, &[]), &docx_with(&revised, &[]));
+    let (dom, root) = parse(&part(&out, "word/document.xml"));
     assert_eq!(
         body_shape(&dom, root),
         [
