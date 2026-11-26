@@ -483,6 +483,19 @@ jobs:
         run: |
           uv run --with maturin maturin develop --release
           uv run --with pytest --with 'mcp>=2.2,<3' --with anyio pytest -q
+      - name: test Word metrics and verify the committed summary
+        shell: bash
+        run: |
+          if ! command -v pdftotext >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y poppler-utils
+          fi
+          out=.scratch/bot111/word-metrics-ci
+          mkdir -p "$out"
+          COVERAGE_FILE="$out/.coverage" uv run --python 3.11 --with pytest --with pytest-cov pytest -q jubarte-mcp-ui/word-metrics/test_summary.py --cov=summary --cov-branch --cov-report=term-missing --cov-report="json:$out/coverage.json"
+          uv run --python 3.11 python -c 'import json, sys; t=json.load(open(sys.argv[1]))["totals"]; print("Coverage: {:.2f}% lines, {:.2f}% branches".format(100*t["covered_lines"]/t["num_statements"], 100*t["covered_branches"]/t["num_branches"]))' "$out/coverage.json"
+          uv run --python 3.11 python jubarte-mcp-ui/word-metrics/summary.py jubarte-mcp-ui/word-metrics/word/*_byword.pdf > "$out/summary.txt"
+          diff -u jubarte-mcp-ui/word-metrics/word/summary.txt "$out/summary.txt"
       # Each feature layer of the binding compiles alone (plan T5.3).
       - name: check every feature layer alone
         working-directory: jubarte-python
