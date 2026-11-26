@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import consolePipe from "vite-plugin-console-pipe";
 import { viteSingleFile } from "vite-plugin-singlefile";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -134,7 +135,7 @@ export default defineConfig({
   base: "./",
   publicDir: false,
   define: { "import.meta.env.JUBARTE_VERSION": JSON.stringify(version) },
-  plugins: [dropReaderFontFaces(), viteSingleFile({ removeViteModuleLoader: true }), licenceBanner()],
+  plugins: [consolePipe(), dropReaderFontFaces(), viteSingleFile({ removeViteModuleLoader: true }), licenceBanner()],
   build: {
     outDir,
     emptyOutDir: false,

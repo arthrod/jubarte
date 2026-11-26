@@ -183,6 +183,63 @@ describe("Accepted and Original are the engine's views (#40)", () => {
   });
 });
 
+describe("tracked page breaks after a failed engine preview (#134 K143)", () => {
+  for (const [change, mode] of [
+    ["del", "accepted"],
+    ["ins", "original"],
+  ]) {
+    it(`removes page-break-${change} when the ${mode} request fails`, async () => {
+      const { composeDocument } = await vi.importActual("../reader/pagination.js");
+      HTMLCanvasElement.prototype.getContext = () => null;
+      const markdown = `---\nview: tracked\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- p1 page-break-${change} r1 @A -->\n\n<!-- p2 -->\nSECOND\n`;
+      host.app.ontoolinput({ arguments: { path: "break.docx" } });
+      host.app.ontoolresult({ structuredContent: { path: "break.docx" } });
+      host.pending
+        .at(-1)
+        .resolve({
+          structuredContent: { ...tracked.structuredContent, path: "break.docx", markdown },
+        });
+      await settle();
+      const shown = () => {
+        const last = host.mounts.at(-1);
+        return composeDocument(last.result, { mode: last.mode });
+      };
+      expect(shown().layout.pages.length).toBe(2);
+      pick(mode).click();
+      expect(host.pending.at(-1).request.arguments.view).toBe(mode);
+      host.pending
+        .at(-1)
+        .resolve({ isError: true, content: [{ type: "text", text: "preview unavailable" }] });
+      await settle();
+      expect(host.mounts.at(-1).dataView).toBe(mode);
+      expect($("notices").textContent).toMatch(/rebuilt/i);
+      expect(shown().layout.pages.length).toBe(1);
+      expect(
+        shown().snapshot.blocks.find((b) => b.runs?.some((r) => r.text === "SECOND")).attrs
+          .manualPageBreakBefore,
+      ).toBe(false);
+      pick("tracked").click();
+      await settle();
+      expect(shown().layout.pages.length).toBe(2);
+      // A successful engine response owns pagination, even for the same mode.
+      pick(mode).click();
+      host.pending
+        .at(-1)
+        .resolve({
+          structuredContent: {
+            ...tracked.structuredContent,
+            path: "break.docx",
+            view: mode,
+            markdown: markdown.replace(`page-break-${change} r1 @A`, "page-break"),
+          },
+        });
+      await settle();
+      expect(host.mounts.at(-1).mode).toBe("tracked");
+      expect(shown().layout.pages.length).toBe(2);
+    });
+  }
+});
+
 describe("accessibility state follows what is shown (#43)", () => {
   it("a cached mode drawn while another is on its way clears aria-busy", async () => {
     host.app.ontoolinput({ arguments: { path: "b.docx" } });

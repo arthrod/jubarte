@@ -209,6 +209,27 @@ test('revision, formatting and paragraph-mark tags retain all raw data', () => {
   assert.equal(paragraph.revisions[3].tags[0].timestamp, '2026-10-13T10:00:00Z');
 });
 
+for (const change of ['ins', 'del']) {
+  test(`page-break-${change} retains its revision without a paragraph-mark clause (#134 K141)`, () => {
+    const paragraph = parseDirective(`<!-- p1 page-break-${change} r1 @A -->`);
+    assert.equal(paragraph.revisions.length, 1);
+    assert.equal(paragraph.revisions[0].type, 'page-break');
+    assert.equal(paragraph.revisions[0].change, change);
+    assert.deepEqual(paragraph.revisions[0].tags[0].canonicalIds, ['body:rev:1']);
+  });
+
+  test(`page-break-${change} parses its change and tags without warnings (#134 K142)`, () => {
+    const warnings = [];
+    const paragraph = parseDirective(`<!-- footnotes.p1 page-break-${change} r1+2 @A -->`, {warnings});
+    assert.equal(paragraph.pageBreak, true);
+    assert.equal(paragraph.pageBreakChange?.change, change);
+    assert.deepEqual(paragraph.pageBreakChange.tags[0].revisionIds, [1, 2]);
+    assert.deepEqual(paragraph.pageBreakChange.tags[0].canonicalIds, ['footnotes:rev:1', 'footnotes:rev:2']);
+    assert.equal(paragraph.pageBreakChange.tags[0].author, 'A');
+    assert.deepEqual(warnings, []);
+  });
+}
+
 test('legacy hash tags from authoritative document are also accepted', () => {
   const paragraph = view('<!-- p3 rev #0 @AC; #1+2 @AC, comments #c5+6, in #c11 -->').directives[0];
   assert.deepEqual(paragraph.revisions[1]?.tags, undefined);

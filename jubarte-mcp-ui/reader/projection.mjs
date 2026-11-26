@@ -143,14 +143,13 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  for(const mark of paragraphMarks){const before=[...paragraphs].reverse().find(b=>b.sourceRange.start<=mark.start);if(before)(before.paragraphMarks??=[]).push(mark)}
  if(paragraphs.at(-1)?.structuralChange){const last=paragraphs.at(-1),previous=paragraphs.at(-2);last.structuralChange.lastParagraphMarkProtected=true;if(previous){last.structuralChange.markTransferredTo=previous.sourceRange.sourceStart;(previous.paragraphMarks??=[]).push({...last.structuralChange,transferredFrom:last.sourceRange.sourceStart})}}
  // Agent directives bind to the next appropriate source block. All clauses remain in metadata.
- // An empty paragraph's page break starts the next paragraph on a new page (#48).
- let carriedBreak=false;
+ // Explicitly empty paragraphs are materialized below and carry their own break.
  for(const d of document.directives||[]){
-  if(d.type==='paragraph'&&d.empty){if((d.properties||d.parsed||d).pageBreak)carriedBreak=true;continue;}
+  if(d.type==='paragraph'&&d.empty)continue;
   const de=d.range?.end?.offset??d.range?.end??d.end??0;const dt=d.type||d.kind;const eligible=blocks.filter(b=>b.sourceRange.sourceStart>=de&&(dt==='table'?b.type==='table':dt==='page'?true:!['tr','td','th','table','li','footnote'].includes(b.type))).sort((a,b)=>a.sourceRange.sourceStart-b.sourceRange.sourceStart);
-  const target=eligible[0];if(target&&carriedBreak&&d.type==='paragraph'){target.pageBreakBefore=true;carriedBreak=false}
-  // A paragraph directive with no text of its own binds to the next block, whose own directive then replaces it: keep its break.
-  if(target&&d.type==='paragraph'&&target.agentId&&target.agentId!==d.id&&target.paragraphProperties?.pageBreak)target.pageBreakBefore=true;
+  const target=eligible[0];
+  // Keep every directive: a break with no text of its own belongs to this block
+  // even when the block's own directive replaces paragraphProperties (#134).
   if(target){(target.directives??=[]).push(d);if(d.id)target.agentId=d.id;if(d.type==='paragraph'||d.type==='table'){const p=d.properties||d.parsed||d;target.paragraphProperties=p;if(d.style)target.wordStyle=d.style;}}
  }
  // Reconnect explicitly continued comment ranges to their story-qualified thread.

@@ -162,15 +162,61 @@ describe("an empty paragraph's page break (#48)", () => {
   // Word, showing markup, breaks at a page break inserted or deleted with tracking (b077: 3 pages).
   for (const kind of ["page-break-del", "page-break-ins"])
     it(`a tracked ${kind} still breaks the page in the tracked view (#131)`, () => {
-      const { composed, done } = compose(
-        `${header()}<!-- p0 -->\nFIRST\n\n<!-- p1 ${kind} r1 @A, break-${kind.slice(-3)} r1 @A -->\n\n<!-- p2 -->\nSECOND\n`,
+      const { composed, container, done } = compose(
+        `${header()}<!-- p0 -->\nFIRST\n\n<!-- p1 ${kind} r1 @A -->\n\n<!-- p2 -->\nSECOND\n`,
       );
       expect(composed.layout.pages.length).toBe(2);
-      const second = composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text.includes("SECOND")));
-      expect(composed.layout.pages[1].frames[0].fragments.some((f) => f.blockId === second.id)).toBe(true);
-      expect(composed.warnings?.some?.((w) => /unknown/.test(w.code) && /page-break/.test(w.message)) ?? false).toBe(false);
+      const second = composed.snapshot.blocks.find((b) =>
+        b.runs?.some((r) => r.text.includes("SECOND")),
+      );
+      expect(
+        composed.layout.pages[1].frames[0].fragments.some((f) => f.blockId === second.id),
+      ).toBe(true);
+      expect(container.querySelector(".paged-page-break-change")?.textContent).toBe(
+        `Page break ${kind.endsWith("ins") ? "inserted" : "deleted"} · r1 @A`,
+      );
       done();
     });
+
+  for (const [change, mode, pages] of [
+    ["ins", "tracked", 2],
+    ["del", "tracked", 2],
+    ["ins", "accepted", 2],
+    ["del", "accepted", 1],
+    ["ins", "original", 1],
+    ["del", "original", 2],
+  ]) {
+    for (const shape of ["own", "carried", "empty"]) {
+      it(`${shape} page-break-${change} has ${pages} pages in ${mode} (#134 K143)`, () => {
+        const directive = `<!-- p1 page-break-${change} r1 @A${shape === "empty" ? ", empty" : ""} -->`;
+        const source = `${header()}<!-- p0 -->\nFIRST\n\n${directive}\n\n${shape === "own" ? "" : "<!-- p2 -->\n"}SECOND\n`;
+        const { composed, container, done } = compose(source, { mode });
+        try {
+          expect(composed.layout.pages.length).toBe(pages);
+          expect(container.textContent).toContain("SECOND");
+          expect(container.querySelectorAll(".paged-page-break-change").length).toBe(
+            mode === "tracked" ? 1 : 0,
+          );
+        } finally {
+          done();
+        }
+      });
+    }
+  }
+
+  it("retains the full page-break attribution when the label is truncated (#134 K141)", () => {
+    const tags = Array.from({ length: 20 }, (_, i) => `r${i + 1} @LongAuthorName`).join("; ");
+    const { container, done } = compose(
+      `${header()}FIRST\n\n<!-- p1 page-break-ins ${tags} -->\nSECOND\n`,
+    );
+    try {
+      const label = container.querySelector(".paged-page-break-change");
+      expect(label.textContent).toBe(`Page break inserted · ${tags}`);
+      expect(label.title).toBe(label.textContent);
+    } finally {
+      done();
+    }
+  });
 });
 
 describe("sections and their notes (#49)", () => {

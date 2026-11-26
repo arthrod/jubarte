@@ -214,7 +214,13 @@ function normalizeDirective(directive) {
       case 'numbering': properties.numbering = {kind: 'numbered', label: clause.label}; break;
       case 'bullet': properties.numbering = {kind: 'bullet'}; break;
       case 'level': properties.level = clause.level; break;
-      case 'page-break': properties.pageBreak = true; if (clause.change) properties.pageBreakChange = {change: clause.change, tags: clause.tags}; break;
+      case 'page-break':
+        properties.pageBreak = true;
+        if (clause.change) {
+          properties.pageBreakChange = {change: clause.change, tags: clause.tags};
+          properties.revisions.push(clause);
+        }
+        break;
       case 'section-break': properties.sectionBreak = true; break;
       case 'empty': properties.empty = true; break;
       case 'break-ins': case 'break-del': case 'fmt': case 'rev': properties.revisions.push(clause); break;
