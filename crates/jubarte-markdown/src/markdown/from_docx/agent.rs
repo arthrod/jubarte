@@ -3164,6 +3164,19 @@ pub(crate) fn table_line(
     {
         clauses.push("header row repeats".to_string());
     }
+    // Rows Word keeps on one page (`w:cantSplit`, #71).
+    let kept: Vec<String> = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, tr)| {
+            tr.path(&["trPr", "cantSplit"])
+                .is_some_and(|el| !matches!(el.attr("w:val"), Some("0" | "false" | "off")))
+        })
+        .map(|(i, _)| format!("t{t}.row{i}"))
+        .collect();
+    if !kept.is_empty() {
+        clauses.push(format!("cant-split {}", kept.join(" ")));
+    }
     if let Some(style) = style {
         clauses.push(format!(
             "style {}",

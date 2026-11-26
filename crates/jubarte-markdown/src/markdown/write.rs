@@ -889,6 +889,8 @@ struct TablePlan {
     borders: Option<crate::markdown::borders::Sides>,
     cell_borders: Vec<(view_notes::CellsAt, crate::markdown::borders::Sides)>,
     row_borders: Vec<(usize, crate::markdown::borders::Sides)>,
+    /// The rows Word keeps on one page (`cant-split`).
+    cant_split: Vec<usize>,
     /// Cell paragraphs in a style of their own (`p5 ListParagraph`).
     styles: HashMap<usize, String>,
     /// The cell paragraphs' own spacing (`p8 line 8.65pt exact`), #1473.
@@ -1335,6 +1337,7 @@ fn plan_table(line: view_notes::TableLine, rows: &[(Vec<bool>, usize)]) -> Table
         borders: line.borders,
         cell_borders: line.cell_borders,
         row_borders: line.row_borders,
+        cant_split: line.cant_split,
         in_comment: line.in_comment,
         fmt: line.fmt,
         grid_fmt: line.grid_fmt,
@@ -3148,12 +3151,14 @@ impl<'o, 'a> Writer<'o, 'a> {
         }
         let (borders, cell_borders) = (plan.borders.clone(), plan.cell_borders.clone());
         let row_borders = plan.row_borders.iter().cloned().collect();
+        let cant_split = plan.cant_split.iter().copied().collect();
         TableFormats {
             table: table.map(|tag| self.format_mark(&tag)),
             grid,
             borders,
             cell_borders,
             row_borders,
+            cant_split,
             row_marks: row_marks
                 .into_iter()
                 .map(|(row, (inserted, tag))| {

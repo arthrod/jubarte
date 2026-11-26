@@ -36,7 +36,12 @@ export function pickFiles(result) {
 
 /** The last path segment, for captions. */
 export function baseName(path) {
-  return String(path ?? "").split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  return (
+    String(path ?? "")
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .at(-1) ?? ""
+  );
 }
 
 /** A link inside the document: an in-page anchor scrolls, anything else goes to the host. */
@@ -45,9 +50,31 @@ export function linkAction(href) {
   if (href.startsWith("#")) return { kind: "anchor", id: href.slice(1) };
   try {
     const url = new URL(href);
-    if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:") return { kind: "external", url: url.href };
+    if (url.protocol === "http:" || url.protocol === "https:" || url.protocol === "mailto:")
+      return { kind: "external", url: url.href };
   } catch {
     // A relative or malformed link has no target outside the document.
   }
   return { kind: "none" };
+}
+
+/**
+ * The reader's warnings worth showing under a card: the ones that change
+ * what is on the page. The reader is lossless and reports every clause it
+ * keeps without drawing it (`unknown-*`), a revision dated by conversion
+ * time, and a header value it read as text; those serve a Markdown editor,
+ * not someone reading the document, so they stay out of the card.
+ */
+export function readerNotices(warnings) {
+  const quiet = (code) =>
+    code.startsWith("unknown-") || code === "missing-revision-date" || code === "yaml-repaired";
+  return warnings
+    .filter((w) => typeof w === "string" || !quiet(w.code))
+    .map((w) => (typeof w === "string" ? w : w.message));
+}
+
+/** A failed call's reason for the reader: its first text, without the MCP SDK's "Error executing tool NAME: " prefix. */
+export function errorText(result) {
+  const text = result?.content?.find?.((c) => c.type === "text")?.text ?? "";
+  return text.replace(/^Error executing tool \S+: /, "");
 }

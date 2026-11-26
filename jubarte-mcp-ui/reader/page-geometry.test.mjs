@@ -88,3 +88,36 @@ test('eight substantial reader examples parse and cover the four paper layouts',
   }
   assert.deepEqual(layouts, ['Letter portrait','Letter portrait','Letter portrait','A4 portrait','A4 landscape','Legal portrait','Letter portrait','A4 landscape']);
 });
+
+test('the engine names each side after `margins` (b106)', () => {
+  const g = read('Letter landscape, margins top 0.5in, right 0.5in, bottom 0.3in, left 0.5in, header/footer 0.5in');
+  assert.deepEqual(g.warnings, []);
+  assert.equal(g.margins.topPx, 48);
+  assert.equal(g.margins.rightPx, 48);
+  assert.equal(Math.round(g.margins.bottomPx * 10) / 10, 28.8);
+  assert.equal(g.margins.leftPx, 48);
+});
+test('every paper the engine names, and its WxHin custom size (#42)', () => {
+  // A4 keeps the reader's 210mm, 0.03px off Word's 11906 twips.
+  const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.05, `${actual} ≈ ${expected}`);
+  // The engine's WORD_PAGE_SIZES in twips, short side first; twips / 15 = CSS px.
+  const papers = {Letter: [12240, 15840], Legal: [12240, 20160], Executive: [10440, 15120], Tabloid: [15840, 24480],
+    Ledger: [15840, 24480], A3: [16838, 23811], A4: [11906, 16838], A5: [8391, 11906], 'B4 (JIS)': [14570, 20636], 'B5 (JIS)': [10318, 14570]};
+  for (const [name, [short, long]] of Object.entries(papers)) {
+    const portrait = read(`${name} portrait, margins 1in, header/footer 0.5in`);
+    assert.deepEqual(portrait.warnings, [], name);
+    close(portrait.page.widthPx, short / 15);
+    close(portrait.page.heightPx, long / 15);
+    assert.equal(portrait.label, `${name} portrait`);
+    const landscape = read(`${name} landscape, margins 1in`);
+    close(landscape.page.widthPx, long / 15);
+    close(landscape.page.heightPx, short / 15);
+  }
+  for (const [page, w, h] of [['6x9in portrait', 576, 864], ['9x6in landscape', 864, 576], ['5.83x8.27in portrait', 5.83 * 96, 8.27 * 96]]) {
+    const value = read(`${page}, margins 1in, header/footer 0.5in`);
+    assert.deepEqual(value.warnings, [], page);
+    close(value.page.widthPx, w);
+    close(value.page.heightPx, h);
+    assert.equal(value.label, page);
+  }
+});
