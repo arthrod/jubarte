@@ -217,7 +217,7 @@ function normalizeDirective(directive) {
       case 'page-break':
         properties.pageBreak = true;
         if (clause.change) {
-          properties.pageBreakChange = {change: clause.change, tags: clause.tags};
+          properties.pageBreakChange = {change: clause.change, tags: [...clause.tags]};
           properties.revisions.push(clause);
         }
         break;

@@ -228,6 +228,12 @@ for (const change of ['ins', 'del']) {
     assert.equal(paragraph.pageBreakChange.tags[0].author, 'A');
     assert.deepEqual(warnings, []);
   });
+
+  test(`page-break-${change} change tags are not the revision record's array (#134 review)`, () => {
+    const paragraph = parseDirective(`<!-- p1 page-break-${change} r1 @A -->`);
+    paragraph.pageBreakChange.tags.length = 0;
+    assert.equal(paragraph.revisions[0].tags.length, 1);
+  });
 }
 
 test('legacy hash tags from authoritative document are also accepted', () => {
