@@ -323,6 +323,7 @@ mod m_table_margin_default_style;
 mod m_tblgridchange_no_author_date;
 mod m_textbox_field_deletion;
 mod m_textbox_text_change;
+mod m_windows_whole_replacement_del_first;
 mod m_word_unchanged_properties;
 mod midsplice_source_ownership;
 mod paragraph_format_regressions;
