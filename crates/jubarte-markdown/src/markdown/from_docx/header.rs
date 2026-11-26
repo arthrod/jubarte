@@ -4,7 +4,6 @@
 //! The YAML header of the agent view.
 
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 
 use super::agent::Handles;
 use super::ooxml::Element;
@@ -1260,14 +1259,12 @@ fn table_style_borders_line(styles: Option<&Element>, id: &str) -> String {
                     .iter()
                     .all(|s| s.as_ref() == Some(&(val.clone(), sz.clone()))) =>
         {
-            let pt = crate::util::parse_finite_f64(&sz)
-                .map(|s| s / 8.0)
-                .filter(|pt| pt.is_finite())
-                .unwrap_or(0.5);
-            let pt = format!("{pt:.2}");
+            let eighths = crate::util::parse_finite_f64(&sz)
+                .filter(|s| s.is_finite())
+                .unwrap_or(4.0);
             format!(
-                "{id}, all borders {}pt{named}",
-                pt.trim_end_matches('0').trim_end_matches('.')
+                "{id}, all borders {}{named}",
+                super::super::view_styles::border_points(eighths)
             )
         }
         // Word's own styles are written as Word defines them, borders
@@ -1298,29 +1295,20 @@ fn table_style_borders_line(styles: Option<&Element>, id: &str) -> String {
 /// spacing that is not zero. A side with no value says nothing.
 fn border_side(side: &str, b: &Element) -> Option<String> {
     let val = b.attr("val").filter(|v| !v.is_empty())?;
-    let mut out = format!("{side} {val}");
-    if let Some(sz) = b.attr("sz").and_then(crate::util::parse_finite_f64) {
-        let points = sz / 8.0;
-        if !points.is_finite() {
-            return Some(out);
-        }
-        let pt = format!("{points:.2}");
-        let _ = write!(out, " {}pt", pt.trim_end_matches('0').trim_end_matches('.'));
-    }
-    if let Some(color) = b
+    let size = b
+        .attr("sz")
+        .and_then(crate::util::parse_finite_f64)
+        .filter(|sz| sz.is_finite());
+    let color = b
         .attr("color")
-        .filter(|c| c.len() == 6 && c.chars().all(|c| c.is_ascii_hexdigit()))
-    {
-        let _ = write!(out, " #{color}");
-    }
-    if let Some(space) = b
+        .filter(|c| c.len() == 6 && c.chars().all(|c| c.is_ascii_hexdigit()));
+    let space = b
         .attr("space")
         .and_then(|s| s.parse::<u32>().ok())
-        .filter(|s| *s > 0)
-    {
-        let _ = write!(out, " space {space}pt");
-    }
-    Some(out)
+        .filter(|s| *s > 0);
+    Some(super::super::view_styles::border_side_clause(
+        side, val, size, color, space,
+    ))
 }
 
 /// The style the writer gives a `header` or `footer` paragraph the view

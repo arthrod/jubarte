@@ -1129,3 +1129,25 @@ fn review128_duplicate_spacing_attributes_are_not_serialized() {
         );
     }
 }
+
+#[test]
+fn round6_odd_eighth_border_sizes_round_trip() {
+    // `format!("{pt:.2}")` rounds an exact half to even. The writer and the
+    // parser must agree on the engine's own spelling of 1/8 and 5/8 pt.
+    for (input, eighths, printed) in [("0.12pt", "1", "0.12pt"), ("0.62pt", "5", "0.62pt")] {
+        let markdown = format!(
+            "---\ntitle: T\nview: tracked\nstyles:\n  table: TechSheet, borders bottom single {input} #999999\n---\n\n<!-- t0 2x2 -->\n|a|b|\n|-|-|\n|c|d|\n"
+        );
+        let docx = write(&markdown);
+        assert!(
+            part(&docx, "word/styles.xml").contains(&format!("w:sz=\"{eighths}\"")),
+            "the legend's {input} is written as {eighths} eighths"
+        );
+        let rendered = view(&docx);
+        assert!(
+            rendered.contains(&format!("borders bottom single {printed} #999999")),
+            "{input} round-trips as {printed}:\n{rendered}"
+        );
+        assert_eq!(view(&write(&rendered)), rendered);
+    }
+}

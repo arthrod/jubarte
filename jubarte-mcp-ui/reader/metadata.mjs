@@ -348,7 +348,8 @@ function borderSidesClause(clause) {
     const border = {side, val, size: null, color: null, space: null};
     while (at < tokens.length && !TABLE_BORDER_SIDES.includes(tokens[at])) {
       const token = tokens[at++];
-      const sizeMatch = !border.size && /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(token);
+      // A zero size is still a parsed size (#128): `0pt` prints as `0pt`.
+      const sizeMatch = border.size == null && /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(token);
       if (sizeMatch) {
         const pt = Number(sizeMatch[1]);
         if (!(pt >= 0 && pt <= 255)) return null;
@@ -369,11 +370,7 @@ function borderSidesClause(clause) {
   if (sides.length === 0) return null;
   return `borders ${sides.map(s => {
     let out = `${s.side} ${s.val}`;
-    if (s.size != null) {
-      const pt = s.size / 8;
-      const p = pt.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-      out += ` ${p}pt`;
-    }
+    if (s.size != null) out += ` ${borderPoints(s.size)}`;
     if (s.color != null) out += ` #${s.color}`;
     if (s.space != null) out += ` space ${s.space}pt`;
     return out;
@@ -411,9 +408,7 @@ function tableStyleEntry(value) {
     if (border == null && borderAll) {
       const pt = Number(borderAll[1]);
       if (pt >= 0.25 && pt <= 6) {
-        const eighths = Math.round(pt * 8);
-        const p = (eighths / 8).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
-        border = `all borders ${p}pt`;
+        border = `all borders ${borderPoints(Math.round(pt * 8))}`;
         rest = next;
         continue;
       }
@@ -437,6 +432,19 @@ function tableStyleEntry(value) {
       continue;
     }
     if (clause !== 'borders vary') {
+/** Eighths of a point as Rust's `format!("{pt:.2}")` prints them. An exact
+ * half rounds to even: `0.125pt` is `0.12pt`, `0.375pt` is `0.38pt` (#128).
+ * Sizes parsed from a legend are whole eighths, so integer arithmetic is the
+ * exact binary value Rust rounds, unlike JS `toFixed`'s half-away rule. */
+function borderPoints(eighths) {
+  let hundredths = (eighths * 25) / 2;
+  if (!Number.isInteger(hundredths)) {
+    const below = Math.floor(hundredths);
+    hundredths = below % 2 === 0 ? below : below + 1;
+  }
+  return `${hundredths / 100}pt`;
+}
+
       const look = {};
       if (border != null) look.border = border;
       if (cells != null) look.cellSpacing = cells;
