@@ -77,11 +77,8 @@ test("no rule means single spacing, and an exact line may be shorter than its te
   assert.equal(lineBox("Calibri", 40, { line: 200, rule: "exact" }).height, 10);
 });
 
-test("a family with no twin measures with its class's face", () => {
-  assert.equal(
-    lineBox("Georgia", 11).height,
-    lineBox("Times New Roman", 11).height,
-  );
+test("without layout, a family with no twin uses its class's fallback", () => {
+  assert.equal(lineBox("Georgia", 11).height, lineBox("Times New Roman", 11).height);
   assert.equal(lineBox(undefined, 11).height, lineBox("Calibri", 11).height);
 });
 
@@ -96,14 +93,8 @@ test("K108: the selected source face supplies baseline and auto/atLeast pitch", 
   assert.equal(box.ascent, 11);
   assert.equal(box.descent, 3);
   assert.equal(box.height, 24);
-  assert.equal(
-    lineBox("Georgia", 10, { line: 200, rule: "atLeast" }, measure).height,
-    16,
-  );
-  assert.equal(
-    lineBox("Georgia", 10, { line: 400, rule: "atLeast" }, measure).height,
-    20,
-  );
+  assert.equal(lineBox("Georgia", 10, { line: 200, rule: "atLeast" }, measure).height, 16);
+  assert.equal(lineBox("Georgia", 10, { line: 400, rule: "atLeast" }, measure).height, 20);
 });
 
 test("K109: exact zero is explicit spacing, not omitted spacing", () => {
@@ -121,9 +112,13 @@ function fontDocument(faces) {
     const [line, text, baseline] = elements.slice(-3);
     const stack = line.style.font.slice("1000px ".length);
     const name = stack.split(", ").find((name) => faces[name]);
-    const { ascent, descent, lineGap } = faces[name];
+    const { ascent, descent, lineGap } = faces[name] ?? Object.values(faces)[0];
     if (element === text)
-      return { top: -ascent * 1000, bottom: descent * 1000 };
+      return {
+        top: -ascent * 1000,
+        bottom: descent * 1000,
+        width: name ? 1000 : stack.endsWith("monospace") ? 1200 : 900,
+      };
     if (element === baseline) return { top: 0 };
     return { height: (ascent + descent + lineGap) * 1000 };
   };
@@ -155,7 +150,10 @@ test("K108: browser measurement follows source selection and later font loads", 
   };
   const doc = fontDocument(faces);
   const measure = (stack) => measureFace(stack, doc);
-  assert.equal(lineBox("Georgia", 10, {}, measure).ascent, 9);
+  assert.deepEqual(
+    lineBox("Georgia", 10, {}, measure),
+    lineBox("Georgia", 10, {}, () => undefined),
+  );
   // The source face becomes available after an earlier fallback measurement.
   faces['"Georgia"'] = { ascent: 1.1, descent: 0.3, lineGap: 0.2 };
   const box = lineBox("Georgia", 10, {}, measure);
@@ -191,9 +189,55 @@ test("invalid spacing stays single spaced and zero is special only for exact", (
     );
   }
   for (const rule of ["auto", "atLeast"]) {
-    assert.equal(
-      lineBox("Calibri", 11, { line: 0, rule }).height,
-      lineBox("Calibri", 11).height,
-    );
+    assert.equal(lineBox("Calibri", 11, { line: 0, rule }).height, lineBox("Calibri", 11).height);
   }
+});
+
+// Literal review oracles, not expectations computed with the implementation.
+// Inputs are the installed faces' measured em boxes from review/probe/out/oracle.log.
+for (const [family, face, height, ascent] of [
+  ["Helvetica", { ascent: 0.92, descent: 0.23, lineGap: 0 }, 14.4, 11.7],
+  ["Songti SC", { ascent: 1.06, descent: 0.34, lineGap: 0 }, 21.84, 15.24],
+  ["Heiti SC", { ascent: 0.86, descent: 0.14, lineGap: 0.03 }, 15.6, 12.12],
+  ["STSong", { ascent: 0.86, descent: 0.14, lineGap: 0 }, 15.6, 12.12],
+  ["Hiragino Sans", { ascent: 0.88, descent: 0.12, lineGap: 0.5 }, 15.6, 12.36],
+  ["Georgia", { ascent: 0.917, descent: 0.219, lineGap: 0 }, 13.64, 11.0],
+]) {
+  test(`Word single line and baseline: ${family} 12pt`, () => {
+    const box = lineBox(family, 12, {}, () => face);
+    assert.ok(Math.abs(box.height - height) < 0.01, `${family}: height ${box.height} vs ${height}`);
+    assert.ok(
+      Math.abs(box.ascent - ascent) < 0.01,
+      `${family}: baseline ${box.ascent} vs ${ascent}`,
+    );
+    assert.ok(
+      Math.abs(lineBox(family, 12, { line: 360 }, () => face).height - height * 1.5) < 0.02,
+    );
+    assert.ok(
+      Math.abs(lineBox(family, 12, { line: 100, rule: "atLeast" }, () => face).height - height) <
+        0.01,
+    );
+    assert.equal(lineBox(family, 12, { line: 360, rule: "exact" }, () => face).height, 18);
+  });
+}
+
+test("Word family rules do not alter unavailable-face fallbacks or Helvetica Neue", () => {
+  const missing = () => undefined;
+  assert.deepEqual(lineBox("Helvetica", 12, {}, missing), lineBox("Arial", 12, {}, missing));
+  assert.deepEqual(
+    lineBox("Songti SC", 12, {}, missing),
+    lineBox("Times New Roman", 12, {}, missing),
+  );
+  const face = () => ({ ascent: 0.9, descent: 0.2, lineGap: 0.1 });
+  assert.equal(lineBox("Helvetica Neue", 10, {}, face).ascent, 9);
+});
+
+test("Word classification normalizes quoted, localized and full-width family names", () => {
+  const face = () => ({ ascent: 0.86, descent: 0.14, lineGap: 0.5 });
+  for (const family of ['"Songti SC", serif', "ＭＳ ゴシック", "宋体", "HG創英角ｺﾞｼｯｸUB"]) {
+    assert.ok(Math.abs(lineBox(family, 12, {}, face).height - 15.6) < 1e-9, family);
+  }
+  assert.equal(lineBox(undefined, 10, {}, face).height, 15);
+  const doc = fontDocument({ serif: { ascent: 0.9, descent: 0.2, lineGap: 0.1 } });
+  assert.ok(measureFace("serif", doc));
 });

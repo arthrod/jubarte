@@ -2,15 +2,15 @@
   "name": "jubarte-mcp-ui",
   "version": "0.20.0",
   "private": true,
-  "type": "module",
-  "license": "Apache-2.0",
   "description": "The MCP Apps view jubarte-mcp serves as ui://jubarte/document.html: jubarte-app's paginated reader around the ext-apps bridge.",
-  "packageManager": "pnpm@12.21.0",
+  "license": "Apache-2.0",
+  "type": "module",
   "scripts": {
     "build": "vite build",
     "test": "vitest run --coverage && node --test --experimental-test-coverage reader/*.test.mjs",
     "dev": "vite --host 127.0.0.1",
-    "e2e": "node --test e2e/card.e2e.mjs"
+    "e2e": "node --test --experimental-test-coverage e2e/*.e2e.mjs",
+    "e2e:line-box": "node --test --experimental-test-coverage e2e/line-box.e2e.mjs"
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.5",
@@ -48,5 +48,6 @@
     "vite": "7.3.5",
     "vite-plugin-singlefile": "2.3.4",
     "vitest": "5.1.1"
-  }
+  },
+  "packageManager": "pnpm@12.21.0"
 }
