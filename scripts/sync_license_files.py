@@ -36,7 +36,9 @@ add those two by name to an sdist where the root package already put them.
 - a notice leaves out a copyright holder that the header of a file it lists
   names, or the MIT License's text when such a file is under MIT;
 - a crate's notice is missing from its `Cargo.toml` `include`, so the crate
-  would ship without it.
+  would ship without it;
+- a shared NOTICE names the MCP UI bundle, or a package NOTICE names that
+  bundle without shipping its view or fonts.
 
 The files are git's: tracked ones, and new ones git does not ignore.
 """
@@ -62,6 +64,8 @@ BUNDLES = ("jubarte-python/python/jubarte", "jubarte-wasm/npm")
 # Python package only; its notices join that package's.
 UI = "jubarte-mcp-ui"
 UI_BUNDLE = "jubarte-python/python/jubarte"
+# These names identify the same UI payload, including its embedded font.
+UI_MENTION = re.compile(r"MCP[ -]App[ -]view|MCP[ -]UI|Source Serif 4|jubarte-mcp-ui|ui/document\.html", re.I)
 # The licence texts of the fonts the renderer embeds.
 FONT_LICENSES = (
     "crates/jubarte-render/assets/fonts/LICENSE-Carlito",
@@ -115,6 +119,30 @@ def repo_files(root: Path) -> list[str]:
     ).stdout
     names = {p for p in out.decode("utf-8", "surrogateescape").split("\0") if p}
     return sorted(p for p in names if (root / p).is_file())
+
+
+def notice_scope_problems(root: Path) -> list[str]:
+    """Check payload claims independently of whether NOTICE copies agree.
+
+    Root NOTICE is copied into every package and must stay Jandira's alone.
+    UI provenance belongs in THIRD_PARTY_NOTICES.md beside the UI and in the
+    Python bundle that actually ships it.
+    """
+    problems = []
+    for folder in [root, *package_dirs(root)]:
+        notice = folder / "NOTICE"
+        if not notice.is_file() or not UI_MENTION.search(notice.read_text(encoding="utf-8")):
+            continue
+        rel = notice.relative_to(root)
+        if folder == root:
+            problems.append(f"{rel} names the MCP App view; put package-specific provenance in {UI}/{NOTICES}")
+        elif not (
+            (folder / "ui/document.html").is_file()
+            or (folder / "python/jubarte/ui/document.html").is_file()
+            or any(folder.rglob("source-serif-4-*.woff2"))
+        ):
+            problems.append(f"{rel} names the MCP App view but ships neither ui/document.html nor its fonts")
+    return problems
 
 
 def header(path: Path) -> tuple[str | None, list[str]]:
@@ -210,16 +238,20 @@ def notice_problems(root: Path, files: list[str]) -> list[str]:
         if rel not in covered:
             problems.append(f"{rel} is under {expression}, and {notice} does not list it")
             continue
-        for holder in holders:
-            if JANDIRA not in holder and holder not in text:
-                problems.append(f"{notice} does not name {holder!r}, a copyright holder of {rel}")
+        problems.extend(
+            f"{notice} does not name {holder!r}, a copyright holder of {rel}"
+            for holder in holders
+            if JANDIRA not in holder and holder not in text
+        )
         if re.search(r"\bMIT\b", expression) and MIT_TEXT not in text:
             problems.append(f"{notice} lists {rel}, which is under MIT, without the MIT License's text")
 
     for notice, _, covered in notices.values():
-        for rel in sorted(covered):
-            if rel in headers and not is_third_party(*headers[rel]):
-                problems.append(f"{notice} lists {rel}, whose header claims Apache-2.0 and Jandira alone")
+        problems.extend(
+            f"{notice} lists {rel}, whose header claims Apache-2.0 and Jandira alone"
+            for rel in sorted(covered)
+            if rel in headers and not is_third_party(*headers[rel])
+        )
     for folder in sorted(notices):
         manifest = root / folder / "Cargo.toml"
         if folder.startswith("crates/") and manifest.is_file():
@@ -273,7 +305,9 @@ def bundle(root: Path, ui: bool = False) -> str:
 def copies(root: Path) -> list[tuple[Path, bytes, str]]:
     """Every (copy, wanted bytes, source) this script keeps current."""
     pairs = [(folder / name, (root / name).read_bytes(), name) for folder in package_dirs(root) for name in FILES]
-    pairs += [(root / b / NOTICES, bundle(root, ui=b == UI_BUNDLE).encode("utf-8"), "the crates' notices") for b in BUNDLES]
+    pairs += [
+        (root / b / NOTICES, bundle(root, ui=b == UI_BUNDLE).encode("utf-8"), "the crates' notices") for b in BUNDLES
+    ]
     return pairs
 
 
@@ -298,6 +332,7 @@ def main() -> int:
             else:
                 copy.write_bytes(wanted)
                 written += 1
+        problems += notice_scope_problems(root)
     for problem in problems:
         print(f"sync_license_files: {problem}", file=sys.stderr)
     if problems:

@@ -78,3 +78,13 @@ SOFTWARE.
 The three faces are the variable WOFF2 files jubarte-app and jubarte.pro
 serve. Their licence texts, with each font's copyright, are in `licenses/`,
 and the built view quotes them in full.
+
+The MCP App view bundles Source Serif 4, version 4.004. Its bundled WOFF2
+files carry this copyright and reserved font name in their name table:
+
+```text
+© 2014 - 2021 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name ‘Source’.
+```
+
+The SIL Open Font License, Version 1.1, is reproduced in
+`licenses/LICENSE-source-serif-4.txt` and in the built view.

@@ -25,7 +25,9 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent / "sync_license_files.py"
 
 JANDIRA = "// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n"
-PORTED = JANDIRA + "// SPDX-FileCopyrightText: 2020 Upstream Author\n//\n// SPDX-License-Identifier: Apache-2.0 AND MIT\n"
+PORTED = (
+    JANDIRA + "// SPDX-FileCopyrightText: 2020 Upstream Author\n//\n// SPDX-License-Identifier: Apache-2.0 AND MIT\n"
+)
 OWN = JANDIRA + "//\n// SPDX-License-Identifier: Apache-2.0\n"
 MIT = (
     "Copyright (c) 2020 Upstream Author\n\n"
@@ -50,13 +52,21 @@ class SyncLicenseFiles(unittest.TestCase):
         self.write("NOTICE", "Jubarte\nCopyright 2026 Jandira Technologies, LLC\n")
         self.write("crates/jubarte-render/assets/fonts/LICENSE-Carlito", "Carlito: SIL OPEN FONT LICENSE\n")
         self.write("crates/jubarte-render/assets/fonts/LICENSE-Liberation", "Liberation: SIL OPEN FONT LICENSE\n")
-        self.write("jubarte-mcp-ui/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("jubarte-x", "Distinct MCP UI notice").replace("Upstream Author", "UI Author"))
+        self.write(
+            "jubarte-mcp-ui/THIRD_PARTY_NOTICES.md",
+            NOTICE_FILE.replace("jubarte-x", "Distinct MCP UI notice").replace("Upstream Author", "UI Author"),
+        )
         self.write("jubarte-mcp-ui/src/port.rs", PORTED.replace("Upstream Author", "UI Author"))
         self.write("crates/jubarte-x/Cargo.toml", MANIFEST)
         self.write("crates/jubarte-x/src/lib.rs", OWN + "pub mod port;\n")
         self.write("crates/jubarte-x/src/port.rs", PORTED + "pub fn f() {}\n")
         self.write("crates/jubarte-x/THIRD_PARTY_NOTICES.md", NOTICE_FILE)
-        for folder in ("jubarte-python/compat", "jubarte-python/python/jubarte", "jubarte-wasm/npm", "jubarte-wasm/cli"):
+        for folder in (
+            "jubarte-python/compat",
+            "jubarte-python/python/jubarte",
+            "jubarte-wasm/npm",
+            "jubarte-wasm/cli",
+        ):
             (self.root / folder).mkdir(parents=True)
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -79,7 +89,13 @@ class SyncLicenseFiles(unittest.TestCase):
     def test_a_sound_tree_passes_and_every_package_has_its_files(self) -> None:
         r = self.run_script("--check")
         self.assertEqual(r.returncode, 0, r.stderr)
-        for folder in ("crates/jubarte-x", "jubarte-python", "jubarte-python/compat", "jubarte-wasm/npm", "jubarte-wasm/cli"):
+        for folder in (
+            "crates/jubarte-x",
+            "jubarte-python",
+            "jubarte-python/compat",
+            "jubarte-wasm/npm",
+            "jubarte-wasm/cli",
+        ):
             for name in ("LICENSE", "NOTICE"):
                 self.assertEqual((self.root / folder / name).read_bytes(), (self.root / name).read_bytes())
         for folder in ("jubarte-python", "jubarte-python/compat", "jubarte-wasm/cli"):
@@ -98,6 +114,38 @@ class SyncLicenseFiles(unittest.TestCase):
         self.assertIn("Distinct MCP UI notice", python)
         self.assertNotIn("Distinct MCP UI notice", npm)
 
+    def test_shared_notice_cannot_distribute_ui_claims_to_every_package(self) -> None:
+        # Reproduce the defect with byte-identical copies: staleness alone
+        # cannot detect this inaccurate package claim.
+        claim = "The MCP App view bundles Source Serif 4, version 4.004.\n"
+        shared = (self.root / "NOTICE").read_text() + claim
+        self.write("NOTICE", shared)
+        for notice in self.root.rglob("NOTICE"):
+            notice.write_text(shared)
+        self.refused("NOTICE names the MCP App view")
+
+    def test_package_notice_cannot_claim_an_absent_ui_bundle(self) -> None:
+        for folder in ("crates/jubarte-x", "jubarte-python/compat", "jubarte-wasm/npm", "jubarte-wasm/cli"):
+            with self.subTest(folder=folder):
+                path = f"{folder}/NOTICE"
+                shared = (self.root / "NOTICE").read_text()
+                self.write(path, shared + "The MCP App view bundles Source Serif 4.\n")
+                self.refused(f"{path} names the MCP App view but ships neither ui/document.html nor its fonts")
+                self.write(path, shared)
+
+    def test_ui_payload_scope_is_independent_of_copy_staleness(self) -> None:
+        # A package actually carrying the view or font can name it. The
+        # common NOTICE copy rule still requires moving it to third-party notices.
+        for payload in ("python/jubarte/ui/document.html", "ui/document.html", "fonts/source-serif-4-latin.woff2"):
+            with self.subTest(payload=payload):
+                self.write(f"jubarte-python/{payload}", "payload")
+                self.write("jubarte-python/NOTICE", "The MCP App view bundles Source Serif 4.\n")
+                result = self.run_script("--check")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("jubarte-python/NOTICE differs from NOTICE", result.stderr)
+                self.assertNotIn("but ships neither", result.stderr)
+                (self.root / "jubarte-python" / payload).unlink()
+
     def test_the_package_notice_unlinks_repository_paths_and_writes_a_shared_notice_once(self) -> None:
         self.write("crates/jubarte-y/Cargo.toml", MANIFEST.replace("jubarte-x", "jubarte-y"))
         self.write("crates/jubarte-y/src/port.rs", PORTED)
@@ -112,14 +160,19 @@ class SyncLicenseFiles(unittest.TestCase):
 
     def test_an_adapted_file_its_notice_does_not_list_is_refused(self) -> None:
         self.write("crates/jubarte-x/src/other.rs", PORTED)
-        self.refused("crates/jubarte-x/src/other.rs is under Apache-2.0 AND MIT, and crates/jubarte-x/THIRD_PARTY_NOTICES.md does not list it")
+        self.refused(
+            "crates/jubarte-x/src/other.rs is under Apache-2.0 AND MIT, and crates/jubarte-x/THIRD_PARTY_NOTICES.md does not list it"
+        )
 
     def test_an_adapted_file_with_no_notice_up_its_path_is_refused(self) -> None:
         self.write("tools/port.py", "# SPDX-FileCopyrightText: 2020 Upstream Author\n# SPDX-License-Identifier: MIT\n")
         self.refused("tools/port.py is under MIT, and no THIRD_PARTY_NOTICES.md up its path lists it")
 
     def test_a_listed_path_that_matches_nothing_is_refused(self) -> None:
-        self.write("crates/jubarte-x/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("`src/port.rs`", "`src/port.rs`<br>`src/gone.rs`"))
+        self.write(
+            "crates/jubarte-x/THIRD_PARTY_NOTICES.md",
+            NOTICE_FILE.replace("`src/port.rs`", "`src/port.rs`<br>`src/gone.rs`"),
+        )
         self.refused("lists `src/gone.rs`, which matches no file")
 
     def test_a_notice_without_a_files_table_is_refused(self) -> None:
@@ -131,7 +184,9 @@ class SyncLicenseFiles(unittest.TestCase):
         self.refused("does not name '2020 Upstream Author', a copyright holder of crates/jubarte-x/src/port.rs")
 
     def test_an_mit_file_needs_the_mit_licence_text(self) -> None:
-        self.write("crates/jubarte-x/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("Permission is hereby granted", "Permitted"))
+        self.write(
+            "crates/jubarte-x/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("Permission is hereby granted", "Permitted")
+        )
         self.refused("which is under MIT, without the MIT License's text")
 
     def test_a_listed_file_that_is_jandiras_alone_is_refused(self) -> None:
@@ -166,7 +221,10 @@ class SyncLicenseFiles(unittest.TestCase):
             "crates/jubarte-x/src/strings.rs",
             'const H: &str = "// SPDX-License-Identifier: MIT\\n";\nlet x = 1; /* SPDX-License-Identifier: MIT */\n',
         )
-        self.write("scripts/gen.py", 'HEADER = "# SPDX-FileCopyrightText: 2020 Upstream Author\\n# SPDX-License-Identifier: MIT"\n')
+        self.write(
+            "scripts/gen.py",
+            'HEADER = "# SPDX-FileCopyrightText: 2020 Upstream Author\\n# SPDX-License-Identifier: MIT"\n',
+        )
         r = self.run_script("--check")
         self.assertEqual(r.returncode, 0, r.stderr)
 
