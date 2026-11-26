@@ -546,7 +546,7 @@ function frontmatterAtStart(source, warnings) {
   return {raw: source.slice(0, range.end), yaml, range, data: valid ? data : null, valid, document};
 }
 
-function fencedCodeRanges(body) {
+export function fencedCodeRanges(body) {
   const ranges = [];
   const lines = body.matchAll(/[^\r\n]*(?:\r\n|\n|\r|$)/g);
   let fence = null;

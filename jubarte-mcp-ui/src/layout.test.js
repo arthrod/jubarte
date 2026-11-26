@@ -1277,3 +1277,173 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
     expect(pageOf("HEADING")).toBe(pageOf("CELL"));
   });
 });
+
+describe("pictures take their extent on the page (#95)", () => {
+  const PX = 4 / 3;
+  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  const BELOW = NORMAL - (0.220703 + 0.75) * 11 * PX;
+  const EMU = 9525;
+  const drawing = (label, w, h, kind = "inline") =>
+    `<!-- ${label} drawing:${Buffer.from(
+      JSON.stringify({ xml: `<w:drawing><wp:${kind}><wp:extent cx="${w * EMU}" cy="${h * EMU}"/></wp:${kind}></w:drawing>` }),
+    ).toString("base64url")} -->`;
+  const doc = (body, defs) =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n${body}\n${defs}\n`;
+  const lineOf = (composed, text) => {
+    for (const page of composed.layout.pages)
+      for (const f of page.frames[0].fragments)
+        for (const l of f.lines || []) if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, ...l };
+    return null;
+  };
+  const PICTURE = (w, h, kind) =>
+    doc(
+      "<!-- p0 -->\nABOVE\n\n<!-- p1 -->\n![PICALT][image1]\n\n<!-- p2 -->\nBELOW\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", w, h, kind)}`,
+    );
+
+  it("a paragraph holding only a picture is one line as tall as the picture, on the text's baseline", () => {
+    const { composed, done } = compose(PICTURE(300, 200));
+    const line = lineOf(composed, "PICALT");
+    expect(line.advance).toBeCloseTo(200 + BELOW, 2);
+    const run = line.runs.find((r) => r.picture);
+    expect(run.picture).toMatchObject({ id: "image1", mime: "image/png", drawWidth: 300, drawHeight: 200 });
+    expect(run.top).toBeCloseTo(line.baseline - 200, 2);
+    expect(lineOf(composed, "BELOW").y - line.y).toBeCloseTo(200 + BELOW + 8 * PX, 2);
+    done();
+  });
+  it("a picture a little wider than the column keeps its extent, into the right margin, as Word draws it", () => {
+    // 074's chart: 691px in a 672px column; Word draws it 691px wide (#95).
+    const { composed, done } = compose(PICTURE(700, 360));
+    const run = lineOf(composed, "PICALT").runs.find((r) => r.picture);
+    expect(composed.layout.pages[0].frames[0].bounds.width).toBeLessThan(700);
+    expect(run.picture.drawWidth).toBe(700);
+    expect(run.picture.drawHeight).toBe(360);
+    done();
+  });
+  it("a picture wider than the paper is scaled down to reach its edge, keeping its shape", () => {
+    const { composed, done } = compose(PICTURE(2000, 400));
+    const run = lineOf(composed, "PICALT").runs.find((r) => r.picture);
+    const frame = composed.layout.pages[0].frames[0].bounds;
+    const reach = 816; // Letter paper, 8.5in at 96dpi
+    expect(run.picture.drawWidth).toBeCloseTo(reach - frame.x, 1);
+    expect(run.picture.drawHeight).toBeCloseTo((400 * (reach - frame.x)) / 2000, 1);
+    done();
+  });
+  it("a floating picture, or one inside a line of text, stays a chip at the text's height", () => {
+    const floating = compose(PICTURE(300, 200, "anchor"));
+    expect(lineOf(floating.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
+    floating.done();
+    const inText = compose(
+      doc("<!-- p0 -->\nWORDS ![PICALT][image1] MORE\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`),
+    );
+    expect(lineOf(inText.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
+    expect(inText.container.querySelector(".paged-picture")).toBeNull();
+    inText.done();
+  });
+  it("draws the box at its size before the bytes arrive, then the picture the loader returns", async () => {
+    const { setPictureLoader } = await import("../reader/pagination.js");
+    let resolve;
+    const asked = [];
+    setPictureLoader((picture) => (asked.push(picture.id), new Promise((r) => (resolve = r))));
+    const { container, done } = compose(PICTURE(300, 200));
+    const box = container.querySelector(".paged-picture");
+    expect(box.style.width).toBe("300px");
+    expect(box.style.height).toBe("200px");
+    expect(box.textContent).toBe("PICALT");
+    expect(asked).toEqual(["image1"]);
+    resolve("data:image/png;base64,QUJD");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(box.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,QUJD");
+    expect(box.classList.contains("loaded")).toBe(true);
+    setPictureLoader(null);
+    done();
+  });
+  it("a picture the loader cannot get keeps its alt text", async () => {
+    const { setPictureLoader } = await import("../reader/pagination.js");
+    setPictureLoader(() => Promise.resolve(null));
+    const { container, done } = compose(PICTURE(300, 200));
+    await new Promise((r) => setTimeout(r, 0));
+    const box = container.querySelector(".paged-picture");
+    expect(box.querySelector("img")).toBeNull();
+    expect(box.textContent).toBe("PICALT");
+    setPictureLoader(null);
+    done();
+  });
+  it("pictures that do not fit one line wrap at their extents, as Word wraps characters (#122)", () => {
+    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 400, 200)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 400, 100)}`);
+    const { composed, done } = compose(md);
+    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    expect(a.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
+    expect(b.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
+    expect(b.y).toBeGreaterThan(a.y);
+    expect(a.advance).toBeCloseTo(200 + BELOW, 2);
+    expect(b.advance).toBeCloseTo(100 + BELOW, 2);
+    done();
+  });
+  it("a picture keeps its paragraph's first-line indent (#122)", () => {
+    const md = doc("<!-- p0 first-line 0.5in -->\n![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const { composed, done } = compose(md);
+    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).x).toBe(48);
+    done();
+  });
+  it("a picture taller than the page is scaled to fit it, in the body and in a footnote (#122)", () => {
+    const { composed, done } = compose(PICTURE(300, 1500));
+    const frame = composed.layout.pages[0].frames[0].bounds;
+    const line = lineOf(composed, "PICALT");
+    expect(line.advance).toBeLessThanOrEqual(frame.height + 0.01);
+    const run = line.runs.find((r) => r.picture);
+    expect(run.picture.drawWidth / run.picture.drawHeight).toBeCloseTo(300 / 1500, 6);
+    done();
+    const note = doc("<!-- p0 -->\nBODY[^1]\n\n[^1]: ![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}`);
+    expect(() => compose(note).done()).not.toThrow();
+  });
+  it("a picture with no drawing comment is drawn at its stand-in's raster size (#122)", () => {
+    const md = doc("<!-- p0 -->\n![PICALT][image1]\n", "[image1]: <image/png, 2 KB, 40x30 px>");
+    const { composed, done } = compose(md);
+    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).picture).toMatchObject({ drawWidth: 40, drawHeight: 30 });
+    done();
+  });
+  it("a picture too tall for the frame is scaled before it takes its room on the line (#125)", () => {
+    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 100)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 1000, 10000)}`);
+    const { composed, done } = compose(md);
+    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    expect(b.y).toBe(a.y);
+    expect(composed.layout.pages.length).toBe(1);
+    const tall = b.runs.find((r) => r.picture?.id === "image2").picture;
+    expect(tall.drawWidth / tall.drawHeight).toBeCloseTo(0.1, 6);
+    done();
+  });
+  it("a footnote picture fits a later section's shorter frame (#125)", () => {
+    const md = `---\nview: tracked\npage: Letter portrait, margins 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top 3in, right 1in, bottom 3in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n<!-- p0 -->\nFIRST\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: ![PICALT][image1]\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}\n`;
+    let view;
+    expect(() => (view = compose(md))).not.toThrow();
+    view.done();
+  });
+  // Two sections: margins `a`in, then `b`in, the note's FIRST reference in the first.
+  const twoSections = (a, b, note, extra = "") => `---\nview: tracked\npage: Letter portrait, margins top ${a}in, right 1in, bottom ${a}in, left 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top ${b}in, right 1in, bottom ${b}in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left${extra}\n---\n\n<!-- p0 -->\nFIRST[^1]\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 400)}\n`;
+  const words = Array.from({ length: 900 }, (_, i) => `N${String(i).padStart(4, "0")}`).join(" ");
+  it("a picture line already drawn leaves the continued label its room in a shorter frame (#126)", () => {
+    const { composed, done } = compose(twoSections(1, 4, `![PIC][image1]\n\n    ${words}`));
+    const picture = (f) => f.lines.some((l) => l.runs.some((r) => r.picture));
+    expect(picture(composed.footnoteFragments[0])).toBe(true);
+    const continued = composed.footnoteFragments.filter((f) => f.continuedBefore && !picture(f));
+    expect(continued.length).toBeGreaterThan(0);
+    for (const f of continued) expect(f.lines[0].y).toBeGreaterThanOrEqual(18);
+    done();
+  });
+  it("a rewrap keeps a later note paragraph's first-line indent (#126)", () => {
+    const { composed, done } = compose(twoSections(1, 3, `${words}\n\n    LATERPARAGRAPH`, ", first-line 0.5in"));
+    const run = composed.footnoteFragments.flatMap((f) => f.lines.flatMap((l) => l.runs)).find((r) => r.text.includes("LATERPARAGRAPH"));
+    expect(run.x).toBe(48);
+    done();
+  });
+  it("a commented picture still opens its discussion by mouse and keyboard (#122)", () => {
+    const md = doc("<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const { container, done } = compose(md);
+    const box = container.querySelector(".paged-picture");
+    expect(box.getAttribute("role")).toBe("button");
+    expect(box.getAttribute("tabindex")).toBe("0");
+    expect(box.dataset.discussions).toMatch(/comment/);
+    done();
+  });
+});

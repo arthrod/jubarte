@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {pictureExtents} from './pictures.mjs';
 import {MarkdownExtension} from 'prosemirror-remark';
 import {ProseMirrorUnified,NodeExtension,MarkExtension} from 'prosemirror-unified';
 import remarkGfm from 'remark-gfm';
@@ -25,4 +26,4 @@ class JubarteMarkdownExtension extends MarkdownExtension{
  dependencies(){return [...Object.keys(specs).map(n=>new (class extends DialectNode {})(n)),...Object.keys(markTags).map(n=>new (class extends DialectMark {})(n))]}
  unifiedInitializationHook(processor){const d=this.document,o=this.options,capture=this.capture;return super.unifiedInitializationHook(processor).use(remarkGfm,{singleTilde:false}).use(remarkCriticMarkup,{agentView:d.agentView,authors:Object.fromEntries(Object.entries(d.metadata.authorDetails||{}).map(([k,v])=>[k,{...v,timestamp:v.singleTimestamp||v.timestamp}])),planAuthor:o.planAuthor||d.metadata.defaults.author||'Modified User',date:d.metadata.defaults.date,noCritic:!!o.noCritic,literalProtection:true,preserveFlanking:true,storyAt:p=>d.directives.filter(x=>x.type==='paragraph'&&x.start<=p).at(-1)?.story||'body'}).use(()=>tree=>{const critic=tree.data.critic,projection=projectDialect(tree,critic,d);Object.assign(capture,{value:projection.value,critic,ast:tree,document:d,metadata:{...d.metadata,agentView:d.agentView,directives:d.directives,changes:critic.changes,comments:critic.comments,highlights:critic.highlights,groups:critic.groups,paragraphMarks:projection.paragraphMarks},warnings:[...d.warnings,...critic.warnings,...(critic.diagnostics||[]),...projection.warnings]});return {type:'jubarte_doc',children:prepareTree(projection.value)}})}
 }
-export function parseJubarte(source,options={}){const document=parseDocumentMetadata(source,options),result={};const pmu=new ProseMirrorUnified([new JubarteMarkdownExtension(document,options,result)]);const doc=pmu.parse(document.body);doc.check();return {...result,doc,schema:pmu.schema(),pmu,count:result.critic.changes.length+result.critic.comments.length+result.critic.highlights.length}}
+export function parseJubarte(source,options={}){const document=parseDocumentMetadata(source,options),result={};const pmu=new ProseMirrorUnified([new JubarteMarkdownExtension(document,options,result)]);const doc=pmu.parse(document.body);doc.check();return {...result,doc,schema:pmu.schema(),pmu,pictures:pictureExtents(document.body),count:result.critic.changes.length+result.critic.comments.length+result.critic.highlights.length}}

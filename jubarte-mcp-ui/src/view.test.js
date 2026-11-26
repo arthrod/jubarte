@@ -30,6 +30,7 @@ vi.mock("@modelcontextprotocol/ext-apps", () => ({
 }));
 vi.mock("./fonts.js", () => ({ loadFonts: async () => [] }));
 vi.mock("../reader/pagination.js", () => ({
+  setPictureLoader: (load) => (host.pictureLoader = load),
   mountPagination: (container, result, options) => (
     host.mounts.push({
       result,
@@ -278,4 +279,24 @@ it("a theme-only host update keeps the card's fixed height (#73)", () => {
   expect(document.documentElement.style.colorScheme).toBe("dark");
   host.app.onhostcontextchanged({ containerDimensions: { width: 320 } });
   expect(document.body.classList.contains("fixed")).toBe(false);
+});
+
+it("a picture is asked of docx_image for the document and view the card shows (#95)", async () => {
+  host.app.ontoolinput({ arguments: { path: "old.docx" } });
+  host.app.ontoolresult({ structuredContent: { path: "old.docx" } });
+  host.pending[0].resolve({
+    structuredContent: { ...old.structuredContent, sha256: "abc", view: "tracked" },
+  });
+  await settle();
+  host.pending.length = 0;
+  const url = host.pictureLoader({ id: "image1", mime: "image/png" });
+  await settle();
+  expect(host.pending.map((p) => p.request)).toEqual([
+    {
+      name: "docx_image",
+      arguments: { path: "old.docx", id: "image1", view: "tracked", sha256: "abc" },
+    },
+  ]);
+  host.pending[0].resolve({ content: [{ type: "image", data: "QUJD", mimeType: "image/png" }] });
+  expect(await url).toBe("data:image/png;base64,QUJD");
 });

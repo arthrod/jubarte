@@ -56,27 +56,43 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    return [{...run, text: run.text.slice(cut), pmRange: {from, to: r.to}}];
   });
   if (!runs.length) return [];
+  // A paragraph that starts at or after the cut is whole: it keeps its first line and indent (#126).
+  // The block's own start, not its clipped first run's, says whether the cut fell inside it.
+  if ((block.pmRange?.from ?? block.runs?.[0]?.pmRange?.from ?? -Infinity) >= from) return [block];
   return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
  });
  const wrap = note => {
-  note.lines = composeLines(note.blocks, width);
+  note.lines = composeLines(note.blocks, width, 0, height);
   // An empty definition is still a visible labelled note.
   if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, advance: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
  };
  for (const note of notes.values()) wrap(note);
- // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119).
- const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
- labelHeight = Math.min(labelHeight, Math.max(0, height - tallest));
- separator = Math.min(separator, Math.max(0, height - tallest - labelHeight));
- let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
+ // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119),
+ // and is fitted again when a section brings another frame (#125).
+ let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false, live = false;
+ const fitDecoration = () => {
+  // Only lines still to place count: one on a finished page stays there (#126). A note the page being
+  // filled requests or holds is still to place, from the first line it holds.
+  const unplaced = note => {
+   if (!scheduled.has(note.id)) return note.lines;
+   const offsets = [pending, ...(live ? [requests, allocations] : [])].flatMap(items => items.filter(part => part.id === note.id).map(part => part.offset ?? 0));
+   return offsets.length ? note.lines.slice(Math.min(...offsets)) : [];
+  };
+  const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => unplaced(note).map(line => line.advance ?? lineHeight)));
+  labelHeight = Math.min(20, Math.max(0, height - lineHeight), Math.max(0, height - tallest));
+  separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight), Math.max(0, height - tallest - labelHeight));
+ };
+ fitDecoration();
  const cloneEntries = items => items.map(item => ({...item}));
  // A note's lines take their own heights (#102): Word sets footnote text in its own style.
  const lineAt = (id, index) => notes.get(id).lines[index]?.advance ?? lineHeight;
  const span = (id, offset, count) => { let sum = 0; for (let i = 0; i < count; i++) sum += lineAt(id, offset + i); return sum; };
  const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + span(item.id, item.offset, item.count), 0) + between * (items.length - 1) : 0;
- function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active}; }
- function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; }
- function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; }
+ function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active, live}; }
+ function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; live = state.live ?? live;
+  // The restored notes still to place size the label room again, in the frame as it is now (#126).
+  fitDecoration(); }
+ function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; live = true; }
  function referenceIds(lines) {
   const ids = [];
   for (const line of lines) for (const run of line.runs || []) {
@@ -174,6 +190,7 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   });
   const emitted = new Map(allocations.map(item => [item.id, item.count]));
   pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
+  live = false;
   return {band, fragments};
  }
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,
@@ -184,7 +201,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  // The lines already drawn stay as they were; only the text not yet shown is
  // wrapped again, from its first character (#50), so nothing repeats.
  setGeometry(geometry) {
-  const rewrap = Math.abs(geometry.width - width) > 0.001;
+  // A shorter frame rewraps too: a picture line capped to the old one may not fit it (#125).
+  const rewrap = Math.abs(geometry.width - width) > 0.001 || Math.abs(geometry.height - height) > 0.001;
   width = geometry.width; height = geometry.height;
   if (!rewrap) return;
   for (const note of notes.values()) {
@@ -192,9 +210,10 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    if (!carried) { wrap(note); continue; }
    const from = note.lines[carried.offset]?.pmRange?.from;
    if (!Number.isFinite(from)) continue;
-   const rest = composeLines(clipBlocks(note.blocks, from), width);
+   const rest = composeLines(clipBlocks(note.blocks, from), width, 0, height);
    note.lines = [...note.lines.slice(0, carried.offset), ...rest];
   }
+  fitDecoration();
  },
   get hasPending() { return pending.length > 0; },
   get enabled() { return notes.size > 0 || sourceRuns.size > 0; }};
