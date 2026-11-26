@@ -245,6 +245,25 @@ def for_bundle(text: str) -> str:
     return "\n".join(out).strip("\n")
 
 
+def ui_for_bundle(text: str) -> str:
+    """Name the installed HTML carrier, preserving explicitly labelled sources."""
+    lines = []
+    for line in for_bundle(text).splitlines():
+        cells = line.split("|")
+        if len(cells) == 5 and cells[1].strip().startswith("`"):
+            source = CODE.sub(lambda m: f"`{UI}/{m[1]}`", cells[1].strip())
+            licence = CODE.sub(
+                lambda m: f"source: `{UI}/{m[1]}`; licence text embedded in `ui/document.html`",
+                cells[3].strip(),
+            )
+            line = f"| `ui/document.html` | {cells[2].strip()}<br>Source: {source} | {licence} |"
+        lines.append(line)
+    return (
+        "Files below name the installed package's carrier. Other paths describe the source repository; "
+        "all licence texts are embedded in the opening comment of `ui/document.html`.\n\n" + "\n".join(lines)
+    )
+
+
 def bundle(root: Path, ui: bool = False) -> str:
     """The THIRD_PARTY_NOTICES.md of a package that carries the whole engine.
     A notice text that two crates quote is written out once. With `ui`, the
@@ -265,7 +284,7 @@ def bundle(root: Path, ui: bool = False) -> str:
         body = (root / rel).read_text(encoding="utf-8").strip("\n")
         parts.append(f"### {Path(rel).name}\n\n```text\n{body}\n```")
     if ui:
-        text = for_bundle((root / UI / NOTICES).read_text(encoding="utf-8"))
+        text = ui_for_bundle((root / UI / NOTICES).read_text(encoding="utf-8"))
         parts.append(f"## The MCP App view (`ui/document.html`, built from {UI})\n\n{text}")
     return "\n\n".join(parts) + "\n"
 

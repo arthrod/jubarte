@@ -54,6 +54,10 @@ class SyncLicenseFiles(unittest.TestCase):
         self.write("crates/jubarte-x/src/lib.rs", OWN + "pub mod port;\n")
         self.write("crates/jubarte-x/src/port.rs", PORTED + "pub fn f() {}\n")
         self.write("crates/jubarte-x/THIRD_PARTY_NOTICES.md", NOTICE_FILE)
+        self.write(
+            "jubarte-mcp-ui/THIRD_PARTY_NOTICES.md", NOTICE_FILE.replace("2020 Upstream Author", "2021 UI Author")
+        )
+        self.write("jubarte-mcp-ui/src/port.rs", PORTED.replace("2020 Upstream Author", "2021 UI Author"))
         for folder in ("jubarte-python/compat", "jubarte-python/python/jubarte", "jubarte-wasm/npm", "jubarte-wasm/cli"):
             (self.root / folder).mkdir(parents=True)
         r = self.run_script()
@@ -105,6 +109,28 @@ class SyncLicenseFiles(unittest.TestCase):
     def test_an_adapted_file_its_notice_does_not_list_is_refused(self) -> None:
         self.write("crates/jubarte-x/src/other.rs", PORTED)
         self.refused("crates/jubarte-x/src/other.rs is under Apache-2.0 AND MIT, and crates/jubarte-x/THIRD_PARTY_NOTICES.md does not list it")
+
+    def test_ui_bundle_names_package_carrier_and_embedded_licence_text(self) -> None:
+        """K94: the wheel notice distinguishes carriers from repository sources."""
+        self.write("jubarte-mcp-ui/src/port.rs", OWN)
+        self.write("jubarte-mcp-ui/src/fonts/page/example.woff2", "font fixture")
+        self.write("jubarte-mcp-ui/licenses/LICENSE-example.txt", "OFL fixture")
+        self.write(
+            "jubarte-mcp-ui/THIRD_PARTY_NOTICES.md",
+            (
+                "# Third-party notices\n\n"
+                "| Files | Comes from | Licence |\n| --- | --- | --- |\n"
+                "| `src/fonts/page/*.woff2` | Example font | OFL-1.1 (`licenses/LICENSE-example.txt`) |\n"
+            ),
+        )
+        result = self.run_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        notice = (self.root / "jubarte-python/python/jubarte/THIRD_PARTY_NOTICES.md").read_text()
+        self.assertIn("| `ui/document.html` |", notice)
+        self.assertIn("Source: `jubarte-mcp-ui/src/fonts/page/*.woff2`", notice)
+        self.assertIn("licence text embedded in `ui/document.html`", notice)
+        self.assertIn("source: `jubarte-mcp-ui/licenses/LICENSE-example.txt`", notice)
+        self.assertNotIn("| `src/fonts/", notice)
 
     def test_an_adapted_file_with_no_notice_up_its_path_is_refused(self) -> None:
         self.write("tools/port.py", "# SPDX-FileCopyrightText: 2020 Upstream Author\n# SPDX-License-Identifier: MIT\n")
