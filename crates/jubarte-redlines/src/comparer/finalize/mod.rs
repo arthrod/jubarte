@@ -792,21 +792,10 @@ pub fn conjoin_paragraph_marks(
     )
 }
 
-/// M4.F.5 — `FixUpRevisionIds` (WmlComparer.cs:2769): renumber every
-/// `w:id` of every revision element under each `root` from `1`.
-///
-/// `w:moveFromRangeStart` / `w:moveToRangeStart` allocate a fresh id;
-/// their matching `*RangeEnd` shares the same id. Comment ids
-/// (`commentRangeStart` / `commentRangeEnd` / `commentReference`) are
-/// reserved so revision renumbering never reuses them — Word keeps them
-/// disjoint. Re-run this after any later pass that mints ids
-/// (`convert_stamped_*`, `wrap_bare_del_text_runs`, `mark_fully_revised_rows`,
-/// etc.); the pipeline runs it twice for that reason.
-pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
-    // Every tracked-change / move / property-change carrier that uses w:id.
-    // Missing any of these lets renumbered move ranges collide with e.g.
-    // tblPrChange ids — Word then raises "unreadable content".
-    let rev_names = [
+/// A tracked-change / move / property-change carrier whose `w:id` shares the
+/// package's revision-id space ([`fix_up_revision_ids`]).
+pub(crate) fn is_revision_id_carrier(name: &XName) -> bool {
+    [
         W::ins(),
         W::del(),
         W::move_from(),
@@ -826,7 +815,35 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
         W::cell_ins(),
         W::cell_del(),
         W::cell_merge(),
-    ];
+    ]
+    .contains(name)
+}
+
+/// M4.F.5 — `FixUpRevisionIds` (WmlComparer.cs:2769): renumber every
+/// `w:id` of every revision element under each `root` from `1`.
+///
+/// `w:moveFromRangeStart` / `w:moveToRangeStart` allocate a fresh id;
+/// their matching `*RangeEnd` shares the same id. Comment ids
+/// (`commentRangeStart` / `commentRangeEnd` / `commentReference`) are
+/// reserved so revision renumbering never reuses them — Word keeps them
+/// disjoint. Re-run this after any later pass that mints ids
+/// (`convert_stamped_*`, `wrap_bare_del_text_runs`, `mark_fully_revised_rows`,
+/// etc.); the pipeline runs it twice for that reason.
+pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
+    fix_up_revision_ids_with(dom, roots, None);
+}
+
+/// [`fix_up_revision_ids`] drawing fresh ids from `ids` instead of a
+/// per-part counter, so several parts can share one package-wide space
+/// (#160). The comment anchors' ids are reserved in `ids` as well.
+pub fn fix_up_revision_ids_with(
+    dom: &mut Dom,
+    roots: &[NodeId],
+    mut ids: Option<&mut crate::revision_processor::RevisionIds>,
+) {
+    // Every tracked-change / move / property-change carrier that uses w:id.
+    // Missing any of these lets renumbered move ranges collide with e.g.
+    // tblPrChange ids — Word then raises "unreadable content".
     // Comment anchors keep their own ids (must stay aligned with comments.xml).
     // Reserved so revision renumber never reuses them.
     let reserved_names = [
@@ -839,7 +856,7 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     for &root in roots {
         for d in dom.descendants(root, None) {
             let Some(n) = dom.name(d) else { continue };
-            if rev_names.contains(&n) {
+            if is_revision_id_carrier(&n) {
                 all.push(d);
             } else if reserved_names.contains(&n)
                 && let Some(id) = dom.attribute(d, &W::id()).and_then(|s| s.parse().ok())
@@ -850,16 +867,26 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
     }
     let mut old_to_new: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     let mut next_id = 1u32;
+    if let Some(ids) = ids.as_mut() {
+        for &id in &reserved {
+            ids.reserve(u64::from(id));
+        }
+    }
     let mut alloc = |old_to_new: &mut std::collections::HashMap<String, u32>,
                      old: &str,
                      remember: bool|
      -> u32 {
-        while reserved.contains(&next_id) {
+        let v = if let Some(ids) = ids.as_mut() {
+            u32::try_from(ids.allocate()).expect("revision ids stay in u32")
+        } else {
+            while reserved.contains(&next_id) {
+                next_id += 1;
+            }
+            let v = next_id;
             next_id += 1;
-        }
-        let v = next_id;
-        next_id += 1;
-        reserved.insert(v); // don't reassign within this pass either
+            reserved.insert(v); // don't reassign within this pass either
+            v
+        };
         if remember {
             old_to_new.insert(old.to_string(), v);
         }

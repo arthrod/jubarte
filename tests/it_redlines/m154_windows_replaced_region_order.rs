@@ -15,7 +15,7 @@
 
 use crate::common;
 
-use common::docx::{Part, W_NS, docx_with, esc};
+use common::docx::{Part, W_NS, docx_with, docx_with_sect, esc};
 use common::validity::assert_word_valid_package;
 use jubarte::comparer::finalize::{
     merge_replaced_paragraphs_for_platform, merge_replaced_paragraphs_in,
@@ -32,6 +32,9 @@ use std::io::{Cursor, Read};
 const STYLES: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
 const NUMBERING: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml";
+const HEADER: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml";
+const HEADER_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/header";
 
 /// A plain body paragraph.
 fn para(text: &str) -> String {
@@ -659,8 +662,36 @@ fn windows_015_closing_paragraph_keeps_its_property_history_on_reject() {
     );
 }
 
-/// `w:val` of the story's closing paragraph's `w:pStyle`, if any.
-fn closing_style(docx: &[u8]) -> Option<String> {
+/// One element of a `w:pPr`, canonicalized: its qualified name, its
+/// attributes sorted (the volatile `w:rsid*` left out, which Accept All and
+/// Reject All strip by contract), then its element children in order. Text
+/// between children is insignificant here, so it is skipped.
+fn canonical_element(dom: &Dom, node: NodeId) -> String {
+    let name = dom.name(node).expect("an element");
+    let mut out = format!("{{{}}}{}", name.namespace_name(), name.local_name());
+    let mut attrs: Vec<String> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(name, _)| {
+            !(name.namespace_name() == W::URI && name.local_name().starts_with("rsid"))
+        })
+        .map(|(name, value)| format!("{{{}}}{}={value}", name.namespace_name(), name.local_name()))
+        .collect();
+    attrs.sort();
+    out.push('(');
+    out.push_str(&attrs.join(" "));
+    out.push(')');
+    out.push('{');
+    for child in dom.elements(node, None) {
+        out.push_str(&canonical_element(dom, child));
+    }
+    out.push('}');
+    out
+}
+
+/// The canonical form of the story's closing paragraph's whole `w:pPr`, or
+/// the empty string when it carries none.
+fn canonical_closing_properties(docx: &[u8]) -> String {
     let (dom, root) = parse(&part(docx, "word/document.xml"));
     let body = dom.element(root, &W::body()).expect("a body");
     let last = dom
@@ -669,51 +700,179 @@ fn closing_style(docx: &[u8]) -> Option<String> {
         .rev()
         .find(|&child| dom.name_is(child, &W::p()))
         .expect("the story closes on a paragraph");
-    let style = dom
-        .element(last, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::p_style()))?;
-    dom.attribute(style, &W::val()).map(str::to_string)
+    match dom.element(last, &W::p_pr()) {
+        Some(ppr) => canonical_element(&dom, ppr),
+        None => String::new(),
+    }
 }
 
-/// The original's closing paragraph carries direct properties — a style and
-/// its spacing — with no history the pipeline parked them in. The tail still
-/// moves behind the table, and the moved paragraph stands for the closing
-/// one: Reject All restores both properties and Accept All reads the
-/// revision's closing paragraph without them (the second review of #160:
-/// the direct properties went away with the paragraph).
+/// The original's closing paragraph carries direct properties with no
+/// history the pipeline parked them in: a `w:rsidR` attribute, a style, its
+/// justification and paragraph-mark run properties (the reviewer's
+/// `exact-rpr-a` probe). The tail moves the replaced region behind the
+/// table, and the moved paragraph stands for the closing one: Reject All
+/// restores the original's whole `w:pPr` — attributes, mark run properties
+/// and all — and Accept All reads the revision's closing paragraph. The
+/// `w:pPrChange` keeps the original's attributes and bare children; the
+/// mark's `w:rPr` goes into a `w:rPrChange` inside the carrier's mark
+/// `w:rPr` (the second review of #160).
 #[test]
-fn windows_015_closing_paragraph_keeps_its_direct_properties_on_reject() {
-    let (original, revised) = pair_015_closing(
-        r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:spacing w:after="720"/></w:pPr></w:p>"#,
-    );
+fn windows_015_reject_restores_the_exact_closing_paragraph_properties() {
+    let closing = r#"<w:pPr w:rsidR="00AA00AA"><w:pStyle w:val="Heading2"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr></w:pPr>"#;
+    let (original, revised) = pair_015_closing(&format!("<w:p>{closing}</w:p>"));
     let out = compared(&original, &revised, CompareMode::WordWindows, &[]);
     assert_reads_as_both_sides(&out, &docx_with(&original, &[]), &docx_with(&revised, &[]));
     let (dom, root) = parse(&part(&out, "word/document.xml"));
     let mut expected = WINDOWS_015_THROUGH_THE_TABLE.map(String::from).to_vec();
     expected.push("{+add a comment to this one too.+}¶ ".to_string());
     assert_eq!(body_shape(&dom, root), expected);
+
+    // The redline records the original's attributes and its mark's run
+    // properties, not only the live carrier's view of them.
+    let (dom, root) = parse(&part(&out, "word/document.xml"));
+    let carrier = dom
+        .elements(dom.element(root, &W::body()).expect("a body"), None)
+        .into_iter()
+        .rev()
+        .find(|&child| dom.name_is(child, &W::p()))
+        .expect("the story closes on a paragraph");
+    let ppr = dom
+        .element(carrier, &W::p_pr())
+        .expect("the carrier's properties");
+    let recorded = dom
+        .element(ppr, &W::p_pr_change())
+        .and_then(|change| dom.element(change, &W::p_pr()))
+        .expect("the carrier records the closing properties");
+    assert_eq!(
+        dom.attribute(recorded, &W::name("rsidR")),
+        Some("00AA00AA"),
+        "the record keeps the closing paragraph's attributes"
+    );
+    let mark = dom
+        .element(ppr, &W::r_pr())
+        .expect("the carrier's mark has run properties");
+    let mark_change = dom
+        .element(mark, &W::r_pr_change())
+        .and_then(|change| dom.element(change, &W::r_pr()))
+        .expect("the carrier's mark records the closing mark's properties");
+    let fonts = dom
+        .element(mark_change, &W::name("rFonts"))
+        .expect("the closing mark's rFonts are recorded");
+    assert_eq!(
+        dom.attribute(fonts, &W::name("ascii")).map(str::to_string),
+        Some("Courier New".to_string())
+    );
+
     let rejected = reject_revisions(&out).expect("Reject All succeeds");
     assert_eq!(
-        closing_style(&rejected).as_deref(),
-        Some("Heading2"),
-        "Reject All restores the original's closing style"
-    );
-    assert_eq!(
-        closing_spacing_after(&rejected).as_deref(),
-        Some("720"),
-        "Reject All restores the original's closing spacing"
+        canonical_closing_properties(&rejected),
+        canonical_closing_properties(&docx_with(&original, &[])),
+        "Reject All restores the original's whole closing w:pPr"
     );
     let accepted = accept_revisions(&out).expect("Accept All succeeds");
     assert_eq!(
-        closing_style(&accepted),
-        None,
+        canonical_closing_properties(&accepted),
+        canonical_closing_properties(&docx_with(&revised, &[])),
         "Accept All reads the revision's closing paragraph"
     );
-    assert_eq!(
-        closing_spacing_after(&accepted),
-        None,
-        "Accept All reads the revision's closing paragraph"
-    );
+}
+
+/// Every `w:id` a revision carrier holds in every XML part of `docx`, with
+/// the part that holds it.
+fn revision_ids_in_package(docx: &[u8]) -> Vec<(String, String)> {
+    let mut ids = Vec::new();
+    let names: Vec<String> = zip::ZipArchive::new(Cursor::new(docx.to_vec()))
+        .unwrap()
+        .file_names()
+        .filter_map(Result::ok)
+        .map(|name| name.to_string())
+        .filter(|name| name.starts_with("word/") && name.ends_with(".xml"))
+        .collect();
+    for name in names {
+        let xml = part(docx, &name);
+        let (dom, root) = parse(&xml);
+        for node in dom.descendants(root, None) {
+            let Some(node_name) = dom.name(node) else {
+                continue;
+            };
+            let is_revision = [
+                "ins",
+                "del",
+                "moveFrom",
+                "moveTo",
+                "moveFromRangeStart",
+                "moveFromRangeEnd",
+                "moveToRangeStart",
+                "moveToRangeEnd",
+                "pPrChange",
+                "rPrChange",
+                "tblPrChange",
+                "tblGridChange",
+                "trPrChange",
+                "tcPrChange",
+                "sectPrChange",
+                "numberingChange",
+                "cellIns",
+                "cellDel",
+                "cellMerge",
+                "bookmarkStart",
+                "bookmarkEnd",
+            ]
+            .contains(&node_name.local_name());
+            if is_revision && let Some(id) = dom.attribute(node, &W::id()) {
+                ids.push((name.to_string(), id.to_string()));
+            }
+        }
+    }
+    ids
+}
+
+/// `prefix` as a header of 16 paragraphs, each of which the other side
+/// replaces outright: the header comparison mints one revision id per
+/// paragraph, with nothing to seed them from.
+fn sixteen_paragraph_header(prefix: &str) -> String {
+    let paragraphs: String = (1..=16)
+        .map(|n| format!("<w:p><w:r><w:t>{prefix}{n:02}</w:t></w:r></w:p>"))
+        .collect();
+    format!("<w:hdr xmlns:w=\"{W_NS}\">{paragraphs}</w:hdr>")
+}
+
+/// `xml` as the default header part.
+fn header_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/header1.xml",
+        content_type: HEADER,
+        rel_type: HEADER_REL,
+        xml,
+    }
+}
+
+/// A changed header and a changed body are compared in separate parts, and
+/// each part numbers its revision ids from 1 — so the synthesized
+/// `w:pPrChange` reused a header's id. The review's `hdr16` probe requires
+/// no `w:id` to repeat anywhere in the package (the third review of #160).
+#[test]
+fn windows_015_revision_ids_do_not_repeat_in_the_package() {
+    let (original, revised) =
+        pair_015_closing(r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:p>"#);
+    let header_a = sixteen_paragraph_header("OLD");
+    let header_b = sixteen_paragraph_header("NEW");
+    let sect = r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#;
+    let out = compare_documents_with_settings(
+        &docx_with_sect(&original, &[header_part(&header_a)], sect),
+        &docx_with_sect(&revised, &[header_part(&header_b)], sect),
+        &WmlComparerSettings::new(CompareMode::WordWindows),
+    )
+    .expect("the compare succeeds");
+    assert_word_valid_package(&out);
+    let ids = revision_ids_in_package(&out);
+    let mut seen = std::collections::HashMap::new();
+    for (part, id) in &ids {
+        if let Some(first) = seen.insert(id.clone(), part.clone()) {
+            panic!("w:id {id} repeats in {first} and {part}");
+        }
+    }
+    assert!(ids.len() > 30, "the probe exercises both parts: {ids:?}");
 }
 
 /// Mac Word 16's redline of the same pair (snapshot: must not move): the

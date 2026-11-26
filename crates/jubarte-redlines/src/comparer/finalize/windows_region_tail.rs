@@ -33,11 +33,18 @@ use crate::xmllinq::{Dom, NodeId, XName};
 /// open the moved run's last paragraph, ahead of its insertion, where
 /// Reject All restores them (the review of #160: they used to go away with
 /// the paragraph). Its property history moves onto that last mark, and so do
-/// its own live properties, recorded in a `w:pPrChange` the carrier speaks
-/// with its own insertion: Reject All restores the closing paragraph's
-/// formatting and Accept All reads the revision without it. Windows Word
-/// 2024 only (`--mode word-windows`); the caller gates the platform.
-pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
+/// its own live properties: attributes and bare children in a `w:pPrChange`,
+/// the mark's `w:rPr` in a `w:rPrChange` inside the mark's `w:rPr`, each
+/// record speaking with the carrier's own insertion. Reject All restores the
+/// closing paragraph's properties and formatting; Accept All reads the
+/// revision without them. Windows Word 2024 only (`--mode word-windows`);
+/// the caller gates the platform.
+pub fn windows_replaced_region_tail(
+    dom: &mut Dom,
+    root: NodeId,
+    closing_attributes: &[(XName, String)],
+    package_ids: Option<&mut crate::revision_processor::RevisionIds>,
+) {
     let Some(body) = dom.element(root, &W::body()) else {
         return;
     };
@@ -77,15 +84,31 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
         return;
     }
     let last_run = *run.last().expect("the run is not empty");
-    // The closing paragraph's property history, or, where the pipeline left
-    // the properties live with no history, those properties themselves:
-    // either moves with its final mark onto the carrier. The insertion on
-    // the carrier's mark speaks for the record. Without one the move cannot
-    // preserve the source, and nothing moves (the second review of #160).
-    let history = dom
-        .element(final_pilcrow, &W::p_pr())
-        .and_then(|ppr| dom.element(ppr, &W::p_pr_change()));
-    let own: Vec<NodeId> = match (history, dom.element(final_pilcrow, &W::p_pr())) {
+    // The closing paragraph's own properties: its `w:pPr` attributes, the
+    // bare properties, and the paragraph mark's `w:rPr`. Word records a
+    // paragraph's properties in a `w:pPrChange` and its mark's in a
+    // `w:rPrChange` inside that mark's `w:rPr`; Reject All restores both and
+    // Accept All drops both with the revision (the third review of #160:
+    // the attributes and the mark's run properties used to go away with the
+    // paragraph).
+    let closing_ppr = dom.element(final_pilcrow, &W::p_pr());
+    let mut attributes: Vec<(XName, String)> = closing_ppr
+        .map(|ppr| dom.attributes(ppr))
+        .unwrap_or_default();
+    // A rebuild of the properties copied the children, not the attributes:
+    // the caller took them from the original closing paragraph before the
+    // pipeline ran.
+    for (name, value) in closing_attributes {
+        if !attributes.iter().any(|(held, _)| held == name) {
+            attributes.push((name.clone(), value.clone()));
+        }
+    }
+    let old_mark: Vec<NodeId> = closing_ppr
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| dom.elements(rpr, None))
+        .unwrap_or_default();
+    let history = closing_ppr.and_then(|ppr| dom.element(ppr, &W::p_pr_change()));
+    let own: Vec<NodeId> = match (history, closing_ppr) {
         (None, Some(ppr)) => dom
             .elements(ppr, None)
             .into_iter()
@@ -97,13 +120,47 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
             .collect(),
         _ => Vec::new(),
     };
-    let attribution = if own.is_empty() {
+    // The carrier's mark says what it says without its insertion. Where that
+    // is not what the closing mark said, its `w:rPrChange` records the
+    // original.
+    let live_mark: Vec<NodeId> = dom
+        .element(last_run, &W::p_pr())
+        .and_then(|ppr| dom.element(ppr, &W::r_pr()))
+        .map(|rpr| dom.elements(rpr, None))
+        .unwrap_or_default();
+    let mark_differs =
+        formatting_signature(dom, &old_mark) != formatting_signature(dom, &live_mark);
+    // The carrier's insertion on its mark speaks for both records. Without
+    // it the move cannot preserve the source, and nothing moves (the second
+    // review of #160).
+    let attribution = if own.is_empty() && !mark_differs {
         None
     } else {
         let Some(attribution) = mark_insertion(dom, last_run) else {
             return;
         };
         Some(attribution)
+    };
+    let mut local;
+    let mut ids: Option<&mut crate::revision_processor::RevisionIds> = if attribution.is_some() {
+        Some(match package_ids {
+            Some(ids) => ids,
+            None => {
+                let mut used = std::collections::HashSet::new();
+                dom.for_each_descendant_element(root, None, |element| {
+                    if let Some(id) = dom
+                        .attribute(element, &W::id())
+                        .and_then(|id| id.parse::<u64>().ok())
+                    {
+                        used.insert(id);
+                    }
+                });
+                local = crate::revision_processor::RevisionIds::from_used(used);
+                &mut local
+            }
+        })
+    } else {
+        None
     };
     for &p in &run {
         dom.remove(p);
@@ -135,37 +192,41 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
         dom.remove(history);
     }
     // Where the pipeline left the closing paragraph's properties live, the
-    // record is theirs: the carrier's final mark keeps them for Reject All
-    // and Accept All drops them with the revision (the second review of
-    // #160: the direct properties used to go away with the paragraph).
-    let record = match (history, attribution) {
-        (Some(history), _) => Some(history),
-        (None, Some((author, date))) => {
-            let mut used = std::collections::HashSet::new();
-            dom.for_each_descendant_element(root, None, |element| {
-                if let Some(id) = dom
-                    .attribute(element, &W::id())
-                    .and_then(|id| id.parse::<u64>().ok())
-                {
-                    used.insert(id);
-                }
-            });
-            let id = crate::revision_processor::RevisionIds::from_used(used).allocate();
-            let change = dom.new_element(W::p_pr_change());
-            dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
-            dom.set_attribute_value(change, &W::author(), Some(&author));
-            if let Some(date) = &date {
-                dom.set_attribute_value(change, &W::date(), Some(date));
+    // record is theirs: attributes and bare children. A record the pipeline
+    // already wrote keeps its old properties but takes the closing
+    // paragraph's attributes, so Reject All restores them as well.
+    if let Some(history) = history
+        && let Some(inner) = dom.element(history, &W::p_pr())
+    {
+        for (name, value) in &attributes {
+            if dom.attribute(inner, name).is_none() {
+                dom.set_attribute_value(inner, name, Some(value));
             }
-            let recorded = dom.new_element(W::p_pr());
-            for child in own {
-                dom.remove(child);
-                dom.add(recorded, child);
-            }
-            dom.add(change, recorded);
-            Some(change)
         }
-        (None, None) => None,
+    }
+    let record = if let Some(history) = history {
+        Some(history)
+    } else if !own.is_empty() {
+        let (author, date) = attribution.clone().expect("a record has an attribution");
+        let id = ids.as_mut().expect("a record has an allocator").allocate();
+        let change = dom.new_element(W::p_pr_change());
+        dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
+        dom.set_attribute_value(change, &W::author(), Some(&author));
+        if let Some(date) = &date {
+            dom.set_attribute_value(change, &W::date(), Some(date));
+        }
+        let recorded = dom.new_element(W::p_pr());
+        for (name, value) in &attributes {
+            dom.set_attribute_value(recorded, name, Some(value));
+        }
+        for child in own {
+            dom.remove(child);
+            dom.add(recorded, child);
+        }
+        dom.add(change, recorded);
+        Some(change)
+    } else {
+        None
     };
     dom.remove(final_pilcrow);
     // The moved run's last mark closes the story now: its insertion would
@@ -181,6 +242,61 @@ pub fn windows_replaced_region_tail(dom: &mut Dom, root: NodeId) {
         }
         if dom.elements(ppr, None).is_empty() {
             dom.remove(ppr);
+        }
+    }
+    // The closing mark's run properties, where the carrier's differ: Word
+    // writes the difference as a `w:rPrChange` inside the carrier's mark
+    // `w:rPr`, so Reject All reads the closing mark's own formatting and
+    // Accept All the revision's.
+    if mark_differs && attribution.is_some() {
+        let ppr = match dom.element(last_run, &W::p_pr()) {
+            Some(ppr) => ppr,
+            None => {
+                let ppr = dom.new_element(W::p_pr());
+                dom.add_first(last_run, ppr);
+                ppr
+            }
+        };
+        if let Some(mark) = dom.element(ppr, &W::r_pr())
+            && dom.element(mark, &W::r_pr_change()).is_some()
+        {
+            // A mark that already records a change keeps it.
+        } else {
+            let (author, date) = attribution.clone().expect("a record has an attribution");
+            let id = ids.as_mut().expect("a record has an allocator").allocate();
+            let change = dom.new_element(W::r_pr_change());
+            dom.set_attribute_value(change, &W::id(), Some(&id.to_string()));
+            dom.set_attribute_value(change, &W::author(), Some(&author));
+            if let Some(date) = &date {
+                dom.set_attribute_value(change, &W::date(), Some(date));
+            }
+            let recorded = dom.new_element(W::r_pr());
+            for &child in &old_mark {
+                if ["ins", "del", "moveFrom", "moveTo", "rPrChange"]
+                    .iter()
+                    .any(|k| dom.name_is(child, &W::name(k)))
+                {
+                    continue;
+                }
+                let copy = dom.clone_subtree(child);
+                dom.add(recorded, copy);
+            }
+            dom.add(change, recorded);
+            let mark = match dom.element(ppr, &W::r_pr()) {
+                Some(mark) => mark,
+                None => {
+                    let mark = dom.new_element(W::r_pr());
+                    match [W::sect_pr(), W::p_pr_change()]
+                        .iter()
+                        .find_map(|name| dom.element(ppr, name))
+                    {
+                        Some(next) => dom.add_before_self(next, mark),
+                        None => dom.add(ppr, mark),
+                    }
+                    mark
+                }
+            };
+            dom.add(mark, change);
         }
     }
     if let Some(history) = record {
@@ -332,6 +448,48 @@ fn mark_insertion(dom: &Dom, p: NodeId) -> Option<(String, Option<String>)> {
     ))
 }
 
+/// One element and its descendants, canonicalized: name, attributes sorted
+/// (the volatile `w:rsid*` left out, which Accept All and Reject All strip),
+/// then element children in order.
+fn canonical_element(dom: &Dom, node: NodeId) -> String {
+    let name = dom.name(node).expect("an element");
+    let mut out = format!("{{{}}}{}", name.namespace_name(), name.local_name());
+    let mut attrs: Vec<String> = dom
+        .attributes(node)
+        .into_iter()
+        .filter(|(name, _)| {
+            !(name.namespace_name() == W::URI && name.local_name().starts_with("rsid"))
+        })
+        .map(|(name, value)| format!("{{{}}}{}={value}", name.namespace_name(), name.local_name()))
+        .collect();
+    attrs.sort();
+    out.push('(');
+    out.push_str(&attrs.join(" "));
+    out.push(')');
+    out.push('{');
+    for child in dom.elements(node, None) {
+        out.push_str(&canonical_element(dom, child));
+    }
+    out.push('}');
+    out
+}
+
+/// What a mark's `w:rPr` children say to a reader: its formatting, without
+/// the revision markers a mark carries or a record of an earlier change.
+fn formatting_signature(dom: &Dom, nodes: &[NodeId]) -> String {
+    let mut parts: Vec<String> = nodes
+        .iter()
+        .filter(|&&child| {
+            !["ins", "del", "moveFrom", "moveTo", "rPrChange"]
+                .iter()
+                .any(|k| dom.name_is(child, &W::name(k)))
+        })
+        .map(|&child| canonical_element(dom, child))
+        .collect();
+    parts.sort();
+    parts.join("")
+}
+
 /// The first revision wrapper between the run and its paragraph is `rev`;
 /// the other wrapper, or none, first is not.
 fn first_wrapper_is(dom: &Dom, r: NodeId, p: NodeId, rev: &XName) -> bool {
@@ -399,7 +557,7 @@ mod tests {
     fn serialized(body: &str, pass: bool) -> String {
         let (mut dom, root) = parsed(body);
         if pass {
-            windows_replaced_region_tail(&mut dom, root);
+            windows_replaced_region_tail(&mut dom, root, &[], None);
         }
         dom.serialize_element(root)
     }
@@ -432,12 +590,41 @@ mod tests {
             .map(str::to_string)
     }
 
-    /// `w:val` of the paragraph's `w:jc`, if any.
-    fn jc_val(dom: &Dom, p: NodeId) -> Option<String> {
-        let jc = dom
-            .element(p, &W::p_pr())
-            .and_then(|ppr| dom.element(ppr, &W::jc_el()))?;
-        dom.attribute(jc, &W::val()).map(str::to_string)
+    /// The story's last paragraph of `dom`, rooted at `root`.
+    fn last_paragraph_from(dom: &Dom, root: NodeId) -> Option<NodeId> {
+        let body = dom.element(root, &W::body())?;
+        dom.elements(body, None)
+            .into_iter()
+            .rev()
+            .find(|&k| dom.name_is(k, &W::p()))
+    }
+
+    /// A properties element, canonicalized: its qualified name, its
+    /// attributes sorted (the volatile `w:rsid*` left out, which Reject All
+    /// strips by contract), then its element children in order.
+    fn canonical_properties(dom: &Dom, node: NodeId) -> String {
+        let name = dom.name(node).expect("an element");
+        let mut out = format!("{{{}}}{}", name.namespace_name(), name.local_name());
+        let mut attrs: Vec<String> = dom
+            .attributes(node)
+            .into_iter()
+            .filter(|(name, _)| {
+                !(name.namespace_name() == W::URI && name.local_name().starts_with("rsid"))
+            })
+            .map(|(name, value)| {
+                format!("{{{}}}{}={value}", name.namespace_name(), name.local_name())
+            })
+            .collect();
+        attrs.sort();
+        out.push('(');
+        out.push_str(&attrs.join(" "));
+        out.push(')');
+        out.push('{');
+        for child in dom.elements(node, None) {
+            out.push_str(&canonical_properties(dom, child));
+        }
+        out.push('}');
+        out
     }
 
     /// The text of the paragraph's `w:t` and `w:delText`, in order.
@@ -683,14 +870,17 @@ mod tests {
 
     /// A closing paragraph that holds nothing but its properties is the
     /// empty paragraph: the region's tail moves as it does for `<w:p/>`, and
-    /// the carrier records those properties. Reject All restores the
-    /// original's closing paragraph, Accept All reads the revision's (the
-    /// second review of #160: the properties used to go away with the
-    /// paragraph).
+    /// the carrier records those properties exactly — the `w:pPr`
+    /// attributes and bare children in a `w:pPrChange`, the mark's `w:rPr`
+    /// in a `w:rPrChange` inside the carrier's mark `w:rPr`. Reject All
+    /// restores the original's whole closing `w:pPr`, Accept All reads the
+    /// revision's (the third review of #160: the attributes and the mark run
+    /// properties used to go away with the paragraph).
     #[test]
-    fn closing_paragraph_with_only_its_properties_keeps_them_on_reject() {
+    fn closing_paragraph_with_only_its_properties_keeps_them_exactly_on_reject() {
+        let closing = r#"<w:p><w:pPr w:rsidR="00AA00AA"><w:pStyle w:val="Heading2"/><w:jc w:val="center"/><w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/></w:rPr></w:pPr></w:p>"#;
         let before = format!(
-            "{}{}{}<w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr></w:p>",
+            "{}{}{}{closing}",
             deleted("Gone"),
             inserted("Tail"),
             table(true)
@@ -698,16 +888,58 @@ mod tests {
         let after = serialized(&before, true);
         assert_eq!(shapes(&after), ["Gone¶-", "T", "Tail¶."]);
         let (dom, last) = last_paragraph(&after);
-        assert!(
-            dom.element(last, &W::p_pr())
-                .and_then(|ppr| dom.element(ppr, &W::p_pr_change()))
-                .is_some(),
-            "the carrier records the closing properties"
+        let ppr = dom
+            .element(last, &W::p_pr())
+            .expect("the carrier keeps a pPr");
+        let recorded = dom
+            .element(ppr, &W::p_pr_change())
+            .and_then(|change| dom.element(change, &W::p_pr()))
+            .expect("the carrier records the closing properties");
+        assert_eq!(
+            dom.attribute(recorded, &W::name("rsidR")),
+            Some("00AA00AA"),
+            "the record keeps the closing paragraph's attributes"
         );
-        let (dom, closing) = resolved_closing(&after, false);
-        assert_eq!(jc_val(&dom, closing).as_deref(), Some("center"));
-        let (dom, closing) = resolved_closing(&after, true);
-        assert_eq!(jc_val(&dom, closing), None);
+        assert!(dom.element(recorded, &W::p_style()).is_some());
+        assert!(dom.element(recorded, &W::jc_el()).is_some());
+        let mark_change = dom
+            .element(ppr, &W::r_pr())
+            .and_then(|mark| dom.element(mark, &W::r_pr_change()))
+            .and_then(|change| dom.element(change, &W::r_pr()))
+            .expect("the carrier's mark records the closing mark's properties");
+        let fonts = dom
+            .element(mark_change, &W::name("rFonts"))
+            .expect("the closing mark's rFonts are recorded");
+        assert_eq!(dom.attribute(fonts, &W::name("ascii")), Some("Courier New"));
+        let (original, original_root) = parsed(&before);
+        let original_ppr = last_paragraph_from(&original, original_root)
+            .and_then(|p| original.element(p, &W::p_pr()))
+            .expect("the original closes on properties");
+        let (rejected_dom, closing) = resolved_closing(&after, false);
+        let rejected_ppr = rejected_dom
+            .element(closing, &W::p_pr())
+            .expect("Reject All keeps properties");
+        assert_eq!(
+            canonical_properties(&rejected_dom, rejected_ppr),
+            canonical_properties(&original, original_ppr),
+            "Reject All restores the original's whole closing w:pPr"
+        );
+        let (accepted_dom, closing) = resolved_closing(&after, true);
+        if let Some(ppr) = accepted_dom.element(closing, &W::p_pr()) {
+            for name in [
+                W::p_style(),
+                W::jc_el(),
+                W::name("rFonts"),
+                W::p_pr_change(),
+                W::r_pr_change(),
+            ] {
+                assert!(
+                    accepted_dom.element(ppr, &name).is_none(),
+                    "Accept All drops {}",
+                    name.local_name()
+                );
+            }
+        }
     }
 
     /// `body` with the pass when `pass`, then Accept All (`accept`) or
@@ -715,7 +947,7 @@ mod tests {
     fn resolved(body: &str, accept: bool, pass: bool) -> Vec<String> {
         let (mut dom, root) = parsed(body);
         if pass {
-            windows_replaced_region_tail(&mut dom, root);
+            windows_replaced_region_tail(&mut dom, root, &[], None);
         }
         let root = if accept {
             crate::revision_processor::accept_revisions_document(&mut dom, root)
