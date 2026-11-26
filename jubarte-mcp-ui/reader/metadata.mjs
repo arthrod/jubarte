@@ -11,6 +11,9 @@ import YAML from 'yaml';
  * All offsets are UTF-16 offsets in the original source, as in MDAST.
  */
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+// The first id Rust's `table_style` returns, kept off the enumerable entries so
+// `Object.keys` on the null-prototype legend stays exactly the legend's entries.
+const FIRST_TABLE_ID = Symbol('firstTableId');
 const mapping = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const blank = value => value.replace(/[^\r\n]/g, ' ');
 const STORY = '(?:footnotes|endnotes|header\\d+|footer\\d+)';
@@ -304,19 +307,13 @@ export function parseTableLegend(raw) {
     const entry = tableStyleEntry(rest);
     if (!entry) break;
     const [[id, look], next] = entry;
-    out[id] = {styleId: id, ...look};
+    if (!own(out, FIRST_TABLE_ID)) Object.defineProperty(out, FIRST_TABLE_ID, {value: id});
+    setOwn(out, id, {styleId: id, ...look});
     rest = next;
   }
   return out;
 }
 
-/** Port of view_styles.rs::unquote. A YAML scalar as the legend prints it: plain, or a JSON string. */
-function unquote(value) {
-  if (value.startsWith('"')) {
-    try {
-      const parsed = JSON.parse(value);
-      return typeof parsed === 'string' && !hasLoneSurrogate(parsed) ? parsed : null;
-    } catch { return null; }
 /** True when a string holds an unpaired UTF-16 surrogate, which serde_json refuses. */
 function hasLoneSurrogate(value) {
   for (let at = 0; at < value.length; at++) {
@@ -330,14 +327,17 @@ function hasLoneSurrogate(value) {
   return false;
 }
 
+/** Port of view_styles.rs::unquote. A YAML scalar as the legend prints it: plain, or a JSON string. */
+function unquote(value) {
+  if (value.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'string' && !hasLoneSurrogate(parsed) ? parsed : null;
+    } catch { return null; }
   }
   return value;
 }
 
-/** Port of view_styles.rs::take_clause. First `", "`-separated clause, a quoted one whole (`"` only), and what follows. */
-function takeClause(value) {
-  let quoted = false;
-  let escaped = false;
 /** Port of view_styles.rs::without_comment: only two or more spaces make `#` a comment. */
 function withoutComment(line) {
   let quoted = false;
@@ -375,6 +375,10 @@ function legendLineFromYaml(yaml, key) {
   return null;
 }
 
+/** Port of view_styles.rs::take_clause. First `", "`-separated clause, a quoted one whole (`"` only), and what follows. */
+function takeClause(value) {
+  let quoted = false;
+  let escaped = false;
   for (let i = 0; i < value.length; i++) {
     const c = value[i];
     if (escaped) escaped = false;
@@ -428,6 +432,19 @@ function borderSidesClause(clause) {
     if (s.space != null) out += ` space ${s.space}pt`;
     return out;
   }).join(' ')}`;
+}
+
+/** Eighths of a point as Rust's `format!("{pt:.2}")` prints them. An exact
+ * half rounds to even: `0.125pt` is `0.12pt`, `0.375pt` is `0.38pt` (#128).
+ * Sizes parsed from a legend are whole eighths, so integer arithmetic is the
+ * exact binary value Rust rounds, unlike JS `toFixed`'s half-away rule. */
+function borderPoints(eighths) {
+  let hundredths = (eighths * 25) / 2;
+  if (!Number.isInteger(hundredths)) {
+    const below = Math.floor(hundredths);
+    hundredths = below % 2 === 0 ? below : below + 1;
+  }
+  return `${hundredths / 100}pt`;
 }
 
 /** Port of view_styles.rs::table_style_entry border/name/cell parsing. One entry and the rest of the line. */
@@ -487,19 +504,6 @@ function tableStyleEntry(value) {
       continue;
     }
     if (clause !== 'borders vary') {
-/** Eighths of a point as Rust's `format!("{pt:.2}")` prints them. An exact
- * half rounds to even: `0.125pt` is `0.12pt`, `0.375pt` is `0.38pt` (#128).
- * Sizes parsed from a legend are whole eighths, so integer arithmetic is the
- * exact binary value Rust rounds, unlike JS `toFixed`'s half-away rule. */
-function borderPoints(eighths) {
-  let hundredths = (eighths * 25) / 2;
-  if (!Number.isInteger(hundredths)) {
-    const below = Math.floor(hundredths);
-    hundredths = below % 2 === 0 ? below : below + 1;
-  }
-  return `${hundredths / 100}pt`;
-}
-
       const look = {};
       if (border != null) look.border = border;
       if (cells != null) look.cellSpacing = cells;
@@ -669,15 +673,23 @@ function normalizeMetadata(data, yamlDocument, options, warnings, agentView, yam
   const styles = {Normal: {raw: null, key: 'Normal', styleId: 'Normal', fontFamily: 'Calibri', fontSizePt: 11, clauses: [], unknown: [], origin: source ? 'source-document' : 'default'}};
   if (data.styles != null && !mapping(data.styles)) warn(warnings, 'unsupported-styles-value', 'styles must be a mapping; its original value is preserved.');
   else for (const [key, value] of Object.entries(data.styles || {})) setOwn(styles, key, {...(key === 'Normal' ? styles.Normal : {}), ...parseStyle(value, key, warnings), origin: 'header'});
+  // Rust reads both legends from the raw YAML lines: a `#RRGGBB` colour with
+  // one preceding space is not a YAML comment, and the first id is the one a
+  // table without its own style takes (#124, #128).
+  const tableLegend = parseTableLegend(legendLineFromYaml(yamlText, 'tables: '));
+  const tableStyleLegend = parseTableLegend(legendLineFromYaml(yamlText, 'table: '));
+  const tableStyles = Object.create(null);
+  for (const [key, value] of Object.entries(tableLegend)) setOwn(tableStyles, key, value);
+  for (const [key, value] of Object.entries(tableStyleLegend)) setOwn(tableStyles, key, value);
   return {
     ...data,
     raw: data,
     source,
     page: parsePage(data.page, warnings, 'page', !!source),
     styles,
-    // The `table:` legend's style, which a table line without its own takes, and both lines' entries (#124).
-    tableStyle: Object.keys(parseTableLegend(mapping(data.styles) ? data.styles.table : null))[0] ?? null,
-    tableStyles: mapping(data.styles) ? {...parseTableLegend(data.styles.tables), ...parseTableLegend(data.styles.table)} : {},
+    // The `table:` legend's first named id; integer-like ids keep their place.
+    tableStyle: own(tableStyleLegend, FIRST_TABLE_ID) ? tableStyleLegend[FIRST_TABLE_ID] : null,
+    tableStyles,
     headers: parseStories(data.headers, warnings, 'headers'),
     footers: parseStories(data.footers, warnings, 'footers'),
     sections: parseSections(data.sections, warnings, source),
