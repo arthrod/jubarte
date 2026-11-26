@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { parseSpacing, takeSpacing, resolveSpacing } from "./spacing.mjs";
+import { parseSpacing, takeSpacing, cellSpacingAttrs, resolveSpacing } from "./spacing.mjs";
 import { parseDirective, parseDocumentMetadata as parseSourceDocument, parseTableLegend } from "./metadata.mjs";
 
 const VIEWS = new URL("../word-metrics/views/", import.meta.url);
@@ -21,7 +21,8 @@ test("each clause spacing_clauses can write reads as typed fields", () => {
   assert.deepEqual(parseSpacing("before auto"), { beforeAuto: true });
   assert.deepEqual(parseSpacing("after auto"), { afterAuto: true });
   assert.deepEqual(parseSpacing("before 1.5 lines"), { beforeLines: 1.5 });
-  assert.deepEqual(parseSpacing("line 1.08"), { line: { rule: "auto", multiple: 1.08 } });
+  // The writer prints `1.08` for `w:line="259"`; read it as the stored 240th.
+  assert.deepEqual(parseSpacing("line 1.08"), { line: { rule: "auto", multiple: 259 / 240 } });
   assert.deepEqual(parseSpacing("line 1"), { line: { rule: "auto", multiple: 1 } });
   assert.deepEqual(parseSpacing("line 8.65pt exact"), { line: { rule: "exact", points: 8.65 } });
   assert.deepEqual(parseSpacing("line 20pt atLeast"), { line: { rule: "atLeast", points: 20 } });
@@ -321,4 +322,69 @@ test('round 6: the reader agrees with Rust on the review findings', () => {
   assert.equal(Object.getPrototypeOf(singular.metadata.tableStyles), null);
   assert.equal(Object.hasOwn(singular.metadata.tableStyles, 'X'), true);
   assert.equal(Object.hasOwn(singular.metadata.tableStyles, '5'), true);
+});
+
+// The writer's spellings (crates/jubarte-markdown/src/markdown/from_docx/agent.rs:
+// `line_ratio`, `exact_points`), reproduced here so this test covers every
+// value Word can store, without a Rust build. Rust's `format!("{:.p$}", f64)`
+// rounds ties to even on the exact binary value (unlike JS `toFixed`).
+function rustFixed(value, places) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, value);
+  const bits = view.getBigUint64(0);
+  const rawExp = Number((bits >> 52n) & 0x7ffn);
+  const mantissa = bits & ((1n << 52n) - 1n);
+  const shift = rawExp === 0 ? -1074 : rawExp - 1023 - 52;
+  const sig = rawExp === 0 ? mantissa : mantissa | (1n << 52n);
+  let num = sig;
+  let den = 1n;
+  if (shift >= 0) num <<= BigInt(shift);
+  else den = 1n << BigInt(-shift);
+  num *= 10n ** BigInt(places);
+  let q = num / den;
+  const r = num % den;
+  if (2n * r > den || (2n * r === den && q % 2n === 1n)) q += 1n;
+  const digits = q.toString().padStart(places + 1, "0");
+  return places === 0 ? digits : `${digits.slice(0, -places)}.${digits.slice(-places)}`;
+}
+const writerLineRatio = (line) => {
+  const ratio = line / 240;
+  let text;
+  for (let places = 2; places <= 4; places++) {
+    const candidate = rustFixed(ratio, places);
+    if (Math.round(Number(candidate) * 240) === line) {
+      text = candidate;
+      break;
+    }
+  }
+  text ??= rustFixed(ratio, 4);
+  return text.replace(/0+$/, "").replace(/\.$/, "");
+};
+const writerExactPoints = (twips) =>
+  `${rustFixed(twips / 20, 2).replace(/0+$/, "").replace(/\.$/, "")}pt`;
+
+test('round 7: id-line spacing rounds to the units Word stores, like cell-group spacing', () => {
+  for (const text of ['line 1.038', 'after 6.666pt', 'line 8.655pt exact']) {
+    assert.deepEqual(parseSpacing(text), cellSpacingAttrs(text), text);
+  }
+  assert.deepEqual(parseSpacing('line 1.038'), {line: {rule: 'auto', multiple: 249 / 240}});
+  assert.deepEqual(parseSpacing('after 6.666pt'), {afterPt: 6.65});
+  assert.deepEqual(parseSpacing('line 8.655pt exact'), {line: {rule: 'exact', points: 8.65}});
+
+  // Every `w:line` 1..960 and `w:after` 0..2000 twentieths, spelled exactly as
+  // the writer prints it: the id-line reader and the legend reader must agree.
+  let checked = 0;
+  for (let line = 1; line <= 960; line++) {
+    const text = `line ${writerLineRatio(line)}`;
+    assert.deepEqual(parseSpacing(text), cellSpacingAttrs(text), text);
+    assert.equal(Math.round(parseSpacing(text).line.multiple * 240), line, text);
+    checked++;
+  }
+  for (let twips = 0; twips <= 2000; twips++) {
+    const text = `after ${writerExactPoints(twips)}`;
+    assert.deepEqual(parseSpacing(text), cellSpacingAttrs(text), text);
+    assert.equal(Math.round(parseSpacing(text).afterPt * 20), twips, text);
+    checked++;
+  }
+  assert.equal(checked, 2961);
 });

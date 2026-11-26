@@ -100,12 +100,15 @@ export function cellSpacingAttrs(text) {
 }
 
 // Each word group, anchored at the start, ends at Rust whitespace or the end.
+// Its values are rounded with the same helpers as `cellSpacingAttrs`: Word
+// stores points in twentieths, line counts in hundredths and line multiples
+// in 240ths, and the writer prints the fewest decimals that read back.
 const WORDS = [
   [
     new RegExp(String.raw`^(before|after)${GAP}${NUM}pt(?=${GAP}|$)`),
     (m) => {
-      const pt = number(m[2]);
-      return pt === null || pt < 0 || pt > 1638 ? null : { [`${m[1]}Pt`]: pt };
+      const pt = points(`${m[2]}pt`);
+      return pt === null ? null : { [`${m[1]}Pt`]: pt };
     },
   ],
   [new RegExp(String.raw`^(before|after)${GAP}auto(?=${GAP}|$)`), (m) => ({ [`${m[1]}Auto`]: true })],
@@ -113,14 +116,16 @@ const WORDS = [
     new RegExp(String.raw`^(before|after)${GAP}${NUM}${GAP}lines(?=${GAP}|$)`),
     (m) => {
       const count = number(m[2]);
-      return count === null || count < 0 || count > 100 ? null : { [`${m[1]}Lines`]: count };
+      return count === null || count < 0 || count > 100
+        ? null
+        : { [`${m[1]}Lines`]: rounded(count, 100) };
     },
   ],
   [
     new RegExp(String.raw`^line${GAP}${NUM}pt${GAP}(exact|atLeast)(?=${GAP}|$)`),
     (m) => {
-      const pt = number(m[1]);
-      return pt === null || pt < 0 || pt > 1638 ? null : { line: { rule: m[2], points: pt } };
+      const pt = points(`${m[1]}pt`);
+      return pt === null ? null : { line: { rule: m[2], points: pt } };
     },
   ],
   [
@@ -129,7 +134,7 @@ const WORDS = [
       const ratio = number(m[1]);
       return ratio === null || ratio < 0 || ratio > 132
         ? null
-        : { line: { rule: "auto", multiple: ratio } };
+        : { line: { rule: "auto", multiple: rounded(ratio, 240) } };
     },
   ],
   [new RegExp(String.raw`^contextual${GAP}spacing${GAP}off(?=${GAP}|$)`), () => ({ contextual: false })],
