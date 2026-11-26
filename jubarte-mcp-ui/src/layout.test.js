@@ -146,6 +146,27 @@ describe("sections keep their own pages (#47)", () => {
   });
 });
 
+describe("an empty paragraph whose mark alone is tracked (#133)", () => {
+  // b102: `<!-- p1 center, size 14pt -->\n¶{r3 @M}` is an empty paragraph with an inserted mark;
+  // Word, showing markup, draws its line, as for any empty paragraph.
+  const top = (composed, text) => {
+    for (const page of composed.layout.pages)
+      for (const f of page.frames[0].fragments)
+        for (const l of f.lines || []) if (l.runs?.some((r) => r.text === text)) return l.y;
+    return null;
+  };
+  const doc = (p1) => `${header()}<!-- p0 -->\nFIRST\n\n${p1}\n\n<!-- p2 -->\nSECOND\n`;
+  it("takes the room of an empty paragraph, not none", () => {
+    const tracked = compose(doc("<!-- p1 center, size 14pt -->\n¶{r3 @A}"));
+    const plain = compose(doc("<!-- p1 empty, center, size 14pt -->"));
+    const none = compose(doc("").replace("\n\n\n\n", "\n\n"));
+    const gap = (c) => top(c.composed, "SECOND") - top(c.composed, "FIRST");
+    expect(gap(plain)).toBeGreaterThan(gap(none) + 10);
+    expect(gap(tracked)).toBeCloseTo(gap(plain), 3);
+    for (const c of [tracked, plain, none]) c.done();
+  });
+});
+
 describe("an empty paragraph's page break (#48)", () => {
   it("starts the next paragraph on a new page, as in b107", () => {
     const { composed, done } = compose(
