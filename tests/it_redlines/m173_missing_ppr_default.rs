@@ -18,14 +18,25 @@
 //! no `w:pPrDefault`, Windows Word writes the template spacing in their
 //! place.
 //!
+//! A revision with no `w:rPrDefault` of its own is read with Word's factory
+//! run defaults, kern 2 and standard contextual ligatures, and the
+//! redline's live Normal gets both; an empty `w:rPrDefault` is the
+//! revision's own and Normal gets neither. That holds with a `w:pPrDefault`
+//! present too: the predicate asks for the run defaults alone.
+//!
 //! Every spacing here is read from the output package by [`spacing`],
 //! which resolves a style as the bench's `effstyles.py` does.
+//!
+//! The round trips are read for text alone: [`assert_accept_and_reject_text`]
+//! compares the main document's `w:t` elements and nothing else, so a style
+//! or a spacing that Accept All or Reject All loses goes unnoticed here.
+//! Formatting round trips are issue #181, not this module.
 
 use jubarte::comparer::{CompareMode, WmlComparerSettings};
 use jubarte::document_comparer::{
     accept_revisions, compare_documents_with_settings, reject_revisions,
 };
-use jubarte::namespaces::W;
+use jubarte::namespaces::{W, W14};
 use jubarte::xmllinq::{Dom, NodeId};
 
 use crate::common::docx::{self, Part, W_NS};
@@ -47,6 +58,10 @@ enum RevisionDefaults {
     WithoutPprDefault,
     /// A `w:docDefaults` with an empty `w:pPrDefault`.
     EmptyPprDefault,
+    /// A `w:docDefaults` with a `w:pPrDefault` and no `w:rPrDefault`.
+    WithoutRprDefault,
+    /// A `w:docDefaults` with an empty `w:rPrDefault` and a `w:pPrDefault`.
+    EmptyRprDefault,
 }
 
 impl RevisionDefaults {
@@ -58,6 +73,12 @@ impl RevisionDefaults {
             }
             Self::EmptyPprDefault => {
                 r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault><w:pPrDefault/></w:docDefaults>"#
+            }
+            Self::WithoutRprDefault => {
+                r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>"#
+            }
+            Self::EmptyRprDefault => {
+                r#"<w:docDefaults><w:rPrDefault/><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>"#
             }
         }
     }
@@ -244,8 +265,10 @@ fn body_text(docx: &[u8]) -> String {
     out
 }
 
-/// Accept All reads as the revised document and Reject All as the original.
-fn assert_accept_and_reject(redline: &[u8], original: &[u8], revised: &[u8]) {
+/// The main document's `w:t` text after Accept All reads as the revised
+/// document's, and after Reject All as the original's. Text alone: no
+/// style, spacing or other formatting is compared (issue #181).
+fn assert_accept_and_reject_text(redline: &[u8], original: &[u8], revised: &[u8]) {
     let accepted = accept_revisions(redline).expect("accept every revision");
     let rejected = reject_revisions(redline).expect("reject every revision");
     assert_eq!(body_text(&accepted), body_text(revised), "Accept All");
@@ -284,7 +307,7 @@ fn revision_without_doc_defaults_under_word_mode() {
     let mut expected = revision_styles();
     expected.push(KEPT);
     assert_resolves(&out, &expected);
-    assert_accept_and_reject(&out, &original, &revised);
+    assert_accept_and_reject_text(&out, &original, &revised);
     crate::common::validity::assert_word_valid_package(&out);
 }
 
@@ -296,7 +319,7 @@ fn revision_without_doc_defaults_under_word_windows_mode() {
     let mut expected = revision_styles();
     expected.push(KEPT);
     assert_resolves(&out, &expected);
-    assert_accept_and_reject(&out, &original, &revised);
+    assert_accept_and_reject_text(&out, &original, &revised);
     crate::common::validity::assert_word_valid_package(&out);
 }
 
@@ -315,7 +338,7 @@ fn revision_doc_defaults_without_ppr_default_under_word_mode() {
     let mut expected = revision_styles();
     expected.push(KEPT);
     assert_resolves(&out, &expected);
-    assert_accept_and_reject(&out, &original, &revised);
+    assert_accept_and_reject_text(&out, &original, &revised);
     crate::common::validity::assert_word_valid_package(&out);
 }
 
@@ -347,7 +370,7 @@ fn revision_doc_defaults_without_ppr_default_under_word_windows_mode() {
     let mut expected = revision_styles();
     expected.push(KEPT);
     assert_resolves(&out, &expected);
-    assert_accept_and_reject(&out, &original, &revised);
+    assert_accept_and_reject_text(&out, &original, &revised);
     crate::common::validity::assert_word_valid_package(&out);
 }
 
@@ -383,7 +406,7 @@ fn an_empty_ppr_default_is_the_documents_own_and_is_not_filled() {
         .to_vec();
         expected.push(KEPT);
         assert_resolves(&out, &expected);
-        assert_accept_and_reject(&out, &original, &revised);
+        assert_accept_and_reject_text(&out, &original, &revised);
         crate::common::validity::assert_word_valid_package(&out);
     }
 }
@@ -421,7 +444,7 @@ fn revision_without_ppr_default_under_an_original_without_styles() {
                 part(&out, "word/styles.xml")
             );
             assert_resolves(&out, &revision_styles());
-            assert_accept_and_reject(&out, &original, &revised);
+            assert_accept_and_reject_text(&out, &original, &revised);
             crate::common::validity::assert_word_valid_package(&out);
         }
     }
@@ -454,6 +477,93 @@ fn word_mode_leaves_a_normal_bare_on_both_sides_alone() {
             KEPT,
         ],
     );
-    assert_accept_and_reject(&out, &original, &revised);
+    assert_accept_and_reject_text(&out, &original, &revised);
     crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// `(w:kern w:val, w:sz w:val, w14:ligatures w14:val)` of Normal's live
+/// `w:rPr`, each `None` where that `w:rPr` has no such element. A
+/// `w:rPrChange` holds its own `w:rPr`, so this never reads a change
+/// record.
+fn normal_kern_size_and_ligatures(docx: &[u8]) -> (Option<String>, Option<String>, Option<String>) {
+    let (dom, root) = styles_root(docx);
+    let normal = style_node(&dom, root, "Normal").expect("Normal in the redline");
+    let rpr = dom.element(normal, &W::r_pr());
+    let w_val = |local: &str| {
+        rpr.and_then(|r| dom.element(r, &W::name(local)))
+            .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string))
+    };
+    let ligatures = rpr
+        .and_then(|r| dom.element(r, &W14::name("ligatures")))
+        .and_then(|e| dom.attribute(e, &W14::name("val")).map(str::to_string));
+    (w_val("kern"), w_val("sz"), ligatures)
+}
+
+/// The pair Word compared by word for a revision whose `w:docDefaults` are
+/// `defaults` (the review of #180): Word's own defaults (200 after, 276
+/// lines, size 22), a Normal that sets a size alone, a `Clause` on it, and
+/// "ten" becoming "twenty". The revision's Normal is one size larger, so the
+/// two read differently and the redline's Normal is rewritten.
+fn word_pair(defaults: RevisionDefaults) -> (Vec<u8>, Vec<u8>) {
+    let styles = |defaults: &str, size: u8| {
+        format!(
+            r#"<w:styles xmlns:w="{W_NS}">{defaults}<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="{size}"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Clause"><w:name w:val="Clause"/><w:basedOn w:val="Normal"/></w:style></w:styles>"#
+        )
+    };
+    let body = |fee: &str| {
+        format!(
+            "{}{}{}",
+            styled("Normal", "Stable paragraph."),
+            styled("Clause", &format!("The fee is {fee} dollars.")),
+            styled("Clause", "Final paragraph.")
+        )
+    };
+    (
+        package(
+            &styles(
+                r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>"#,
+                22,
+            ),
+            &body("ten"),
+        ),
+        package(&styles(defaults.xml(), 24), &body("twenty")),
+    )
+}
+
+/// A revision with no `w:rPrDefault` reads with Word's factory run defaults,
+/// kern 2 and standard contextual ligatures, and the redline's live Normal
+/// gets both; an empty `w:rPrDefault` is the revision's own, and Normal gets
+/// neither. That is what Word's own redlines of these two pairs carry (the
+/// review of #180), and what the redline carries under either mode. The
+/// predicate asks for the run defaults alone: a `w:pPrDefault` the revision
+/// does have keeps the factory values coming. Normal takes the revision's
+/// size in both rows: the merge runs in each, and the `w:rPrDefault` alone
+/// decides the other two values.
+#[test]
+fn normal_takes_the_factory_run_defaults_where_the_revision_has_no_rpr_default() {
+    for (defaults, kern, size, ligatures) in [
+        (
+            RevisionDefaults::WithoutRprDefault,
+            Some("2"),
+            Some("24"),
+            Some("standardContextual"),
+        ),
+        (RevisionDefaults::EmptyRprDefault, None, Some("24"), None),
+    ] {
+        let (original, revised) = word_pair(defaults);
+        for mode in [CompareMode::Word, CompareMode::WordWindows] {
+            let out = redline(&original, &revised, mode);
+            assert_eq!(
+                normal_kern_size_and_ligatures(&out),
+                (
+                    kern.map(str::to_string),
+                    size.map(str::to_string),
+                    ligatures.map(str::to_string)
+                ),
+                "{defaults:?} under {mode:?}: Normal's live w:rPr in word/styles.xml:\n{}",
+                part(&out, "word/styles.xml")
+            );
+            crate::common::validity::assert_word_valid_package(&out);
+        }
+    }
 }
