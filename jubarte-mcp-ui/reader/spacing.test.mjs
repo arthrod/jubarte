@@ -270,3 +270,55 @@ test('table legend differential corpus (JS matches Rust-generated expected, bord
   }
   assert.equal(failures, 0, `${failures}/${cases.length} differential cases failed:\n${JSON.stringify(first, null, 2)}`);
 });
+
+test('round 6: the reader agrees with Rust on the review findings', () => {
+  // 1: Rust's `{:.2}` rounds exact halves to even, unlike toFixed.
+  assert.equal(parseTableLegend('A, borders bottom single 0.125pt #999999').A.border,
+    'borders bottom single 0.12pt #999999');
+  assert.equal(parseTableLegend('A, all borders 0.625pt').A.border, 'all borders 0.62pt');
+
+  // 2: a size that rounds to zero eighths is still a size, so a second
+  // size token rejects the border and starts a new legend entry.
+  const zeroSize = parseTableLegend('A, borders top single 0.03pt 3pt, B, cell paragraphs after 6pt');
+  assert.equal(zeroSize.A.border, undefined);
+  assert.deepEqual(zeroSize.B.cellSpacing, {afterPt: 6});
+
+  // 3/4: the typed spacing values and Rust's Unicode White_Space.
+  assert.deepEqual(parseTableLegend('A, cell paragraphs after +6pt').A.cellSpacing, {afterPt: 6});
+  assert.deepEqual(parseTableLegend('A, cell paragraphs line 1.038').A.cellSpacing,
+    {line: {rule: 'auto', multiple: 1.0375}});
+  assert.equal(parseTableLegend('A, cell paragraphs after 1638.5pt, B, cell paragraphs after 6pt').A.cellSpacing, undefined);
+  assert.equal(parseTableLegend('A, \u0085, borders top single').A.border, 'borders top single');
+  assert.deepEqual(parseTableLegend('A, cell paragraphs after\u00856pt').A.cellSpacing, {afterPt: 6});
+  assert.equal(parseTableLegend('A, \uFEFF, borders top single').A.border, undefined);
+
+  // 5: serde_json refuses a lone surrogate, so the quoted id is not an entry.
+  const surrogate = parseTableLegend('"\\ud800", A, cell paragraphs after 6pt');
+  assert.deepEqual(Object.keys(surrogate), ['A']);
+  assert.deepEqual(surrogate.A.cellSpacing, {afterPt: 6});
+
+  // 8: the legend comes from the raw YAML line, not YAML.parse's scalar.
+  const coloured = parseSourceDocument([
+    '---', 'view: tracked', 'styles:',
+    '  tables: A, borders top single 1pt #FF0000, B, cell paragraphs after 6pt',
+    '---', '',
+  ].join('\n'));
+  assert.deepEqual(Object.keys(coloured.metadata.tableStyles), ['A', 'B']);
+  assert.equal(coloured.metadata.tableStyles.A.border, 'borders top single 1pt #FF0000');
+  assert.deepEqual(coloured.metadata.tableStyles.B.cellSpacing, {afterPt: 6});
+
+  // 9: null-prototype maps keep legend order, including integer-like ids.
+  const ordered = parseTableLegend('X, borders top single, 5');
+  assert.equal(Object.getPrototypeOf(ordered), null);
+  assert.equal(Object.hasOwn(ordered, 'X'), true);
+  assert.equal(Object.hasOwn(ordered, '5'), true);
+  const singular = parseSourceDocument([
+    '---', 'view: tracked', 'styles:',
+    '  table: X, borders top single, 5',
+    '---', '',
+  ].join('\n'));
+  assert.equal(singular.metadata.tableStyle, 'X');
+  assert.equal(Object.getPrototypeOf(singular.metadata.tableStyles), null);
+  assert.equal(Object.hasOwn(singular.metadata.tableStyles, 'X'), true);
+  assert.equal(Object.hasOwn(singular.metadata.tableStyles, '5'), true);
+});

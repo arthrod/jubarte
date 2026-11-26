@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {parseSpacing, takeSpacing} from './spacing.mjs';
+import {parseSpacing, takeSpacing, cellSpacingAttrs, rustTrim, rustTrimEnd} from './spacing.mjs';
 import YAML from 'yaml';
 
 /**
@@ -299,7 +299,7 @@ export function parseDirective(raw, options = {}) {
 export function parseTableLegend(raw) {
   const out = Object.create(null);
   if (typeof raw !== 'string') return out;
-  let rest = raw.trim();
+  let rest = rustTrim(raw);
   while (true) {
     const entry = tableStyleEntry(rest);
     if (!entry) break;
@@ -384,7 +384,7 @@ function tableStyleEntry(value) {
   for (;;) {
     const [clause, next] = takeClause(rest);
     rest = next;
-    const unquoted = unquote(clause.trim());
+    const unquoted = unquote(rustTrim(clause));
     if (unquoted == null || unquoted === '') {
       if (rest === '') return null;
       continue;
@@ -403,7 +403,7 @@ function tableStyleEntry(value) {
   let cells = null;
   while (rest !== '') {
     const [clause, next] = takeClause(rest);
-    if (clause.trim() === '') { rest = next; continue; }
+    if (rustTrim(clause) === '') { rest = next; continue; }
     const borderAll = clause.startsWith('all borders ') ? /^all borders ([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(clause) : null;
     if (border == null && borderAll) {
       const pt = Number(borderAll[1]);
@@ -418,14 +418,16 @@ function tableStyleEntry(value) {
       if (sides) { border = sides; rest = next; continue; }
     }
     if (name == null && clause.startsWith('named ')) {
-      const named = unquote(clause.slice(6).trim());
+      const named = unquote(rustTrim(clause.slice(6)));
       if (named != null) { name = named; rest = next; continue; }
     }
     if (clause.startsWith('cell paragraphs ')) {
       // A cell-paragraphs clause is consumed whole: malformed, duplicated, or
       // repeated, it is dropped and never becomes a style id (R2-F1/F2).
       if (cells == null) {
-        const spacing = parseSpacing(clause.slice(16));
+        // A table legend's `cell paragraphs` words are the typed values the
+        // engine stores, with Rust's `points` rounding and no `contextual`.
+        const spacing = cellSpacingAttrs(clause.slice(16));
         if (spacing) cells = spacing;
       }
       rest = next;
