@@ -8,7 +8,7 @@
   "packageManager": "pnpm@12.21.0",
   "scripts": {
     "build": "vite build",
-    "test": "vitest run && node --import tsx --test --experimental-test-coverage reader/*.test.mjs",
+    "test": "vitest run && node --import tsx --test --experimental-test-coverage --test-coverage-exclude='**/*.test.*' reader/*.test.mjs",
     "dev": "vite --host 127.0.0.1"
   },
   "dependencies": {
@@ -48,7 +48,7 @@
     "jsdom": "26.1.0",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
-    "vite": "7.3.5",
+    "vite": "7.3.8",
     "vite-plugin-console-pipe": "^2.1.0",
     "vite-plugin-singlefile": "2.3.4",
     "vitest": "5.1.1"
