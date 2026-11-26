@@ -52,6 +52,7 @@ mod m14_multibody;
 mod m150_unrelated_tables_no_cell_merge;
 mod m151_incomplete_spacing_normalize;
 mod m153_windows_revised_package_defaults;
+mod m154_windows_replaced_region_order;
 mod m15_coalesce_revisions;
 mod m161_unit_count;
 mod m16_relationship_ids;

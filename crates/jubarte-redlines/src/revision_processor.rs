@@ -4489,7 +4489,15 @@ pub struct RevisionIds {
 impl RevisionIds {
     #[doc(hidden)]
     pub fn new(pkg: &crate::opc::PartFs) -> Self {
-        let mut used = HashSet::new();
+        let mut ids = Self::from_used(HashSet::new());
+        ids.reserve_package(pkg);
+        ids
+    }
+
+    /// Reserve every revision id `pkg` holds, in all its revision-bearing
+    /// parts, so a shared allocator keeps clear of another package's ids.
+    #[doc(hidden)]
+    pub fn reserve_package(&mut self, pkg: &crate::opc::PartFs) {
         for (part, _) in revision_bearing_parts(pkg) {
             let Some(xml) = pkg.part_string(&part) else {
                 continue;
@@ -4505,17 +4513,26 @@ impl RevisionIds {
                         .attribute(node, &W::id())
                         .and_then(|id| id.parse::<u64>().ok())
                 {
-                    used.insert(id);
+                    self.reserve(id);
                 }
             }
         }
-        Self::from_used(used)
     }
 
     #[doc(hidden)]
     pub fn from_used(used: HashSet<u64>) -> Self {
         let next = used.iter().max().map_or(0, |id| id.saturating_add(1));
         Self { next, used }
+    }
+
+    /// Hold `id` back from [`Self::allocate`] — an annotation id outside the
+    /// revision pipeline, or one an earlier part already uses.
+    #[doc(hidden)]
+    pub fn reserve(&mut self, id: u64) {
+        self.used.insert(id);
+        if id >= self.next {
+            self.next = id.saturating_add(1);
+        }
     }
 
     /// Keep max + 1 until Word's signed 32-bit range is exhausted, then

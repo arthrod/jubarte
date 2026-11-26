@@ -164,7 +164,7 @@ fn related_replacement_selects_the_documented_structural_carrier_without_losing_
             let anchor = para("live", "Independently live source paragraph", PROPS);
             let input = old.clone() + &new + &anchor + TABLE;
             let (mut dom, _, body) = package(&input);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary, false);
             let property_source = if matches!(case, "old-structural" | "field-heading") {
                 &old
             } else {
@@ -180,7 +180,7 @@ fn related_replacement_selects_the_documented_structural_carrier_without_losing_
             );
             assert_body(&dom, body, &expected, &format!("{case}/{fold_boundary}"));
             let once = semantic(&dom, body);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", fold_boundary, false);
             assert_eq!(semantic(&dom, body), once);
         }
     }
@@ -206,7 +206,7 @@ fn an_unresolved_field_residue_preserves_m360s_bare_heading_carrier() {
         );
         let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
         let (mut dom, _, body) = package(&(new + &old + section));
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         let end = old.find("</w:pPr>").unwrap() + "</w:pPr>".len();
         let original_body = &old[end..old.len() - 6];
         let expected = if style == "BodyText" {
@@ -219,7 +219,7 @@ fn an_unresolved_field_residue_preserves_m360s_bare_heading_carrier() {
         };
         assert_body(&dom, body, &expected, style);
         let once = semantic(&dom, body);
-        merge_replaced_in_container(&mut dom, body, "Boundary editor", true);
+        merge_replaced_in_container(&mut dom, body, "Boundary editor", true, false);
         assert_eq!(semantic(&dom, body), once);
     }
 }
@@ -276,7 +276,7 @@ fn legal_and_memo_midstory_block_ownership_is_retained_at_exact_boundaries() {
                 .collect::<String>();
             let input = prefix.clone() + &barrier + &dels + &inss + TABLE;
             let (mut dom, _, body) = package(&input);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             // A live predecessor is a boundary, not a leading insertion.
             // Memo's authored headers are first only with no predecessor.
             let keeps = retains && !intervening_live;
@@ -292,7 +292,7 @@ fn legal_and_memo_midstory_block_ownership_is_retained_at_exact_boundaries() {
                 &format!("{label}/live={intervening_live}"),
             );
             let once = semantic(&dom, body);
-            merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+            merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
             assert_eq!(semantic(&dom, body), once, "repeat {label}");
         }
     }
@@ -342,7 +342,7 @@ fn a_carried_original_insertion_keeps_its_author_and_never_becomes_a_real_deleti
                 };
                 let input = old.clone() + &new + &after;
                 let (mut dom, _, body) = package(&input);
-                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
                 assert_body(
                     &dom,
                     body,
@@ -350,7 +350,7 @@ fn a_carried_original_insertion_keeps_its_author_and_never_becomes_a_real_deleti
                     &format!("hyperlink={hyperlink}/bookmarks={with_bookmarks}/{tail}"),
                 );
                 let once = semantic(&dom, body);
-                merge_replaced_in_container(&mut dom, body, "Boundary editor", false);
+                merge_replaced_in_container(&mut dom, body, "Boundary editor", false, false);
                 assert_eq!(semantic(&dom, body), once);
             }
         }
@@ -429,6 +429,46 @@ fn pilcrow_format_equality_includes_nested_fill_payload_but_ignores_source_scrat
             semantic(&dom, root),
             before,
             "format equality is source preserving"
+        );
+    }
+}
+
+// #154 (review of #160): a story-ending tail the Windows stream wrote — a
+// deleted paragraph under its own deleted mark, the inserted paragraphs
+// behind it, and the paired final mark closing the last of those. Mac
+// Word's merge moves the insertions ahead of the deletion and folds the
+// deleted body into the last one, dropping the deleted mark: a boundary of
+// the original, which Reject All then lacks. Windows Word's order is the
+// stream's already, so the gap stays as written there.
+#[test]
+fn windows_merge_keeps_the_deleted_mark_of_a_story_ending_stream_tail() {
+    let by = ("Boundary editor", DATE);
+    let body = format!(
+        "{}{}{}<w:p>{}</w:p>",
+        marked("del", "b", "", by.0, by.1, by.0, by.1),
+        marked("ins", "", "", by.0, by.1, by.0, by.1),
+        marked("ins", "Item 2", "", by.0, by.1, by.0, by.1),
+        run("ins", "Num 2", by.0, by.1),
+    );
+    let mac = format!(
+        "{}{}<w:p>{}{}</w:p>",
+        marked("ins", "", "", by.0, by.1, by.0, by.1),
+        marked("ins", "Item 2", "", by.0, by.1, by.0, by.1),
+        run("ins", "Num 2", by.0, by.1),
+        run("del", "b", by.0, by.1),
+    );
+    for fold_boundary in [false, true] {
+        let (mut dom, _, body_id) = package(&body);
+        merge_replaced_in_container(&mut dom, body_id, "Boundary editor", fold_boundary, true);
+        assert_body(&dom, body_id, &body, "Windows: the stream's tail stays");
+
+        let (mut dom, _, body_id) = package(&body);
+        merge_replaced_in_container(&mut dom, body_id, "Boundary editor", fold_boundary, false);
+        assert_body(
+            &dom,
+            body_id,
+            &mac,
+            "Mac: insertions first, the deleted body folded into the last",
         );
     }
 }

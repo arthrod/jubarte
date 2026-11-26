@@ -139,6 +139,33 @@ pub fn compare_bodies_faithful(
     )
 }
 
+/// [`compare_bodies_faithful`] drawing synthesized revision ids from a
+/// package-wide allocator (#160).
+#[doc(hidden)]
+pub fn compare_bodies_faithful_with_ids(
+    dom: &mut Dom,
+    source_root1: NodeId,
+    source_root2: NodeId,
+    body1: NodeId,
+    body2: NodeId,
+    settings: &WmlComparerSettings,
+    package_ids: &mut crate::revision_processor::RevisionIds,
+) -> NodeId {
+    try_compare_bodies_faithful_with_context(
+        dom,
+        source_root1,
+        source_root2,
+        body1,
+        body2,
+        settings,
+        ComparisonPipeline {
+            notes: None,
+            package_ids: Some(package_ids),
+        },
+    )
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
 /// Notes-part roots the reference-driven note processing reads
 /// definitions from and writes redlined definitions into.
 ///
@@ -229,7 +256,87 @@ pub fn try_compare_bodies_faithful_with_notes(
     settings: &WmlComparerSettings,
     notes: Option<&mut NotesContext>,
 ) -> Result<NodeId, footnotes::RectifyError> {
+    try_compare_bodies_faithful_pipeline(
+        dom,
+        source_root1,
+        source_root2,
+        body1,
+        body2,
+        settings,
+        ComparisonPipeline {
+            notes,
+            package_ids: None,
+        },
+    )
+}
+
+/// One package-wide revision-id space, shared by the body comparison and
+/// every story comparison of a package (#160), beside the notes layout.
+#[doc(hidden)]
+pub struct ComparisonPipeline<'a> {
+    /// The notes parts layout, when the package has one.
+    pub notes: Option<&'a mut NotesContext>,
+    /// The package-wide revision-id allocator, when the caller has one.
+    pub package_ids: Option<&'a mut crate::revision_processor::RevisionIds>,
+}
+
+/// [`try_compare_bodies_faithful_with_notes`] with a [`ComparisonPipeline`].
+#[doc(hidden)]
+pub fn try_compare_bodies_faithful_with_context(
+    dom: &mut Dom,
+    source_root1: NodeId,
+    source_root2: NodeId,
+    body1: NodeId,
+    body2: NodeId,
+    settings: &WmlComparerSettings,
+    context: ComparisonPipeline<'_>,
+) -> Result<NodeId, footnotes::RectifyError> {
+    try_compare_bodies_faithful_pipeline(
+        dom,
+        source_root1,
+        source_root2,
+        body1,
+        body2,
+        settings,
+        context,
+    )
+}
+
+fn try_compare_bodies_faithful_pipeline(
+    dom: &mut Dom,
+    source_root1: NodeId,
+    source_root2: NodeId,
+    body1: NodeId,
+    body2: NodeId,
+    settings: &WmlComparerSettings,
+    context: ComparisonPipeline<'_>,
+) -> Result<NodeId, footnotes::RectifyError> {
+    let ComparisonPipeline { notes, package_ids } = context;
     use crate::namespaces::W;
+
+    // The closing paragraph's own `w:pPr` attributes, taken before the
+    // paragraph pipeline rebuilds properties (a rebuild copies element
+    // children, not attributes). The Windows tail restores them on Reject
+    // All through the record it writes.
+    let closing_attributes: Vec<(crate::xmllinq::XName, String)> = dom
+        .element(source_root1, &W::body())
+        .and_then(|body| {
+            dom.elements(body, None)
+                .into_iter()
+                .rev()
+                .find(|&k| dom.name_is(k, &W::p()))
+        })
+        .and_then(|p| dom.element(p, &W::p_pr()))
+        .map(|ppr| {
+            dom.attributes(ppr)
+                .into_iter()
+                .filter(|(name, _)| {
+                    name.namespace_name() != crate::namespaces::PT::URI
+                        && !dom.is_namespace_declaration(name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Save the original (body1) sectPr up front, keeping the page-geometry
     // children (type/pgSz/pgMar/cols/titlePg/docGrid) AND doc A's header/footer
@@ -1046,6 +1153,14 @@ pub fn try_compare_bodies_faithful_with_notes(
     // moveTo first in the paraRPr, and the paraRPr after pStyle/content props.
     // Otherwise Word reports "unreadable content" (ooxmlsdk tolerates it).
     finalize::fix_paragraph_mark_revision_order(dom, root);
+    // #154: Windows Word 2024 writes a replaced region's trailing insertion
+    // after the deleted region. The paragraph restream stops at a table, so
+    // the insertion lands before it; moving it now, before the Mac ladder's
+    // story-tail passes, keeps those passes from folding it into the
+    // region's first deleted paragraph.
+    if settings.merge_replaced_paragraphs && settings.word_platform == WordPlatform::Windows {
+        finalize::windows_replaced_region_tail(dom, root, &closing_attributes, package_ids);
+    }
     // Match Word's replacement order. Mac Word writes the insertion (new)
     // before the deletion (old); Windows Word 2024 the deletion first
     // (#2550).
@@ -1080,11 +1195,12 @@ pub fn try_compare_bodies_faithful_with_notes(
         finalize::interleave_list_cluster_after_coalesce(dom, root);
         // A revised closing mark paired before finalize already joined the
         // revised last words to the first deleted paragraph.
-        finalize::merge_replaced_paragraphs_in(
+        finalize::merge_replaced_paragraphs_for_platform(
             dom,
             root,
             &settings.author_for_revisions,
             story_final_paired || revised_close_paired,
+            settings.word_platform,
         );
         // M159: restore short pure-D before longer pure-I after merge reorder
         // (text_highlight×times Word MIX|DEL|INS|MIX).

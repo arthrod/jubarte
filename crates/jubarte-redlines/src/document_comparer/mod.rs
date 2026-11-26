@@ -15,7 +15,7 @@
 //! runs PreProcessMarkup/accept/hash and relocates footnotes/comments/related
 //! parts (the M4.5–M4.6 refinements) for exact golden parity on complex docs.
 
-use crate::comparer::{WmlComparerSettings, WordPlatform, compare_bodies_faithful};
+use crate::comparer::{WmlComparerSettings, WordPlatform, compare_bodies_faithful_with_ids};
 use crate::namespaces::{R, W, W14};
 use crate::opc::{OpcError, PartFs};
 use crate::xmllinq::{Dom, NodeId, XName};
@@ -741,14 +741,21 @@ fn compare_documents_impl(
             }
         }
     }
-    let result_root = crate::comparer::try_compare_bodies_faithful_with_notes(
+    // #160: one revision-id space for the whole package, shared by the body
+    // comparison and every story comparison below.
+    let mut revision_ids = crate::revision_processor::RevisionIds::new(&pkg1);
+    revision_ids.reserve_package(&pkg2);
+    let result_root = crate::comparer::try_compare_bodies_faithful_with_context(
         &mut dom,
         root1,
         root2,
         body1,
         body2,
         settings,
-        Some(&mut notes_ctx),
+        crate::comparer::ComparisonPipeline {
+            notes: Some(&mut notes_ctx),
+            package_ids: Some(&mut revision_ids),
+        },
     )
     .map_err(crate::opc::refused)?;
     // A break the revision adds is an inserted paragraph mark. The body
@@ -1998,7 +2005,15 @@ fn compare_documents_impl(
                         .elements(rb, None)
                         .last()
                         .is_some_and(|&e| hd.name_is(e, &W::tbl()));
-                    let res = compare_bodies_faithful(&mut hd, ra, rb, ra, rb, settings);
+                    let res = compare_bodies_faithful_with_ids(
+                        &mut hd,
+                        ra,
+                        rb,
+                        ra,
+                        rb,
+                        settings,
+                        &mut revision_ids,
+                    );
                     // compare_bodies_faithful always rebuilds into
                     // <w:document><w:body>…</w:body></w:document>, even when the
                     // source roots are w:hdr / w:ftr. Looking for a nested
@@ -2134,6 +2149,12 @@ fn compare_documents_impl(
     crate::revision_processor::drop_unreferenced_headers_footers(&mut out);
     isolate_shared_drawing_stories(&mut out, &main1);
     number_doc_prs_in_package(&mut out, &main1, settings.preserve_untouched);
+    // #160: the review asks for one revision-id space across the package;
+    // the comparison numbers each story from 1. Windows only, so the Mac
+    // snapshot stays byte-identical.
+    if settings.word_platform == WordPlatform::Windows {
+        number_revision_ids_across_package(&mut out);
+    }
     out.to_zip()
 }
 
@@ -2266,6 +2287,88 @@ fn rels_part_name(part: &str) -> String {
         Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
         None => format!("_rels/{part}.rels"),
     }
+}
+
+/// #160: the review asks for one package-wide revision-id space. The
+/// comparison numbers each story from 1, so the document and a changed
+/// header (or a footer, a notes part) repeat each other's ids. A part whose
+/// ids are all free keeps them byte-identically; a part that would repeat an
+/// id another part holds is renumbered above every id already used, its move
+/// ranges still paired.
+///
+/// The stylesheet is inside `word/*.xml` too: Word never repeats a revision
+/// id across parts, styles included (0 of 408 Windows / 381 Mac multi-part
+/// references), and the comparison mints style records (a `w:pPrChange` when
+/// Normal's spacing differs). Its own numbering is kept — Word's stylesheet
+/// records number from 1 on their own — so its ids are reserved first, and
+/// every story is numbered clear of them.
+fn number_revision_ids_across_package(out: &mut PartFs) {
+    let parts = crate::revision_processor::revision_bearing_parts(out);
+    let mut used: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    for (part, is_styles) in &parts {
+        if *is_styles {
+            used.extend(revision_carrier_ids_of(out, part));
+        }
+    }
+    for (part, is_styles) in parts {
+        if is_styles {
+            continue;
+        }
+        let ids = revision_carrier_ids_of(out, &part);
+        if ids.is_empty() {
+            continue;
+        }
+        if ids.iter().all(|id| !used.contains(id)) {
+            used.extend(ids);
+            continue;
+        }
+        let Some(xml) = out.part_string(&part) else {
+            continue;
+        };
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let Some(root) = dom.root(doc) else {
+            continue;
+        };
+        let mut allocator = crate::revision_processor::RevisionIds::from_used(used.clone());
+        crate::comparer::finalize::fix_up_revision_ids_with_set(
+            &mut dom,
+            &[root],
+            Some(&mut allocator),
+            &crate::validate_dom::has_unique_revision_id,
+        );
+        used.extend(revision_carrier_ids(&dom, root));
+        out.set_part(&part, dom.serialize_element(root).into_bytes());
+    }
+}
+
+/// The ids [`revision_carrier_ids`] finds in `part`, parsed fresh.
+fn revision_carrier_ids_of(out: &PartFs, part: &str) -> Vec<u64> {
+    let Some(xml) = out.part_string(part) else {
+        return Vec::new();
+    };
+    let mut dom = Dom::new();
+    let doc = dom.parse_xdocument(&xml);
+    dom.root(doc)
+        .map(|root| revision_carrier_ids(&dom, root))
+        .unwrap_or_default()
+}
+
+/// The `w:id` of every revision carrier under `root` — the validator's set
+/// ([`crate::validate_dom::has_unique_revision_id`]), the same predicate
+/// `RevisionIds::reserve_package` counts and the renumbering below applies.
+fn revision_carrier_ids(dom: &Dom, root: NodeId) -> Vec<u64> {
+    dom.descendants_and_self(root, None)
+        .into_iter()
+        .filter(|&node| {
+            dom.name(node)
+                .is_some_and(|name| crate::validate_dom::has_unique_revision_id(&name))
+        })
+        .filter_map(|node| {
+            dom.attribute(node, &W::id())
+                .and_then(|id| id.parse::<u64>().ok())
+        })
+        .collect()
 }
 
 /// Number the drawings of the main document and of every header, footer,
@@ -2676,6 +2779,11 @@ mod based_style_record_tests;
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]
 #[path = "tests/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+#[path = "tests/package_revision_id_space_tests.rs"]
+mod package_revision_id_space_tests;
 
 #[cfg(test)]
 #[cfg_attr(all(coverage_nightly, test), coverage(off))]

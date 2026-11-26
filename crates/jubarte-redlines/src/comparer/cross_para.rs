@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::CorrelationStatus;
 use super::atoms::{ComparisonUnit, CorrelatedSequence};
-use super::{ComparisonUnitGroupType, WmlComparerSettings};
+use super::{ComparisonUnitGroupType, WmlComparerSettings, WordPlatform};
 use crate::namespaces::{PT, W};
 use crate::unid::generate_unid;
 use crate::xmllinq::Dom;
@@ -203,6 +203,30 @@ fn restream(
                 i = end;
                 continue;
             }
+            // #154: Windows Word 2024 streams a replaced region the Mac
+            // gates decline. It keeps base's deleted paragraphs in document
+            // order, interleaved with the insertions around the words the
+            // two sides share — even a lone function word mid-paragraph, or
+            // an arrangement that changes no paragraph structure. Mac Word
+            // 16, the `word` preset's reference, leaves those regions to the
+            // paragraph-level LCS, so this path runs only for
+            // [`WordPlatform::Windows`].
+            if st.settings.word_platform == WordPlatform::Windows
+                && let Some((end, start, stop, (out, paired))) =
+                    mixed_region_at(&st, i).and_then(|(end, region)| {
+                        let (start, stop) = entry_range(&st, &region)?;
+                        if replaced.last().is_some_and(|r| r.1 > start) {
+                            return None;
+                        }
+                        let rendered = render(&st, &region, true)?;
+                        Some((end, start, stop, rendered))
+                    })
+            {
+                replaced.push((start, stop, out));
+                marks.extend(paired);
+                i = end;
+                continue;
+            }
         }
         i += 1;
     }
@@ -320,7 +344,16 @@ fn pair_run(st: &Stream, i: usize) -> Option<(usize, Region)> {
 /// word-matched paragraphs from block `i`, for the shapes the pair run does
 /// not own: a zero-pair region, a one-sided paragraph ahead of the last pair
 /// of a story-ending region, or an interior region with a deleted paragraph.
+/// Mac path: the region must also be segmentable by the Docxodus segmenter.
 fn mixed_region(st: &Stream, i: usize) -> Option<(usize, Region)> {
+    let (j, region) = mixed_region_at(st, i)?;
+    segment(st, &region).map(|_| (j, region))
+}
+
+/// The mixed region's collection, without the Docxodus segmenter gate: the
+/// maximal run of one-sided and word-matched paragraphs from block `i`
+/// ([`mixed_region`] documents the shape rules).
+fn mixed_region_at(st: &Stream, i: usize) -> Option<(usize, Region)> {
     let n = st.blocks.len();
     let mut region = Region {
         left: Vec::new(),
@@ -364,7 +397,7 @@ fn mixed_region(st: &Stream, i: usize) -> Option<(usize, Region)> {
     } else if kl + kr < 3 || kl > ZERO_PAIR_MAX_MEMBERS || kr > ZERO_PAIR_MAX_MEMBERS {
         return None;
     }
-    segment(st, &region).map(|_| (j, region))
+    Some((j, region))
 }
 
 /// The region's entry range, provided every entry in it belongs to one of
@@ -614,14 +647,17 @@ fn member_tokens(st: &Stream, region: &Region) -> (Vec<Vec<Tok>>, Vec<Vec<Tok>>)
 
 fn segment(st: &Stream, region: &Region) -> Option<Vec<Cell>> {
     let (left, right) = member_tokens(st, region);
-    segment_region(&left, &right, &region.pairs, region.run_ends_story)
+    segment_region(&left, &right, &region.pairs, region.run_ends_story, false)
 }
 
 /// Segment the region and render its cells as sequences: each cell's token
-/// diff, then its mark.
-fn render(st: &Stream, region: &Region) -> Option<Rendered> {
+/// diff, then its mark. `windows` is the Windows Word 2024 stream (#154):
+/// the Mac gates the `word` preset carries do not apply, and a
+/// one-sided paragraph's boundary fires only in a window that reaches past
+/// the paragraph's first token.
+fn render(st: &Stream, region: &Region, windows: bool) -> Option<Rendered> {
     let (left, right) = member_tokens(st, region);
-    let cells = segment_region(&left, &right, &region.pairs, region.run_ends_story)?;
+    let cells = segment_region(&left, &right, &region.pairs, region.run_ends_story, windows)?;
     if !covers(&cells, &left, true) || !covers(&cells, &right, false) {
         return None;
     }
@@ -629,8 +665,11 @@ fn render(st: &Stream, region: &Region) -> Option<Rendered> {
     // word that opens a paragraph on both sides, and only while the
     // original's paragraphs fold into no more revised ones (file_110 →
     // file_111); a lone word mid-paragraph is no anchor (file_88 → file_89).
+    // Windows Word 2024 anchors a mid-paragraph word all the same (#154:
+    // super_editor diff_before7 × diff_before8 streams on " will "), even
+    // when the revised region adds paragraphs.
     let zero_pair = region.pairs.is_empty();
-    if zero_pair && region.right.len() > region.left.len() {
+    if zero_pair && !windows && region.right.len() > region.left.len() {
         return None;
     }
     let opens =
@@ -675,7 +714,7 @@ fn render(st: &Stream, region: &Region) -> Option<Rendered> {
         };
         push_coalesced(&mut out, seq);
     }
-    if zero_pair && anchor_opens != Some(true) {
+    if zero_pair && !windows && anchor_opens != Some(true) {
         return None;
     }
     Some((out, marks))
@@ -687,7 +726,7 @@ fn render(st: &Stream, region: &Region) -> Option<Rendered> {
 /// words behind that pair's mark; Word deletes the first mark instead and
 /// keeps every word ("Goods." + "Delivery …" → "Goods. Delivery …").
 fn render_best(st: &Stream, region: &Region) -> Option<Rendered> {
-    let paired = render(st, region);
+    let paired = render(st, region, false);
     if region.pairs.is_empty() || region.left.len() <= region.right.len() {
         return paired;
     }
@@ -697,7 +736,7 @@ fn render_best(st: &Stream, region: &Region) -> Option<Rendered> {
         pairs: Vec::new(),
         run_ends_story: region.run_ends_story,
     };
-    let Some(streamed) = render(st, &bare) else {
+    let Some(streamed) = render(st, &bare, false) else {
         return paired;
     };
     let kept = |r: &Rendered| -> usize {
@@ -1387,6 +1426,7 @@ fn unit_lcs(
     char_weighted: bool,
     partial: bool,
     suppress: &dyn Fn(&Unit, &Unit) -> bool,
+    leftmost: bool,
 ) -> Vec<(usize, usize)> {
     let (n, m) = (ul.len(), ur.len());
     let mut matches = Vec::new();
@@ -1432,6 +1472,16 @@ fn unit_lcs(
             matches.push((i, j));
             i += 1;
             j += 1;
+        } else if leftmost && (j + 1 >= m || dp[at(i, j + 1)] >= dp[at(i + 1, j)]) {
+            // Windows Word 2024 anchors the earliest shared word (#154:
+            // super_editor diff_before7 × diff_before8 anchors the first
+            // " will ", not a later one); advancing the right side first
+            // takes the leftmost match of an otherwise equal alignment.
+            if j + 1 >= m {
+                i += 1;
+            } else {
+                j += 1;
+            }
         } else if dp[at(i + 1, j)] >= dp[at(i, j + 1)] {
             i += 1;
         } else {
@@ -1505,6 +1555,7 @@ fn segment_region(
     right: &[Vec<Tok>],
     pairs: &[(usize, usize)],
     run_ends_story: bool,
+    windows: bool,
 ) -> Option<Vec<Cell>> {
     let (kl, kr) = (left.len(), right.len());
     if kl == 0 || kr == 0 {
@@ -1562,7 +1613,7 @@ fn segment_region(
         if ul.len() * ur.len() > LCS_CELL_CAP {
             return None;
         }
-        for (a, b) in unit_lcs(&ul, &ur, true, false, &no_suppress) {
+        for (a, b) in unit_lcs(&ul, &ur, true, false, &no_suppress, windows) {
             unit_match_tokens(&ul[a], &ur[b], &mut pass1);
         }
     }
@@ -1587,7 +1638,7 @@ fn segment_region(
                 bail = true;
                 return;
             }
-            let mut picked = unit_lcs(&ul, &ur, true, true, &no_suppress);
+            let mut picked = unit_lcs(&ul, &ur, true, true, &no_suppress, windows);
             if let (Some(lpl), Some(lpr)) = (last_pair_l, last_pair_r)
                 && run_ends_story
                 && !has_tail
@@ -1606,7 +1657,7 @@ fn segment_region(
                 });
                 let any_final = picked.iter().any(|&(a, b)| in_final(&ul[a], &ur[b]));
                 if any_final && !bigram {
-                    picked = unit_lcs(&ul, &ur, true, true, &in_final);
+                    picked = unit_lcs(&ul, &ur, true, true, &in_final, windows);
                 }
             }
             picked.retain(|&(a, b)| {
@@ -1671,9 +1722,13 @@ fn segment_region(
         }
     }
 
-    // Zero-pair regions: at most one count-equal construct.
+    // Zero-pair regions: at most one count-equal construct. The construct
+    // is the Docxodus (Mac Word) rescue that forces a structure change;
+    // Windows Word 2024 streams the anchors alone and lets each side's
+    // boundaries fire where its own paragraphs end (#154), so it is skipped
+    // there.
     let mut construct_pairs = 0;
-    if pairs.is_empty() {
+    if pairs.is_empty() && !windows {
         let count_l =
             |all: &[(usize, usize)], b: usize| all.iter().filter(|m| m.0 < off_l[b + 1]).count();
         let count_r =
@@ -1711,10 +1766,17 @@ fn segment_region(
     bounds.sort_unstable();
 
     // Structure gate: ship only when the stream changes paragraph structure.
+    // Windows Word 2024 ships the arrangement even when no boundary-crossing
+    // match exists: the region's deletions and insertions interleave around
+    // the pair's own anchor (#154, list_with_break_exported_broken_45 ×
+    // list_with_break_from_word), and a zero-pair region streams on any
+    // shared word at all.
     if pairs.is_empty() {
         let interior_unpaired = (0..kl.saturating_sub(1)).any(|b| !paired_l[b])
             || (0..kr.saturating_sub(1)).any(|b| !paired_r[b]);
-        let ships = if run_ends_story {
+        let ships = if windows {
+            cross_units >= 1
+        } else if run_ends_story {
             cross_units >= 2 || construct_pairs > 0
         } else {
             construct_pairs > 0
@@ -1722,7 +1784,7 @@ fn segment_region(
         if !ships || !interior_unpaired {
             return None;
         }
-    } else if has_tail {
+    } else if has_tail && !windows {
         let crossing = all.iter().any(|&(lf, rf)| {
             let (pl, pr) = (left_pair[member_l(lf)], right_pair[member_r(rf)]);
             pl == usize::MAX || pr == usize::MAX || pl != pr
@@ -1756,38 +1818,86 @@ fn segment_region(
     let unpaired_l: Vec<usize> = (0..kl).filter(|&b| !paired_l[b]).collect();
     let unpaired_r: Vec<usize> = (0..kr).filter(|&b| !paired_r[b]).collect();
 
-    // Expansion: per window the right side's one-sided items before the left's.
+    // Expansion: per window the right side's one-sided items before the
+    // left's — Mac Word's order. Windows Word 2024 writes each window's
+    // deletions before its insertions (#154, the same order
+    // `reorder_deletions_before_insertions` writes in a paragraph), and a
+    // one-sided paragraph's boundary fires only in a window that reaches
+    // past the paragraph's first token: an empty paragraph sitting exactly
+    // at a window edge belongs to the window after it, where the deletion
+    // waiting behind the anchor can share its cell (Windows Word 2024's
+    // list_with_break redline: `[-b-]¶+`, a deleted word closed by the next
+    // empty paragraph's inserted mark).
     let mut merged: Vec<MergedItem> = Vec::new();
     let (mut lc, mut rc, mut ub_l, mut ub_r) = (0usize, 0usize, 0usize, 0usize);
     let mut emit =
         |l_to: usize, r_to: usize, lc: &mut usize, rc: &mut usize, merged: &mut Vec<MergedItem>| {
-            loop {
-                if ub_r < unpaired_r.len()
-                    && off_r[unpaired_r[ub_r] + 1] <= *rc
-                    && off_r[unpaired_r[ub_r] + 1] <= r_to
-                {
-                    merged.push(MergedItem::BoundaryIns(unpaired_r[ub_r]));
-                    ub_r += 1;
-                } else if *rc < r_to {
-                    merged.push(MergedItem::Ins(*rc));
-                    *rc += 1;
-                } else {
-                    break;
+            let mut side = |unpaired: &[usize],
+                            off: &[usize],
+                            ub: &mut usize,
+                            cur: &mut usize,
+                            to: usize,
+                            boundary: fn(usize) -> MergedItem,
+                            item: fn(usize) -> MergedItem| {
+                loop {
+                    let fire = if windows {
+                        *ub < unpaired.len()
+                            && off[unpaired[*ub] + 1] <= *cur
+                            && off[unpaired[*ub]] < to
+                    } else {
+                        *ub < unpaired.len()
+                            && off[unpaired[*ub] + 1] <= *cur
+                            && off[unpaired[*ub] + 1] <= to
+                    };
+                    if fire {
+                        merged.push(boundary(unpaired[*ub]));
+                        *ub += 1;
+                    } else if *cur < to {
+                        merged.push(item(*cur));
+                        *cur += 1;
+                    } else {
+                        break;
+                    }
                 }
-            }
-            loop {
-                if ub_l < unpaired_l.len()
-                    && off_l[unpaired_l[ub_l] + 1] <= *lc
-                    && off_l[unpaired_l[ub_l] + 1] <= l_to
-                {
-                    merged.push(MergedItem::BoundaryDel(unpaired_l[ub_l]));
-                    ub_l += 1;
-                } else if *lc < l_to {
-                    merged.push(MergedItem::Del(*lc));
-                    *lc += 1;
-                } else {
-                    break;
-                }
+            };
+            if windows {
+                side(
+                    &unpaired_l,
+                    &off_l,
+                    &mut ub_l,
+                    lc,
+                    l_to,
+                    MergedItem::BoundaryDel,
+                    MergedItem::Del,
+                );
+                side(
+                    &unpaired_r,
+                    &off_r,
+                    &mut ub_r,
+                    rc,
+                    r_to,
+                    MergedItem::BoundaryIns,
+                    MergedItem::Ins,
+                );
+            } else {
+                side(
+                    &unpaired_r,
+                    &off_r,
+                    &mut ub_r,
+                    rc,
+                    r_to,
+                    MergedItem::BoundaryIns,
+                    MergedItem::Ins,
+                );
+                side(
+                    &unpaired_l,
+                    &off_l,
+                    &mut ub_l,
+                    lc,
+                    l_to,
+                    MergedItem::BoundaryDel,
+                    MergedItem::Del,
+                );
             }
         };
     for a in &chain {
@@ -2444,29 +2554,283 @@ mod lexical_pairing_contract_tests {
                         vec![]
                     };
                     assert_eq!(
-                        unit_lcs(&compound, &one, weighted, partial, &|_, _| false),
+                        unit_lcs(&compound, &one, weighted, partial, &|_, _| false, false),
                         expected
                     );
                     assert_eq!(
-                        unit_lcs(&one, &compound, weighted, partial, &|_, _| false),
+                        unit_lcs(&one, &compound, weighted, partial, &|_, _| false, false),
                         expected
                     );
-                    assert!(unit_lcs(&one, &compound, weighted, partial, &|_, _| true).is_empty());
+                    assert!(
+                        unit_lcs(&one, &compound, weighted, partial, &|_, _| true, false)
+                            .is_empty()
+                    );
                 }
             }
         }
         let left = build(&["a", " ", "lengthy"]);
         let right = build(&["lengthy", " ", "a"]);
         assert_eq!(
-            unit_lcs(&left, &right, true, false, &|_, _| false),
+            unit_lcs(&left, &right, true, false, &|_, _| false, false),
             [(1, 0)]
         );
         assert_eq!(
-            unit_lcs(&left, &right, false, false, &|_, _| false),
+            unit_lcs(&left, &right, false, false, &|_, _| false, false),
             [(1, 0)]
         );
-        assert!(unit_lcs(&left, &[], true, true, &|_, _| false).is_empty());
-        assert!(unit_lcs(&[], &right, false, false, &|_, _| false).is_empty());
+        assert!(unit_lcs(&left, &[], true, true, &|_, _| false, false).is_empty());
+        assert!(unit_lcs(&[], &right, false, false, &|_, _| false, false).is_empty());
+    }
+
+    /// The platform's tie: `x a` against `a x` anchors the original's `x`
+    /// on Windows Word 2024 (the earliest shared word, #154) and the `a`
+    /// on Mac Word 16. This pins `unit_lcs` itself; pass 1's forwarding of
+    /// the platform is pinned by
+    /// [`windows_segment_anchors_a_paired_paragraph_on_its_earliest_shared_word`].
+    #[test]
+    fn unit_anchor_ties_break_by_platform() {
+        let build = |words: &[&str]| {
+            let t = tokens(words);
+            let flat: Vec<_> = t.iter().collect();
+            build_units(&flat, &[0, t.len()], 0, t.len())
+        };
+        let (x_a, a_x) = (build(&["x", " ", "a"]), build(&["a", " ", "x"]));
+        assert_eq!(
+            unit_lcs(&x_a, &a_x, true, false, &|_, _| false, false),
+            [(1, 0)]
+        );
+        assert_eq!(
+            unit_lcs(&x_a, &a_x, true, false, &|_, _| false, true),
+            [(0, 1)]
+        );
+    }
+
+    type CellProjection = (
+        Option<(usize, usize, usize)>,
+        Option<(usize, usize, usize)>,
+        Mark,
+        usize,
+        usize,
+    );
+
+    /// One segment cell, projected.
+    fn cell(c: &Cell) -> CellProjection {
+        (c.left, c.right, c.mark, c.mark_left, c.mark_right)
+    }
+
+    /// Pass 1 keeps the platform's tie. The paired paragraph `north south` /
+    /// `south north` shares two words of equal weight with its counterpart.
+    /// Windows Word 2024 anchors the earliest one on each side (`north`,
+    /// #154), and the stream then carries the original's `south` across into
+    /// the revised document's next paragraph, so the pair's own boundary
+    /// falls. Mac Word 16 anchors `south` inside the pair, whose boundary
+    /// stands (the review of #160: the Windows stream took the Mac tie in
+    /// pass 1, and pass 2 only rematches between pass-1 anchors). Both read
+    /// as their two documents on accept and reject.
+    #[test]
+    fn windows_segment_anchors_a_paired_paragraph_on_its_earliest_shared_word() {
+        let left = vec![
+            tokens(&["north", " ", "south"]),
+            tokens(&["east"]),
+            tokens(&["west"]),
+        ];
+        let right = vec![
+            tokens(&["south", " ", "north"]),
+            tokens(&["south"]),
+            tokens(&["harbor"]),
+        ];
+        let project = |cells: &[Cell]| {
+            assert!(covers(cells, &left, true));
+            assert!(covers(cells, &right, false));
+            cells.iter().map(cell).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            segment_region(&left, &right, &[(0, 0)], false, false).map(|c| project(&c)),
+            Some(vec![
+                (Some((0, 0, 3)), Some((0, 0, 3)), Mark::Equal, 0, 0),
+                (None, Some((1, 0, 1)), Mark::Inserted, usize::MAX, 1),
+                (None, Some((2, 0, 1)), Mark::Inserted, usize::MAX, 2),
+                (Some((1, 0, 1)), None, Mark::Deleted, 1, usize::MAX),
+                (Some((2, 0, 1)), None, Mark::Deleted, 2, usize::MAX),
+            ])
+        );
+        assert_eq!(
+            segment_region(&left, &right, &[(0, 0)], false, true).map(|c| project(&c)),
+            Some(vec![
+                (
+                    Some((0, 0, 2)),
+                    Some((0, 0, 3)),
+                    Mark::Inserted,
+                    usize::MAX,
+                    0
+                ),
+                (
+                    Some((0, 2, 1)),
+                    Some((1, 0, 1)),
+                    Mark::Deleted,
+                    0,
+                    usize::MAX
+                ),
+                (Some((1, 0, 1)), None, Mark::Deleted, 1, usize::MAX),
+                (Some((2, 0, 1)), None, Mark::Deleted, 2, usize::MAX),
+                (None, None, Mark::Inserted, usize::MAX, 1),
+                (None, Some((2, 0, 1)), Mark::Inserted, usize::MAX, 2),
+            ])
+        );
+    }
+}
+
+#[cfg(test)]
+#[cfg_attr(all(coverage_nightly, test), coverage(off))]
+mod windows_stream_tests {
+    use super::*;
+    use crate::comparer::CompareMode;
+    use crate::comparer::atoms::{AtomHash, ComparisonUnitAtom, ComparisonUnitWord};
+    use crate::xmllinq::NodeId;
+
+    /// A paragraph of `words`, each in a run of its own, with a `w:pPr`.
+    fn paragraph(words: &[&str]) -> String {
+        let runs = words
+            .iter()
+            .map(|w| format!(r#"<w:r><w:t xml:space="preserve">{w}</w:t></w:r>"#))
+            .collect::<String>();
+        format!("<w:p><w:pPr/>{runs}</w:p>")
+    }
+
+    /// The stream of `body`'s paragraphs: the first `left` deleted, the rest
+    /// inserted — one entry per word, then the paragraph's mark.
+    fn stream<'a>(
+        dom: &'a Dom,
+        settings: &'a WmlComparerSettings,
+        body: NodeId,
+        left: usize,
+    ) -> Stream<'a> {
+        let ps = dom.elements(body, Some(&W::p()));
+        let word = |leaf: NodeId| {
+            let run = dom.parent(leaf).expect("a text node sits in a run");
+            let p = dom.parent(run).expect("a run sits in a paragraph");
+            ComparisonUnit::Word(ComparisonUnitWord::new(vec![ComparisonUnitAtom::new(
+                leaf,
+                [p, run, leaf],
+                AtomHash::default(),
+            )]))
+        };
+        let mark = |p: NodeId| {
+            let ppr = dom.element(p, &W::p_pr()).expect("the paragraph has a pPr");
+            ComparisonUnit::Word(ComparisonUnitWord::new(vec![ComparisonUnitAtom::new(
+                ppr,
+                [ppr],
+                AtomHash::default(),
+            )]))
+        };
+        let mut entries = Vec::new();
+        let mut side = |ps: &[NodeId], item: fn(ComparisonUnit) -> Item| -> Vec<Para> {
+            ps.iter()
+                .map(|&p| {
+                    let mut idx = Vec::new();
+                    for t in dom.descendants(p, Some(&W::t())) {
+                        idx.push(entries.len());
+                        entries.push(Entry {
+                            item: Some(item(word(t))),
+                            seq: 0,
+                            plain: true,
+                        });
+                    }
+                    let m = entries.len();
+                    entries.push(Entry {
+                        item: Some(item(mark(p))),
+                        seq: 0,
+                        plain: true,
+                    });
+                    Para {
+                        entries: idx,
+                        mark: m,
+                        plain: true,
+                    }
+                })
+                .collect()
+        };
+        let lparas = side(&ps[..left], Item::Del);
+        let rparas = side(&ps[left..], Item::Ins);
+        Stream {
+            dom,
+            settings,
+            entries,
+            lparas,
+            rparas,
+            blocks: Vec::new(),
+            para_of_l: Vec::new(),
+            para_of_r: Vec::new(),
+        }
+    }
+
+    /// Each unit of `out`: `=` kept, `-` deleted, `+` inserted, then its
+    /// text; a mark reads as its bare sign.
+    fn script(dom: &Dom, out: &[CorrelatedSequence]) -> Vec<String> {
+        out.iter()
+            .flat_map(|s| {
+                let sign = match s.correlation_status {
+                    CorrelationStatus::Equal => '=',
+                    CorrelationStatus::Deleted => '-',
+                    CorrelationStatus::Inserted => '+',
+                    _ => unreachable!("a rendered cell is paired, deleted or inserted"),
+                };
+                let units = if s.correlation_status == CorrelationStatus::Inserted {
+                    &s.com_units_2
+                } else {
+                    &s.com_units_1
+                };
+                units
+                    .iter()
+                    .flatten()
+                    .map(move |u| format!("{sign}{}", unit_text(u, dom)))
+            })
+            .collect()
+    }
+
+    /// Windows Word 2024 streams a zero-pair region on any shared word, even
+    /// when the revision has more paragraphs than the original. The Mac gate
+    /// (file_110 → file_111: the original's paragraphs fold into no more
+    /// revised ones) stayed in the Windows render, which declined the
+    /// covering cells its own segmenter lays out and leaves the region to
+    /// the paragraph-level script (the review of #160).
+    #[test]
+    fn windows_streams_a_zero_pair_region_that_adds_a_paragraph() {
+        let xml = format!(
+            r#"<w:document xmlns:w="{}"><w:body>{}{}{}</w:body></w:document>"#,
+            W::URI,
+            paragraph(&["alpha", " ", "will", " ", "omega"]),
+            paragraph(&["beta", " ", "will", " ", "gamma"]),
+            paragraph(&["delta", " ", "epsilon"])
+        );
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        let root = dom.root(doc).expect("the document parses");
+        let body = dom.element(root, &W::body()).expect("a body");
+        let settings = WmlComparerSettings::new(CompareMode::WordWindows);
+        let st = stream(&dom, &settings, body, 1);
+        let region = Region {
+            left: vec![0],
+            right: vec![0, 1],
+            pairs: Vec::new(),
+            run_ends_story: false,
+        };
+        let (left, right) = member_tokens(&st, &region);
+        let cells = segment_region(&left, &right, &[], false, true)
+            .expect("the Windows segmenter lays the region out");
+        assert!(covers(&cells, &left, true) && covers(&cells, &right, false));
+        // Mac Word 16 leaves this region to the paragraph-level script.
+        assert!(segment_region(&left, &right, &[], false, false).is_none());
+        assert!(render(&st, &region, false).is_none());
+        let (out, marks) = render(&st, &region, true).expect("Windows renders what it segments");
+        assert_eq!(
+            script(&dom, &out),
+            [
+                "-alpha", "+beta", "= ", "=will", "= ", "-omega", "-", "+gamma", "+", "+delta",
+                "+ ", "+epsilon", "+",
+            ]
+        );
+        assert_eq!(marks.len(), 2, "each revised paragraph closes on its mark");
     }
 }
 
@@ -3315,7 +3679,7 @@ mod public_option_source_ownership_tests {
             // These are two real paragraph members with the same lexical bag.
             // The ordinary pair exceeds pass 1's cap; the story-final pair's
             // unequal first word leaves the whole capped pass-2 residue.
-            assert!(segment_region(&[left], &[right], &[(0, 0)], ending_story).is_none());
+            assert!(segment_region(&[left], &[right], &[(0, 0)], ending_story, false).is_none());
             assert_eq!((canonical(&dom, a), canonical(&dom, b)), owned);
         }
     }

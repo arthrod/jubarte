@@ -16,11 +16,11 @@ use super::*;
 /// fully-deleted paragraphs with the adjacent following run of fully-inserted
 /// paragraphs (pairwise, in order; leftovers stay separate) in the body and
 /// inside every table cell / textbox.
-/// Helper that delegates to [`merge_replaced_paragraphs_in`] with
-/// `story_final_paired = false` and `revised_close_paired = false`.
-/// Kept so existing callers still compile; the production pipeline
-/// calls [`merge_replaced_paragraphs_in`] directly with both flags
-/// pinned from the body tokenizer.
+/// Helper that delegates to [`merge_replaced_paragraphs_for_platform`] with
+/// `story_final_paired = false`, for Mac Word 16. Kept so existing callers
+/// still compile; the production pipeline calls
+/// [`merge_replaced_paragraphs_for_platform`] directly with the body
+/// tokenizer's flag and the preset's platform.
 pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &str) {
     merge_replaced_paragraphs_in(dom, root, comparer_author, false);
 }
@@ -43,11 +43,34 @@ pub fn merge_replaced_paragraphs(dom: &mut Dom, root: NodeId, comparer_author: &
 /// story-final mark keep the merged paragraph with the revised
 /// final paragraph's words; `revised_close_paired = true` keeps
 /// the closing mark's words inserted ahead.
+///
+/// The calling convention the crate has always published: a caller that
+/// names no platform gets Mac Word 16's merge. A caller that follows
+/// Windows Word 2024 calls [`merge_replaced_paragraphs_for_platform`].
 pub fn merge_replaced_paragraphs_in(
     dom: &mut Dom,
     root: NodeId,
     comparer_author: &str,
     story_final_paired: bool,
+) {
+    merge_replaced_paragraphs_for_platform(
+        dom,
+        root,
+        comparer_author,
+        story_final_paired,
+        WordPlatform::Mac,
+    );
+}
+
+/// [`merge_replaced_paragraphs_in`] for the Word `platform` the preset
+/// follows. Mac Word 16 is the reference; Windows Word 2024's merge leaves a
+/// restreamed region's gap where the stream put it (#154).
+pub fn merge_replaced_paragraphs_for_platform(
+    dom: &mut Dom,
+    root: NodeId,
+    comparer_author: &str,
+    story_final_paired: bool,
+    platform: WordPlatform,
 ) {
     let body = dom.element(root, &W::body());
     let mut containers: Vec<NodeId> = body.into_iter().collect();
@@ -56,7 +79,13 @@ pub fn merge_replaced_paragraphs_in(
     }
     for c in containers {
         let fold_boundary = !(story_final_paired && Some(c) == body);
-        merge_replaced_in_container(dom, c, comparer_author, fold_boundary);
+        merge_replaced_in_container(
+            dom,
+            c,
+            comparer_author,
+            fold_boundary,
+            platform == WordPlatform::Windows,
+        );
     }
 }
 
@@ -2104,6 +2133,7 @@ pub(super) fn merge_replaced_in_container(
     container: NodeId,
     comparer_author: &str,
     fold_boundary: bool,
+    windows: bool,
 ) {
     // #1686: a cell that gains or loses an empty paragraph must keep it.
     // The story-end fold below treats the end of a cell as the end of the
@@ -2136,6 +2166,34 @@ pub(super) fn merge_replaced_in_container(
             }
             let dels = &children[del_start..ins_start];
             let inss = &children[ins_start..i];
+            // #154: a deleted body under an INSERTED mark is a revised-side
+            // paragraph — a restreamed region's cell closed by the next
+            // empty paragraph's mark (Windows Word 2024's `[-b-]¶+`). The
+            // cluster passes leave such a gap where the stream put it.
+            if windows && para_mark_revision(dom, children[del_start], &W::ins()) {
+                continue;
+            }
+            // #154 (review of #160): the stream's story-ending tail — the
+            // deleted paragraphs under their own deleted marks, the inserted
+            // ones behind them, and the paired final mark closing the last
+            // of those. It already stands in the order Windows Word 2024
+            // writes, deletions first (#2550), and each deleted mark is a
+            // boundary of the original ahead of its final one: the original
+            // has a paragraph behind the deletion. Moving the insertions
+            // ahead of them puts the paired final mark in front of
+            // paragraphs the original still owes, and folding the last
+            // deleted paragraph into the insertions drops its mark; either
+            // way Accept All or Reject All loses a paragraph. The gap stays
+            // where the stream put it.
+            if windows
+                && gap_ends_story(dom, &children[i..])
+                && inss.last().is_some_and(|&last| {
+                    !para_mark_revision(dom, last, &W::ins())
+                        && !para_mark_revision(dom, last, &W::del())
+                })
+            {
+                continue;
+            }
             if gap_has_live_blank_cell_tail(dom, container, &children[i..]) {
                 continue;
             }

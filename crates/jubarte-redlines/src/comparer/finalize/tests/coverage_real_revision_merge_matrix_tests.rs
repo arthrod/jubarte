@@ -383,7 +383,13 @@ fn exercise(family: &str) {
                         let clean_rejected = projected(&mut dom, old_source, false);
                         let clean_accepted = projected(&mut dom, new_source, true);
                         let fold_boundary = container != "body" || tail_kind != "blank";
-                        merge_replaced_in_container(&mut dom, target, "Editor", fold_boundary);
+                        merge_replaced_in_container(
+                            &mut dom,
+                            target,
+                            "Editor",
+                            fold_boundary,
+                            false,
+                        );
                         for (accept, expected) in [(false, &rejected), (true, &accepted)] {
                             let actual = projected(&mut dom, root, accept);
                             // This pass owns ordered payloads and run formats,
@@ -406,7 +412,13 @@ fn exercise(family: &str) {
                             }
                         }
                         let once = dom.serialize_element(root);
-                        merge_replaced_in_container(&mut dom, target, "Editor", fold_boundary);
+                        merge_replaced_in_container(
+                            &mut dom,
+                            target,
+                            "Editor",
+                            fold_boundary,
+                            false,
+                        );
                         if dom.serialize_element(root) != once {
                             failure_count += 1;
                             if failures.len() < 32 {
@@ -641,7 +653,7 @@ fn live_blank_cell_tail_keeps_independent_replacement_paragraph_owners() {
             let original = projected(&mut dom, root, false);
             let revised = projected(&mut dom, root, true);
             let before = dom.serialize_element(root);
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             assert_eq!(
                 projected(&mut dom, root, false),
                 original,
@@ -688,7 +700,7 @@ fn a_related_replacement_before_live_content_uses_a_paired_unmarked_pilcrow() {
         let (mut dom, root, target) = document(&(deleted + &inserted + anchor), "body");
         let original = projected(&mut dom, root, false);
         let revised = projected(&mut dom, root, true);
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         assert_eq!(
             projected(&mut dom, root, false),
             original,
@@ -788,7 +800,7 @@ fn multiple_original_paragraphs_before_a_live_blank_control_tail_keep_exact_phas
                         dom.serialize_element(dom.element(paragraph, &W::p_pr()).unwrap())
                     })
                     .collect::<Vec<_>>();
-                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                merge_replaced_in_container(&mut dom, target, "Editor", true, false);
                 let paragraphs = dom.elements(target, Some(&W::p()));
                 assert_eq!(paragraphs.len(), count + 1);
                 assert!(para_is_mixed_revision(&dom, paragraphs[0]));
@@ -832,7 +844,7 @@ fn multiple_original_paragraphs_before_a_live_blank_control_tail_keep_exact_phas
                 );
                 assert!(dom.descendants(root, Some(&W::p_pr_change())).is_empty());
                 let once = dom.serialize_element(root);
-                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                merge_replaced_in_container(&mut dom, target, "Editor", true, false);
                 assert_eq!(
                     dom.serialize_element(root),
                     once,
@@ -877,7 +889,7 @@ fn multiple_revised_paragraphs_with_distinct_tail_properties_keep_word_deleted_c
     let original = projected(&mut dom, root, false);
     let leading = dom.elements(target, Some(&W::p()))[0];
     let leading_properties = dom.serialize_element(dom.element(leading, &W::p_pr()).unwrap());
-    merge_replaced_in_container(&mut dom, target, "Editor", true);
+    merge_replaced_in_container(&mut dom, target, "Editor", true, false);
     assert_eq!(projected(&mut dom, root, false), original);
     let paragraphs = dom.elements(target, Some(&W::p()));
     assert_eq!(paragraphs.len(), 5);
@@ -1023,7 +1035,7 @@ fn multiple_original_blank_tail_checks_every_later_pilcrow_provenance() {
                 .iter()
                 .map(|&p| dom.serialize_element(dom.element(p, &W::p_pr()).unwrap()))
                 .collect::<Vec<_>>();
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             let paragraphs = dom.elements(target, Some(&W::p()));
             assert_eq!(
                 paragraphs.len(),
@@ -1068,7 +1080,7 @@ fn multiple_original_blank_tail_checks_every_later_pilcrow_provenance() {
             );
             assert!(dom.descendants(root, Some(&W::p_pr_change())).is_empty());
             let once = dom.serialize_element(root);
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             assert_eq!(
                 dom.serialize_element(root),
                 once,
@@ -1161,7 +1173,7 @@ fn multiple_original_blank_tail_preserves_first_original_section_and_property_hi
             );
             let body = dom.element(root, &W::body()).unwrap();
             let final_section = dom.serialize_element(dom.element(body, &W::sect_pr()).unwrap());
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             let paragraphs = dom.elements(target, Some(&W::p()));
             assert_eq!(
                 paragraphs.len(),
@@ -1223,7 +1235,7 @@ fn multiple_original_blank_tail_preserves_first_original_section_and_property_hi
                 "general section fold preserves original text and full paragraph/run formatting"
             );
             let once = dom.serialize_element(root);
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             assert_eq!(
                 dom.serialize_element(root),
                 once,
@@ -1245,7 +1257,7 @@ fn multiple_original_blank_tail_preserves_first_original_section_and_property_hi
             .into_iter()
             .map(|node| dom.serialize_element(node))
             .collect::<Vec<_>>();
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         let originals = dom
             .elements(target, Some(&W::p()))
             .into_iter()
@@ -1286,7 +1298,7 @@ fn multiple_original_blank_tail_preserves_first_original_section_and_property_hi
             revised_body
         );
         let once = dom.serialize_element(root);
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         assert_eq!(
             dom.serialize_element(root),
             once,
@@ -1339,7 +1351,7 @@ fn multiple_revised_blank_tail_pairs_only_the_matching_final_revised_paragraph()
             .iter()
             .map(|&p| dom.serialize_element(dom.element(p, &W::p_pr()).unwrap()))
             .collect::<Vec<_>>();
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         let paragraphs = dom.elements(target, Some(&W::p()));
         assert_eq!(paragraphs.len(), leading_count + 4);
         for index in 0..leading_count {
@@ -1383,7 +1395,7 @@ fn multiple_revised_blank_tail_pairs_only_the_matching_final_revised_paragraph()
         ));
         assert!(dom.descendants(root, Some(&W::p_pr_change())).is_empty());
         let once = dom.serialize_element(root);
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         assert_eq!(
             dom.serialize_element(root),
             once,
@@ -1531,7 +1543,7 @@ fn a_single_replacement_before_a_live_blank_control_tail_keeps_a_paired_pilcrow(
         let (mut dom, root, target) = document(&(gap + "<w:p/>"), "sdtContent");
         let original = projected(&mut dom, root, false);
         let revised = projected(&mut dom, root, true);
-        merge_replaced_in_container(&mut dom, target, "Editor", true);
+        merge_replaced_in_container(&mut dom, target, "Editor", true, false);
         assert_eq!(
             projected(&mut dom, root, false),
             original,
@@ -1603,7 +1615,7 @@ fn a_sole_original_and_multiple_revised_paragraphs_keep_live_blank_tail_ownershi
                 let revised = projected(&mut dom, root, true);
                 assert_eq!(count_projected_paragraphs(&mut dom, root, false), 2);
                 assert_eq!(count_projected_paragraphs(&mut dom, root, true), count + 1);
-                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                merge_replaced_in_container(&mut dom, target, "Editor", true, false);
                 assert_eq!(
                     projected(&mut dom, root, false),
                     original,
@@ -1632,7 +1644,7 @@ fn a_sole_original_and_multiple_revised_paragraphs_keep_live_blank_tail_ownershi
                 assert_eq!(mixed.len(), 1, "Word terminal fusion shape remains");
                 assert!(!para_mark_revision(&dom, mixed[0], &W::del()));
                 let once = dom.serialize_element(root);
-                merge_replaced_in_container(&mut dom, target, "Editor", true);
+                merge_replaced_in_container(&mut dom, target, "Editor", true, false);
                 assert_eq!(dom.serialize_element(root), once, "stable paired owner");
             }
         }
@@ -1665,7 +1677,7 @@ fn live_blank_cell_tail_with_inert_run_keeps_exact_pilcrow_owners() {
             let original = projected(&mut dom, root, false);
             let revised = projected(&mut dom, root, true);
             let before = dom.serialize_element(root);
-            merge_replaced_in_container(&mut dom, target, "Editor", true);
+            merge_replaced_in_container(&mut dom, target, "Editor", true, false);
             assert_eq!(
                 projected(&mut dom, root, false),
                 original,

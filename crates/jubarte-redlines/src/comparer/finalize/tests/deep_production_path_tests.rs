@@ -116,7 +116,7 @@ fn merge(fragment: &str, fold: bool) -> (Dom, NodeId, NodeId, Vec<NodeId>) {
     let original = blocks(&dom, body);
     let text = views(&dom, root);
     let revisions = body_revisions(&dom, root);
-    merge_replaced_in_container(&mut dom, body, "Editor", fold);
+    merge_replaced_in_container(&mut dom, body, "Editor", fold, false);
     assert_eq!(
         views(&dom, root),
         text,
@@ -128,7 +128,7 @@ fn merge(fragment: &str, fold: bool) -> (Dom, NodeId, NodeId, Vec<NodeId>) {
         "body revisions retain content, format and attribution"
     );
     let once = dom.serialize_element(root);
-    merge_replaced_in_container(&mut dom, body, "Editor", fold);
+    merge_replaced_in_container(&mut dom, body, "Editor", fold, false);
     assert_eq!(
         dom.serialize_element(root),
         once,
