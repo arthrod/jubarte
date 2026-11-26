@@ -230,10 +230,19 @@ export function resolveSections(result = {}) {
         return [
           { id, start, end, starts: startsOf(documentRaw), geometry: resolvePageGeometry(result) },
         ];
-      const setup = [
-        String(raw.page),
-        ...keys.slice(at + 1).filter((key) => raw[key] === null && !/^p\d+-p\d+$/.test(key)),
-      ].join(", ");
+      const clauses = [String(raw.page)];
+      for (const key of keys.slice(at + 1)) {
+        if (clauses.at(-1).includes(";")) break;
+        // `line grid 15.6pt; was: ...` becomes a valued YAML key.
+        // Keep its live clause before stopping at the revision delimiter.
+        if (key.includes(";")) {
+          clauses.push(key);
+          break;
+        }
+        if (raw[key] !== null) break;
+        if (!/^p\d+-p\d+$/.test(key)) clauses.push(key);
+      }
+      const setup = clauses.join(", ").split(";")[0];
       return [
         {
           id,

@@ -1056,6 +1056,38 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
   const spacingOf = (composed, text) =>
     composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs
       .spacing;
+  // header.rs::section_entry writes page_setup unquoted, then `; was:` and
+  // a separate `fmt:` field. Quoted values and `; fmt` tails remain readable too.
+  describe.each([
+    "page: Letter portrait, line grid 15.6pt; was: Letter portrait, line grid 18pt",
+    "page: Letter portrait, line grid 15.6pt; was: Letter portrait, line grid 18pt, fmt: r2 @AC",
+    "page: Letter portrait, line grid 15.6pt",
+    "page: Letter portrait, line grid 15.6pt, fmt: r2 @AC",
+    "page: Letter portrait, line grid 15.6pt; fmt r2 @AC",
+    'page: "Letter portrait, line grid 15.6pt; was: Letter portrait, line grid 18pt"',
+  ])("K112 round 4: section 2 %s", (entry) => {
+    it.each(["body", "footnote"])("uses the live grid for the %s paragraph", (story) => {
+      const source =
+        header(`sections:\n  2: {p1-p1, ${entry}}\n`) +
+        "<!-- p0 section-break -->\nFIRST\n\n" +
+        "<!-- p1 before 1.5 lines -->\nSECOND[^1]\n\n" +
+        "<!-- footnotes.p1 before 1.5 lines -->\n[^1]: NOTE\n";
+      const { composed, done } = compose(source);
+      try {
+        const spacing =
+          story === "body"
+            ? spacingOf(composed, "SECOND")
+            : composed.snapshot.footnotes
+                .flatMap((note) => note.blocks)
+                .find((block) => block.runs?.some((run) => run.text?.includes("NOTE"))).attrs
+                .spacing;
+        expect(spacing.beforePt).toBe(23.4);
+        expect(composed.warnings.filter((warning) => /page setting/.test(warning))).toEqual([]);
+      } finally {
+        done();
+      }
+    });
+  });
   it.each([
     "line grid 15.6pt; fmt r2 @AC",
     "line grid 15.6pt; was: Letter portrait, line grid 18pt",
