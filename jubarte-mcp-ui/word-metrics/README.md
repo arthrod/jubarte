@@ -70,13 +70,25 @@ Word's own noise is 0.24pt: identical paragraph pairs sit 14.40pt or 14.64pt apa
 
 `breaks` and `mixed` are in `word/summary.txt`: Word's breaks around hyphens, dashes and URLs, and mixed sizes on one line.
 
+The summary retains continuation lines across pages and measures pitch only
+between lines on the same page. Table cells with the same label, page and row
+top are reported together, in page order. Horizontally separate, vertically
+overlapping boxes are grouped as one visual line. These PDF boxes do not give
+true baselines: mixed-size boxes (including M01 and the overtall O03 glyph) and
+non-increasing line tops are marked invalid, with no numeric pitch. A paragraph
+without a within-page line interval has no pitch either. Line counts include
+continuations on all pages.
+
 ## Page counts
 
 `baseline.tsv` gives Word's page count and the card's for each of the 114 sweep documents. The sweep documents themselves are not here: many are third-party.
 
-| sweep | exact | within ±1 | mean error (pages) |
+| sweep | exact | within ±1 | mean absolute error (pages) |
 |---|---|---|---|
 | `out96`: Source Serif on the 29px grid | 69 | 90 | 1.25 |
 | `out110`: the document's fonts (#99, #110), still on the grid | 70 | 92 | 1.07 |
+
+The last column averages `abs(card pages - Word pages)`. Signed mean errors
+(bias) for these same documents are +1.19 and +1.00 pages, respectively.
 
 One document is worse after #99: b097, Word 6 pages, the card 6 then 5. Narrower text on the unchanged 29px grid moves its breaks. Task 4 of #61 replaces the grid.

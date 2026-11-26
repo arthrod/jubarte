@@ -1,26 +1,26 @@
 ## autospacing14_byword.pdf
-U00                      page 1 top   72.05
-U01                      page 1 top  100.37  gap  28.32
-U02                      page 1 top  128.93  gap  28.56
-U03                      page 1 top  157.49  gap  28.56
-U04                      page 1 top  186.05  gap  28.56
+U00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+U01                      page 1 top  100.37  gap  28.32  pitch n/a (lines 1; no within-page interval)
+U02                      page 1 top  128.93  gap  28.56  pitch n/a (lines 1; no within-page interval)
+U03                      page 1 top  157.49  gap  28.56  pitch n/a (lines 1; no within-page interval)
+U04                      page 1 top  186.05  gap  28.56  pitch n/a (lines 1; no within-page interval)
 ## autospacing15_byword.pdf
-U00                      page 1 top   72.05
-U01                      page 1 top  100.37  gap  28.32
-U02                      page 1 top  128.93  gap  28.56
-U03                      page 1 top  157.49  gap  28.56
-U04                      page 1 top  186.05  gap  28.56
+U00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+U01                      page 1 top  100.37  gap  28.32  pitch n/a (lines 1; no within-page interval)
+U02                      page 1 top  128.93  gap  28.56  pitch n/a (lines 1; no within-page interval)
+U03                      page 1 top  157.49  gap  28.56  pitch n/a (lines 1; no within-page interval)
+U04                      page 1 top  186.05  gap  28.56  pitch n/a (lines 1; no within-page interval)
 ## breaks_byword.pdf
 B00                      page 1 top   72.05  pitch  14.40 (lines 4, spread 0.24)
 B01                      page 1 top  130.13  gap  58.08  pitch  14.40 (lines 3, spread 0.0)
 B02                      page 1 top  173.57  gap  43.44  pitch  14.40 (lines 5, spread 0.24)
 B03                      page 1 top  246.05  gap  72.48  pitch  14.40 (lines 4, spread 0.24)
 ## emptymarks_byword.pdf
-E00                      page 1 top   72.05
-E01                      page 1 top   94.37  gap  22.32
-E02                      page 1 top  123.41  gap  29.04
-E03                      page 1 top  164.21  gap  40.80
-E04                      page 1 top  201.17  gap  36.96
+E00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+E01                      page 1 top   94.37  gap  22.32  pitch n/a (lines 1; no within-page interval)
+E02                      page 1 top  123.41  gap  29.04  pitch n/a (lines 1; no within-page interval)
+E03                      page 1 top  164.21  gap  40.80  pitch n/a (lines 1; no within-page interval)
+E04                      page 1 top  201.17  gap  36.96  pitch n/a (lines 1; no within-page interval)
 ## lines-arial_byword.pdf
 L-arial-10-auto100       page 1 top   72.24  pitch  11.52 (lines 4, spread 0.0)
 L-arial-10-auto108       page 1 top  130.32  gap  58.08  pitch  12.48 (lines 4, spread 0.24)
@@ -30,7 +30,7 @@ L-arial-10-exact18       page 1 top  381.84  gap 108.96  pitch  18.00 (lines 4, 
 L-arial-10-atleast20     page 1 top  469.20  gap  87.36  pitch  19.92 (lines 4, spread 0.24)
 L-arial-10-atleast8      page 1 top  552.72  gap  83.52  pitch  11.52 (lines 4, spread 0.0)
 L-arial-11-auto100       page 1 top  610.89  gap  58.17  pitch  12.72 (lines 4, spread 0.24)
-L-arial-11-auto108       page 1 top  673.53  gap  62.64  pitch  13.68 (lines 2, spread 0.0)
+L-arial-11-auto108       page 1 top  673.53  gap  62.64  pitch  13.68 (lines 4, spread 0.0)
 L-arial-11-auto150       page 2 top  111.69  pitch  18.96 (lines 4, spread 0.0)
 L-arial-11-auto200       page 2 top  199.53  gap  87.84  pitch  25.20 (lines 4, spread 0.24)
 L-arial-11-exact18       page 2 top  316.89  gap 117.36  pitch  18.00 (lines 4, spread 0.0)
@@ -60,7 +60,7 @@ L-calibri-10-atleast20   page 1 top  397.92  gap  68.88  pitch  20.04 (lines 3, 
 L-calibri-10-atleast8    page 1 top  462.24  gap  64.32  pitch  12.24 (lines 3, spread 0.0)
 L-calibri-11-auto100     page 1 top  511.01  gap  48.77  pitch  13.44 (lines 4, spread 0.0)
 L-calibri-11-auto108     page 1 top  576.77  gap  65.76  pitch  14.40 (lines 4, spread 0.24)
-L-calibri-11-auto150     page 1 top  646.61  gap  69.84  pitch  20.16 (lines 2, spread 0.0)
+L-calibri-11-auto150     page 1 top  646.61  gap  69.84  pitch  20.16 (lines 4, spread 0.0)
 L-calibri-11-auto200     page 2 top  124.37  pitch  26.88 (lines 4, spread 0.0)
 L-calibri-11-exact18     page 2 top  247.49  gap 123.12  pitch  18.00 (lines 4, spread 0.0)
 L-calibri-11-atleast20   page 2 top  334.13  gap  86.64  pitch  19.92 (lines 4, spread 0.24)
@@ -93,7 +93,7 @@ L-courier-11-auto150     page 2 top  225.52  gap  79.20  pitch  18.72 (lines 5, 
 L-courier-11-auto200     page 2 top  330.88  gap 105.36  pitch  24.96 (lines 5, spread 0.0)
 L-courier-11-exact18     page 2 top  472.72  gap 141.84  pitch  18.00 (lines 5, spread 0.0)
 L-courier-11-atleast20   page 2 top  576.88  gap 104.16  pitch  20.04 (lines 5, spread 0.24)
-L-courier-11-atleast8    page 2 top  681.52  gap 104.64  pitch  12.48 (lines 3, spread 0.0)
+L-courier-11-atleast8    page 2 top  681.52  gap 104.64  pitch  12.48 (lines 5, spread 0.0)
 L-courier-12-auto100     page 3 top  108.80  pitch  13.68 (lines 6, spread 0.24)
 L-courier-12-auto108     page 3 top  202.64  gap  93.84  pitch  14.64 (lines 6, spread 0.0)
 L-courier-12-auto150     page 3 top  302.48  gap  99.84  pitch  20.40 (lines 6, spread 0.0)
@@ -126,62 +126,58 @@ L-times-11-atleast8      page 2 top  361.68  gap  84.72  pitch  12.72 (lines 4, 
 L-times-12-auto100       page 2 top  424.19  gap  62.51  pitch  13.92 (lines 4, spread 0.24)
 L-times-12-auto108       page 2 top  491.63  gap  67.44  pitch  14.88 (lines 4, spread 0.0)
 L-times-12-auto150       page 2 top  563.15  gap  71.52  pitch  20.64 (lines 4, spread 0.24)
-L-times-12-auto200       page 2 top  657.95  gap  94.80  pitch  27.60 (lines 2, spread 0.0)
+L-times-12-auto200       page 2 top  657.95  gap  94.80  pitch  27.60 (lines 4, spread 0.0)
 L-times-12-exact18       page 3 top  142.91  pitch  18.00 (lines 4, spread 0.0)
 L-times-12-atleast20     page 3 top  229.79  gap  86.88  pitch  20.16 (lines 4, spread 0.24)
 L-times-12-atleast8      page 3 top  315.47  gap  85.68  pitch  13.92 (lines 4, spread 0.48)
 L-times-14-auto100       page 3 top  382.88  gap  67.41  pitch  16.08 (lines 4, spread 0.24)
 L-times-14-auto108       page 3 top  459.44  gap  76.56  pitch  17.28 (lines 4, spread 0.24)
 L-times-14-auto150       page 3 top  540.80  gap  81.36  pitch  24.24 (lines 4, spread 0.24)
-L-times-14-auto200       page 3 top  649.52  gap 108.72  pitch  32.16 (lines 2, spread 0.0)
+L-times-14-auto200       page 3 top  649.52  gap 108.72  pitch  32.16 (lines 4, spread 0.0)
 L-times-14-exact18       page 4 top  150.32  pitch  18.00 (lines 4, spread 0.0)
 L-times-14-atleast20     page 4 top  236.72  gap  86.40  pitch  19.92 (lines 4, spread 0.24)
 L-times-14-atleast8      page 4 top  325.04  gap  88.32  pitch  16.08 (lines 4, spread 0.0)
 ## mixed_byword.pdf
 M00                      page 1 top   72.05  pitch  14.40 (lines 2, spread 0.0)
-M01                      page 1 top  109.73  gap  37.68  pitch   8.88 (lines 3, spread 34.66)
+M01                      page 1 top  109.73  gap  37.68  pitch n/a (invalid: mixed-size boxes; lines 2)
 M02                      page 1 top  141.89  gap  32.16  pitch  14.40 (lines 2, spread 0.0)
 M03                      page 1 top  170.73  gap  28.84  pitch  14.60 (lines 2, spread 0.0)
 ## overtall_byword.pdf
-O00                      page 1 top   72.05
-O01                      page 2 top  621.65
-O02                      page 3 top   72.05
-O03                      page 4 top  727.97  pitch -655.97 (lines 2, spread 0.0)
-O04                      page 5 top   72.05
+O00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+O01                      page 2 top  621.65  pitch n/a (lines 1; no within-page interval)
+O02                      page 3 top   72.05  pitch n/a (lines 1; no within-page interval)
+O03                      page 4 top  727.97  pitch n/a (invalid: mixed-size boxes; lines 1)
+O04                      page 5 top   72.05  pitch n/a (lines 1; no within-page interval)
 ## pagetop_byword.pdf
-F00                      page 1 top   72.05
-P01                      page 2 top   72.05
-P02                      page 3 top   72.05
-P03                      page 3 top   86.45  gap  14.40
-P04                      page 3 top  137.09  gap  50.64
-P05                      page 4 top   72.05
-P06                      page 4 top   86.45  gap  14.40
-P07                      page 5 top  108.05
+F00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+P01                      page 2 top   72.05  pitch n/a (lines 1; no within-page interval)
+P02                      page 3 top   72.05  pitch n/a (lines 1; no within-page interval)
+P03                      page 3 top   86.45  gap  14.40  pitch n/a (lines 1; no within-page interval)
+P04                      page 3 top  137.09  gap  50.64  pitch n/a (lines 1; no within-page interval)
+P05                      page 4 top   72.05  pitch n/a (lines 1; no within-page interval)
+P06                      page 4 top   86.45  gap  14.40  pitch n/a (lines 1; no within-page interval)
+P07                      page 5 top  108.05  pitch n/a (lines 1; no within-page interval)
 ## spacing_byword.pdf
-S00                      page 1 top   72.05
-S01                      page 1 top   86.45  gap  14.40
-S02                      page 1 top  101.09  gap  14.64
-S03                      page 1 top  151.49  gap  50.40
-S04                      page 1 top  166.13  gap  14.64
-S05                      page 1 top  216.53  gap  50.40
-S06                      page 1 top  230.93  gap  14.40
-S07                      page 1 top  281.57  gap  50.64
-S08                      page 1 top  295.97  gap  14.40
-S09                      page 1 top  334.37  gap  38.40
-S10                      page 1 top  349.01  gap  14.64
-S11                      page 1 top  363.41  gap  14.40
-S12                      page 1 top  378.05  gap  14.64
-S13                      page 1 top  410.45  gap  32.40
-S14                      page 1 top  424.85  gap  14.40
-S15                      page 1 top  447.41  gap  22.56
+S00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+S01                      page 1 top   86.45  gap  14.40  pitch n/a (lines 1; no within-page interval)
+S02                      page 1 top  101.09  gap  14.64  pitch n/a (lines 1; no within-page interval)
+S03                      page 1 top  151.49  gap  50.40  pitch n/a (lines 1; no within-page interval)
+S04                      page 1 top  166.13  gap  14.64  pitch n/a (lines 1; no within-page interval)
+S05                      page 1 top  216.53  gap  50.40  pitch n/a (lines 1; no within-page interval)
+S06                      page 1 top  230.93  gap  14.40  pitch n/a (lines 1; no within-page interval)
+S07                      page 1 top  281.57  gap  50.64  pitch n/a (lines 1; no within-page interval)
+S08                      page 1 top  295.97  gap  14.40  pitch n/a (lines 1; no within-page interval)
+S09                      page 1 top  334.37  gap  38.40  pitch n/a (lines 1; no within-page interval)
+S10                      page 1 top  349.01  gap  14.64  pitch n/a (lines 1; no within-page interval)
+S11                      page 1 top  363.41  gap  14.40  pitch n/a (lines 1; no within-page interval)
+S12                      page 1 top  378.05  gap  14.64  pitch n/a (lines 1; no within-page interval)
+S13                      page 1 top  410.45  gap  32.40  pitch n/a (lines 1; no within-page interval)
+S14                      page 1 top  424.85  gap  14.40  pitch n/a (lines 1; no within-page interval)
+S15                      page 1 top  447.41  gap  22.56  pitch n/a (lines 1; no within-page interval)
 ## table_byword.pdf
-T00                      page 1 top   72.05
-T01                      page 1 top   86.93  gap  14.88
-T02                      page 1 top  102.05  gap  15.12
-T01                      page 1 top   86.93  gap -15.12
-T02                      page 1 top  102.05  gap  15.12
-T03                      page 1 top  132.05  gap  30.00
-T03                      page 1 top  132.05  gap   0.00
-T04                      page 1 top  172.61  gap  40.56
-T05                      page 1 top  187.49  gap  14.88
-T04                      page 1 top  172.61  gap -14.88
+T00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
+T01                      page 1 top   86.93  gap  14.88  pitch n/a (lines 1; no within-page interval)
+T02                      page 1 top  102.05  gap  15.12  pitch n/a (lines 1; no within-page interval)
+T03                      page 1 top  132.05  gap  30.00  pitch n/a (lines 1; no within-page interval)
+T04                      page 1 top  172.61  gap  40.56  pitch n/a (lines 1; no within-page interval)
+T05                      page 1 top  187.49  gap  14.88  pitch n/a (lines 1; no within-page interval)
