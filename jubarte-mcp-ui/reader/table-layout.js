@@ -57,6 +57,9 @@ export function composeWithTables(snapshot,runtime,input){
  const fallback=Object.values(measured.measuredRuns).some(m=>m.prepared?.kind==='premirror-measurement-fallback');
  const pages=[];let frameBounds={x:margins.leftPx,y:margins.topPx,width,height};
  let page,y=0,notes,finished=false,pending=null,held=false,colX=0;
+ // Word keeps a paragraph's space before at the top of the document's first page and of a
+ // section's, and drops it at the top of any other page (word-metrics, `pagetop`; #102).
+ let topKeeps=true,prevPara=null;
  function applyPending(){if(!pending)return;const g=pending.geometry;spec=g.page;margins=g.margins;label=g.label;width=spec.widthPx-margins.leftPx-margins.rightPx;height=spec.heightPx-margins.topPx-margins.bottomPx;frameBounds={x:margins.leftPx,y:margins.topPx,width,height};notes.setGeometry({width,height});pending=null;}
  // Word's w:type: nextPage (the default) breaks, oddPage/evenPage may leave a blank
  // page, and a continuous section of the same size flows on (its setup takes the next page).
@@ -67,11 +70,17 @@ export function composeWithTables(snapshot,runtime,input){
   else{applyPending();Object.assign(page,{spec,margins,label});page.frames[0].bounds={...frameBounds};}
   const parity=kind==='oddpage'?0:kind==='evenpage'?1:null;if(parity!=null&&page.index%2!==parity)newPage();
   // An empty section's page stays, blank, for the next section to break from.
-  held=!!section.empty;}
+  held=!!section.empty;if(y===0)topKeeps=true;}
  function finishPage(){if(!page||finished)return;const result=notes.finishPage(page.index);if(result.band)footnoteBands.push(result.band);for(const fragment of result.fragments){footnoteFragments.push(fragment);const byBlock=new Map();for(const line of fragment.lines){if(!byBlock.has(line.blockId))byBlock.set(line.blockId,[]);byBlock.get(line.blockId).push({...line,y:fragment.y+line.y});}for(const [blockId,lines] of byBlock)addFragment(blockId,lines,{footnote:true,footnoteId:fragment.footnoteId,continuedBefore:fragment.continuedBefore,continuedAfter:fragment.continuedAfter,orphan:fragment.orphan});}finished=true;}
- function newPage(){finishPage();applyPending();held=false;if(colX){colX=0;width=spec.widthPx-margins.leftPx-margins.rightPx;}page={index:pages.length,spec,margins,label,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;notes.beginPage();}
+ function newPage(){finishPage();applyPending();held=false;if(colX){colX=0;width=spec.widthPx-margins.leftPx-margins.rightPx;}page={index:pages.length,spec,margins,label,frames:[{bounds:{...frameBounds},fragments:[]}]};pages.push(page);y=0;finished=false;topKeeps=pages.length===1;notes.beginPage();}
  function ensurePage(){if(y>=notes.bodyLimit-0.001)newPage();}
  const lineCache=new Map(),charWidths=new Map(),fragmentCounts=new Map();
+ // Word's space between two paragraphs (#102): the larger of the first's after and the second's
+ // before, in px; auto is 14pt. Contextual spacing drops a side next to a paragraph of its own style.
+ const styleKey=b=>b?.attrs?.sourceData?.wordStyle||b?.attrs?.sourceType||'p';
+ const sidePx=(sp,side)=>sp?(sp[side+'Auto']?14:sp[side+'Pt']||0)*4/3:0;
+ function pairGap(prev,next){const sp=next?.attrs?.spacing;const before=sidePx(sp,'before');if(!prev)return before;const same=styleKey(prev)===styleKey(next),after=sidePx(prev.attrs?.spacing,'after');return Math.max(same&&prev.attrs?.spacing?.contextual?0:after,same&&sp?.contextual?0:before);}
+ const advance=l=>l.advance??lh;
  function glyphWidth(text,font){const key=font+'\0'+text;if(charWidths.has(key))return charWidths.get(key);const run={id:'table-glyph',text,font,marks:{},pmRange:{from:0,to:text.length}};const m=runtime.measureSnapshot({blocks:[{id:'table-glyph',type:'paragraph',attrs:{},runs:[run],pmRange:run.pmRange}]}).measuredRuns[run.id];const w=m?.widthPx??text.length*7;charWidths.set(key,w);return w;}
  // The room left on a line, its trailing spaces hanging as in Word.
  // Word hangs a line's trailing spaces outside the alignment: they are measured, not
@@ -150,7 +159,7 @@ export function composeWithTables(snapshot,runtime,input){
    // the right margin (#93). A manual break ends a block, so the line before it stays as set.
    // Right-to-left lines keep their alignment.
    const justified=(line,i)=>{if(align!=='justify'||bidi||i===lines.length-1)return line;const extra=alignShift(line,inner,false);const last=line.runs.findLastIndex(r=>r.text?.trim());const spaces=line.runs.map((r,k)=>k>last?0:((k===last?r.text.replace(/[ \u00a0]+$/,''):r.text).match(/[ \u00a0]/g)||[]).length);const total=spaces.reduce((a,b)=>a+b,0);if(!total||extra<=0)return line;const add=extra/total;let before=0;return {...line,runs:line.runs.map((r,k)=>{const moved={...r,x:r.x+add*before,wordSpacing:add,width:(r.width||0)+add*spaces[k]};before+=spaces[k];return moved;})};};
-   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});});
+   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,advance:block.attrs?.lineBox?.advance??lh,ascent:block.attrs?.lineBox?.ascent,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});});
   }
   lineCache.set(key,result);return result;
  }
@@ -214,32 +223,39 @@ export function composeWithTables(snapshot,runtime,input){
   let p=paragraphAt(k);if(!p)return;const first=p.block;if(!chainsOn(first)&&!first.attrs?.keepLines)return;
   const items=[];let gap=0;
   while(p){const chained=chainsOn(p.block);items.push({gap,lines:chained||p.block.attrs?.keepLines?p.lines:p.lines.slice(0,Math.max(1,input.policies.orphanLinesMin||1))});
-   if(!chained)break;let n=p.end;gap=0;while(snapshot.blocks[n]?.attrs?.spacer){gap+=lh;n++;}
+   if(!chained)break;let n=p.end;while(snapshot.blocks[n]?.attrs?.spacer)n++;
    const next=snapshot.blocks[n];if(!next)break;
-   if(next.type==='table'){const g=grids.get(next.id),row=g?.rowHeights?.[0]||0;items.push({gap,height:row,lines:(g?.cells||[]).flatMap(c=>c.lines.filter(l=>c.y+l.y<row-0.001))});break;}
-   p=paragraphAt(n);}
+   if(next.type==='table'){const g=grids.get(next.id),row=g?.rowHeights?.[0]||0;items.push({gap:sidePx(p.block.attrs?.spacing,'after'),height:row,lines:(g?.cells||[]).flatMap(c=>c.lines.filter(l=>c.y+l.y<row-0.001))});break;}
+   const prev=p.block;p=paragraphAt(n);if(p)gap=pairGap(prev,p.block);}
   if(items.length===1&&!first.attrs?.keepLines)return;
-  const need=items.reduce((sum,item)=>sum+item.gap+(item.height??item.lines.length*lh),0);
+  const need=items.reduce((sum,item)=>sum+item.gap+(item.height??item.lines.reduce((h,l)=>h+advance(l),0)),0);
   if(need>height+0.001)return;
   const checkpoint=notes.checkpoint();let at=y,fits=true;
   // A table's first row is tried whole, with the notes its cells reference (#79).
-  for(const item of items){at+=item.gap;if(item.height==null){for(const line of item.lines){if(!notes.accept([line],at+lh,at)){fits=false;break;}at+=lh;}}else{if(!notes.accept(item.lines,at+item.height,at))fits=false;at+=item.height;}if(!fits)break;}
+  for(const item of items){at+=item.gap;if(item.height==null){for(const line of item.lines){if(!notes.accept([line],at+advance(line),at)){fits=false;break;}at+=advance(line);}}else{if(!notes.accept(item.lines,at+item.height,at))fits=false;at+=item.height;}if(!fits)break;}
   notes.restore(checkpoint);if(!fits)newPage();}
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];for(const section of block.attrs?.sectionStarts||[])startSection(section);
-  // A paragraph's space after is cut at the foot of a page, as in Word: a spacer that does not
-  // fit makes no page of its own and never leads the next one (#58).
-  if(block.attrs?.spacer&&(y===0&&page.index>0&&!page.frames[0].fragments.length||notes.bodyLimit-y<lh-0.001))continue;
+  // Spacers take no room (#102): the space between paragraphs is set where the next one starts, and
+  // a space that does not fit is cut at the foot of the page, never leading the next (#58).
+  if(block.attrs?.spacer)continue;
   ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
+  if(block.type!=='table'&&block.attrs?.first!==false){const gap=y===0?(topKeeps?sidePx(block.attrs?.spacing,'before'):0):pairGap(prevPara,block);if(y>0&&y+gap>=notes.bodyLimit-0.001)newPage();else y+=gap;}
+  else if(block.type==='table'&&y>0&&prevPara){const gap=sidePx(prevPara.attrs?.spacing,'after');if(y+gap>=notes.bodyLimit-0.001)newPage();else y+=gap;}
   if(block.type!=='table'&&block.attrs?.first!==false&&y>0)keepTogether(bi);
   if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;
-   while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
-    const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;
+   while(cursor<lines.length){let fit=0,room=notes.bodyLimit-y,used=0;while(cursor+fit<lines.length&&used+advance(lines[cursor+fit])<=room+0.001)used+=advance(lines[cursor+fit++]);
+    // A line taller than the page takes a page of its own (word-metrics, `overtall`).
+    const forced=!fit&&y===0;if(forced)fit=1;if(!fit){newPage();continue;}const remaining=lines.length-cursor;const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
+    const top=k=>{let at=y;for(let i=0;i<k;i++)at+=advance(lines[cursor+i]);return at;};
+    const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],top(accepted+1),top(accepted)))accepted++;
+    if(!accepted&&forced)accepted=1;
     if(!accepted){notes.restore(checkpoint);newPage();continue;}
     if(accepted<remaining&&accepted<orphan&&y>0){notes.restore(checkpoint);newPage();continue;}
-    if(remaining>accepted&&remaining-accepted<widow&&accepted-(widow-(remaining-accepted))>=orphan){const reduced=accepted-(widow-(remaining-accepted));notes.restore(checkpoint);accepted=0;while(accepted<reduced&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;}
-    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh,runs:colX?l.runs.map(r=>({...r,x:r.x+colX})):l.runs}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(colX?{offsetX:colX}:{}),...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
+    if(remaining>accepted&&remaining-accepted<widow&&accepted-(widow-(remaining-accepted))>=orphan){const reduced=accepted-(widow-(remaining-accepted));notes.restore(checkpoint);accepted=0;while(accepted<reduced&&notes.accept([lines[cursor+accepted]],top(accepted+1),top(accepted)))accepted++;}
+    const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:top(i),runs:colX?l.runs.map(r=>({...r,x:r.x+colX})):l.runs}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(colX?{offsetX:colX}:{}),...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});y=top(chunk.length);cursor+=chunk.length;if(cursor<lines.length)newPage();}
+   prevPara=block;
    continue;}
-  const g=grids.get(block.id);if(!g.total)continue;
+  prevPara=null;const g=grids.get(block.id);if(!g.total)continue;
   if(y>0&&g.headerCount>0&&g.headerCount<g.rowHeights.length){const initialGroup=g.rowTops[g.headerCount+1];if(initialGroup<=height&&initialGroup>notes.bodyLimit-y)newPage();}
   let start=0;const repeat=g.headerHeight>0&&g.headerHeight<=height/4&&height-g.headerHeight>=lh&&block.repeatHeader!==false&&block.attrs?.repeatHeader!==false;
   if(g.headerHeight>0&&!repeat&&block.repeatHeader!==false&&block.attrs?.repeatHeader!==false)warn('header-too-tall','Header repetition is disabled because the header occupies more than one quarter of the page.',block.id);
