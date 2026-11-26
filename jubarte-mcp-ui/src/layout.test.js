@@ -7,6 +7,7 @@
 // #47). The bodies follow read_view's own output for codex's documents.
 import { beforeAll, describe, expect, it } from "vitest";
 import { parseJubarte } from "../reader/jubarte.mjs";
+import { lineBox } from "../reader/line-box.mjs";
 
 let mountPagination;
 beforeAll(async () => {
@@ -1036,6 +1037,28 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${styles}---\n\n${body}`;
   const spacingOf = (composed, text) =>
     composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs.spacing;
+  it("K112: paragraph and cell line gaps reach layout as metric-backed points", () => {
+    const { composed, done } = compose(doc(
+      "  Body: Arial 14pt, before 6pt, after 12pt\n",
+      "<!-- p0 Body, size 10pt, before 1.5 lines, after 2 lines -->\nOWN\n\n" +
+      "<!-- t0 1x1, cells p1-p1 by row, p1 before 1.5 lines after 2 lines -->\n| CELL |\n|---|\n",
+    ));
+    try {
+      expect(spacingOf(composed, "OWN")).toMatchObject({
+        beforeLines: 1.5, afterLines: 2,
+        beforePt: 1.5 * lineBox("Arial", 10).height,
+        afterPt: 2 * lineBox("Arial", 10).height,
+      });
+      const cell = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells[0];
+      expect(cell.blocks[0].attrs.spacing).toMatchObject({
+        beforeLines: 1.5, afterLines: 2,
+        beforePt: 1.5 * lineBox("Calibri", 11).height,
+        afterPt: 2 * lineBox("Calibri", 11).height,
+      });
+    } finally {
+      done();
+    }
+  });
   it("a paragraph's own clause wins, its style fills the rest, and Normal the rest of that", () => {
     const { composed, done } = compose(
       doc(

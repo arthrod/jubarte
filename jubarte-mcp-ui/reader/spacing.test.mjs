@@ -10,9 +10,38 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { parseSpacing, takeSpacing, resolveSpacing } from "./spacing.mjs";
+import { lineBox } from "./line-box.mjs";
 import { parseDirective, parseDocumentMetadata as parseSourceDocument } from "./metadata.mjs";
 
 const VIEWS = new URL("../word-metrics/views/", import.meta.url);
+
+test("K112: own line-based gaps override style points and use single-line font metrics", () => {
+  for (const side of ["before", "after"]) {
+    for (const lines of [0, 1.5]) {
+      const style = { fontFamily: "Arial", fontSizePt: 14, [`${side}Pt`]: 6 };
+      const own = parseSpacing(`${side} ${lines} lines line 30pt exact`);
+      const resolved = resolveSpacing(own, style, { [`${side}Pt`]: 12 });
+      assert.equal(resolved[`${side}Lines`], lines);
+      assert.equal(resolved[`${side}Pt`], lines * lineBox("Arial", 14).height);
+      assert.equal(resolved[`${side}Auto`], false);
+    }
+  }
+});
+
+test("K112: automatic spacing wins over lines, and lines win over points in one layer", () => {
+  for (const side of ["before", "after"]) {
+    const own = { [`${side}Auto`]: true, [`${side}Lines`]: 2, [`${side}Pt`]: 6 };
+    const automatic = resolveSpacing(own);
+    assert.equal(automatic[`${side}Auto`], true);
+    assert.equal(automatic[`${side}Lines`], undefined);
+    assert.equal(automatic[`${side}Pt`], 0);
+    const lines = resolveSpacing({ ...own, [`${side}Auto`]: false }, {}, {
+      fontFamily: "Calibri", fontSizePt: 11,
+    });
+    assert.equal(lines[`${side}Pt`], 2 * lineBox("Calibri", 11).height);
+    assert.equal(lines[`${side}Lines`], 2);
+  }
+});
 
 test("each clause spacing_clauses can write reads as typed fields", () => {
   assert.deepEqual(parseSpacing("before 6pt"), { beforePt: 6 });
