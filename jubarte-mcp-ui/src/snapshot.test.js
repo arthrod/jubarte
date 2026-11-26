@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
 //
 // SPDX-License-Identifier: Apache-2.0
 
 // What the paginator is handed, per view mode, before any layout.
 import { describe, expect, it } from "vitest";
+import { DOMSerializer } from "prosemirror-model";
+import readerCss from "../reader/style.css?raw";
 import { parseJubarte } from "../reader/jubarte.mjs";
 import { buildSnapshot, typeSize } from "../reader/pagination.js";
 
@@ -22,6 +25,36 @@ describe("buildSnapshot", () => {
         mode === "original" ? ["p0", "p2"] : ["p0", "p1", "p2"],
       );
       expect(blocks.flatMap((b) => b.runs.map((r) => r.text))).toEqual(["BEFORE", "AFTER"]);
+    }
+  });
+
+  it("K157: draws the inserted empty line's rule only in tracked mode", () => {
+    const result = view("<!-- p0 -->\nBEFORE\n\n<!-- p1 -->\n¶{r3 @A}\n\n<!-- p2 -->\nAFTER");
+    const style = document.createElement("style");
+    style.textContent = readerCss;
+    const container = document.createElement("article");
+    container.append(DOMSerializer.fromSchema(result.schema).serializeFragment(result.doc.content));
+    document.head.append(style);
+    document.body.append(container);
+    try {
+      const empty = container.querySelector('[data-agent-id="p1"]');
+      expect(empty.textContent).toBe("");
+      expect(empty.classList.contains("structural-insertion")).toBe(true);
+      // jsdom cannot resolve var(--ins) in the border shorthand; pin the real rule.
+      const insertionRule = [...style.sheet.cssRules].find(
+        (rule) => rule.selectorText === ".structural-insertion",
+      );
+      expect(insertionRule.style.getPropertyValue("border-left")).toBe("2px solid var(--ins)");
+      for (const mode of ["tracked", "original", "accepted"]) {
+        container.dataset.mode = mode;
+        const css = getComputedStyle(empty);
+        expect(css.display).toBe(mode === "original" ? "none" : "block");
+        expect(css.paddingLeft).toBe(mode === "accepted" ? "0px" : "9px");
+        if (mode === "accepted") expect(css.borderLeftWidth).toBe("0px");
+      }
+    } finally {
+      container.remove();
+      style.remove();
     }
   });
 

@@ -187,6 +187,27 @@ describe("an empty paragraph's page break (#48)", () => {
     }
   });
 
+  it("K156: an empty id line causes one page transition and keeps its empty line", () => {
+    const { composed, done } = compose(
+      `${header()}<!-- p0 -->\nBEFORE\n\n<!-- p1 empty, page-break -->\n\n<!-- p2 -->\nAFTER\n`,
+    );
+    try {
+      expect(composed.layout.pages.length).toBe(2);
+      const blocks = composed.snapshot.blocks.filter((b) => !b.attrs.spacer);
+      expect(blocks.map((b) => b.attrs.sourceData.agentId)).toEqual(["p0", "p1", "p2"]);
+      expect(
+        blocks.filter((b) => b.attrs.manualPageBreakBefore).map((b) => b.attrs.sourceData.agentId),
+      ).toEqual(["p1"]);
+      const fragments = composed.layout.pages[1].frames.flatMap((f) => f.fragments);
+      const empty = fragments.find((f) => f.blockId === blocks[1].id);
+      const after = fragments.find((f) => f.blockId === blocks[2].id);
+      expect(empty.lines.length).toBeGreaterThan(0);
+      expect(after.lines[0].y).toBeGreaterThan(empty.lines[0].y);
+    } finally {
+      done();
+    }
+  });
+
   it("starts the next paragraph on a new page, as in b107", () => {
     const { composed, done } = compose(
       `${header()}<!-- p0 -->\nheader-no-rels\n\n<!-- p1 page-break -->\n\n<!-- p2 -->\nSecond page\n`,
@@ -206,9 +227,16 @@ describe("an empty paragraph's page break (#48)", () => {
         `${header()}<!-- p0 -->\nFIRST\n\n<!-- p1 ${kind} r1 @A, break-${kind.slice(-3)} r1 @A -->\n\n<!-- p2 -->\nSECOND\n`,
       );
       expect(composed.layout.pages.length).toBe(2);
-      const second = composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text.includes("SECOND")));
-      expect(composed.layout.pages[1].frames[0].fragments.some((f) => f.blockId === second.id)).toBe(true);
-      expect(composed.warnings?.some?.((w) => /unknown/.test(w.code) && /page-break/.test(w.message)) ?? false).toBe(false);
+      const second = composed.snapshot.blocks.find((b) =>
+        b.runs?.some((r) => r.text.includes("SECOND")),
+      );
+      expect(
+        composed.layout.pages[1].frames[0].fragments.some((f) => f.blockId === second.id),
+      ).toBe(true);
+      expect(
+        composed.warnings?.some?.((w) => /unknown/.test(w.code) && /page-break/.test(w.message)) ??
+          false,
+      ).toBe(false);
       done();
     });
 });
@@ -593,7 +621,11 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     const { composed, done } = compose(
       `${header(styles)}<!-- p0 Hang -->\n${words("sty")}\n\n<!-- p1 Hang, left 2in -->\n${words("own")}\n\n<!-- p2 First -->\n${words("fst")}\n\n<!-- p3 Hang, first-line 0.25in -->\n${words("pair")}\n`,
     );
-    const [styled, own, first] = [lines(composed, "sty"), lines(composed, "own"), lines(composed, "fst")];
+    const [styled, own, first] = [
+      lines(composed, "sty"),
+      lines(composed, "own"),
+      lines(composed, "fst"),
+    ];
     // Word's PDF: the paragraph's own first-line replaces the style's hanging, the style's left stays.
     const pair = lines(composed, "pair");
     expect(pair[0]).toBeCloseTo(120, 0);
@@ -1028,7 +1060,9 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
   it("a named style's underline and strike reach its runs, the engine prints neither inline (#96)", () => {
     const md = `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  Emph: Calibri underline strike 11pt\n---\n\n<!-- p0 Emph -->\nSTYLED\n`;
     const { container, done } = compose(md);
-    expect([...drawn(container).classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
+    expect([...drawn(container).classList]).toEqual(
+      expect.arrayContaining(["underline", "strikethrough"]),
+    );
     done();
   });
   it("a double underline and a double strike keep their kind, not the font's name (#96)", () => {
@@ -1058,21 +1092,34 @@ describe("a paragraph draws in its style's font: local first, then the bundled t
     [...container.querySelectorAll(".premirror-run")].find((r) => r.textContent.includes(text));
   it("an implicit Normal paragraph is Calibri, then Jubarte Page C", () => {
     const { container, done } = compose(doc("", "<!-- p0 -->\nPLAIN\n"));
-    expect(runOf(container, "PLAIN").style.font).toContain('"Calibri", "Jubarte Page C", sans-serif');
+    expect(runOf(container, "PLAIN").style.font).toContain(
+      '"Calibri", "Jubarte Page C", sans-serif',
+    );
     done();
   });
   it("a named style's family reaches its runs, with its twin behind it", () => {
     const { container, done } = compose(
-      doc("  Body: Arial 11pt\n  Legal: Times New Roman 12pt\n", "<!-- p0 Body -->\nSANS\n\n<!-- p1 Legal -->\nSERIF\n"),
+      doc(
+        "  Body: Arial 11pt\n  Legal: Times New Roman 12pt\n",
+        "<!-- p0 Body -->\nSANS\n\n<!-- p1 Legal -->\nSERIF\n",
+      ),
     );
-    expect(runOf(container, "SANS").style.font).toContain('"Arial", "Jubarte Page Sans", sans-serif');
-    expect(runOf(container, "SERIF").style.font).toContain('"Times New Roman", "Jubarte Page Serif", serif');
+    expect(runOf(container, "SANS").style.font).toContain(
+      '"Arial", "Jubarte Page Sans", sans-serif',
+    );
+    expect(runOf(container, "SERIF").style.font).toContain(
+      '"Times New Roman", "Jubarte Page Serif", serif',
+    );
     expect(container.innerHTML).not.toContain("Source Serif 4");
     done();
   });
   it("a family with no twin falls back by class and the card says so", () => {
-    const { container, composed, done } = compose(doc("  Body: Georgia 11pt\n", "<!-- p0 Body -->\nCLASSIC\n"));
-    expect(runOf(container, "CLASSIC").style.font).toContain('"Georgia", "Jubarte Page Serif", serif');
+    const { container, composed, done } = compose(
+      doc("  Body: Georgia 11pt\n", "<!-- p0 Body -->\nCLASSIC\n"),
+    );
+    expect(runOf(container, "CLASSIC").style.font).toContain(
+      '"Georgia", "Jubarte Page Serif", serif',
+    );
     expect(composed.warnings.join(" ")).toMatch(/Georgia/);
     done();
   });
@@ -1087,7 +1134,8 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
   const doc = (styles, body) =>
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${styles}---\n\n${body}`;
   const spacingOf = (composed, text) =>
-    composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs.spacing;
+    composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs
+      .spacing;
   it("a paragraph's own clause wins, its style fills the rest, and Normal the rest of that", () => {
     const { composed, done } = compose(
       doc(
@@ -1096,12 +1144,26 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
       ),
     );
     expect(spacingOf(composed, "PLAIN")).toEqual({
-      beforePt: 0, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "auto", multiple: 1.08 }, contextual: false,
+      beforePt: 0,
+      afterPt: 8,
+      beforeAuto: false,
+      afterAuto: false,
+      line: { rule: "auto", multiple: 1.08 },
+      contextual: false,
     });
     expect(spacingOf(composed, "STYLED")).toEqual({
-      beforePt: 12, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "exact", points: 18 }, contextual: true,
+      beforePt: 12,
+      afterPt: 8,
+      beforeAuto: false,
+      afterAuto: false,
+      line: { rule: "exact", points: 18 },
+      contextual: true,
     });
-    expect(spacingOf(composed, "OWN")).toMatchObject({ beforeAuto: true, afterPt: 0, line: { rule: "exact", points: 18 } });
+    expect(spacingOf(composed, "OWN")).toMatchObject({
+      beforeAuto: true,
+      afterPt: 0,
+      line: { rule: "exact", points: 18 },
+    });
     done();
   });
   it("a cell's paragraphs take their cell group's spacing over Normal's", () => {
@@ -1113,7 +1175,8 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
     ].join("\n");
     const { composed, done } = compose(doc("", `<!-- p0 -->\nLEAD\n\n${table}`));
     const cells = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells;
-    for (const cell of cells) expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
+    for (const cell of cells)
+      expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
     expect(spacingOf(composed, "LEAD").afterPt).toBe(8);
     done();
   });
@@ -1127,7 +1190,8 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
     for (const page of composed.layout.pages)
       for (const f of page.frames[0].fragments)
         for (const l of f.lines || [])
-          if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, y: l.y, advance: l.advance };
+          if (l.runs.some((r) => r.text?.includes(text)))
+            return { page: page.index, y: l.y, advance: l.advance };
     return null;
   };
   // Calibri 11pt at 1.08: hhea 1.2207 x 11 x 1.08 = 14.50pt (Word draws 14.40).
@@ -1142,7 +1206,8 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
   // A cell's line, at its page y.
   const cellTop = (composed, text) => {
     for (const f of composed.layout.pages[0].frames[0].fragments)
-      if (f.tableCell) for (const l of f.lines || []) if (l.runs.some((r) => r.text === text)) return l.y;
+      if (f.tableCell)
+        for (const l of f.lines || []) if (l.runs.some((r) => r.text === text)) return l.y;
     return null;
   };
   const rows = (style, legend = "") =>
@@ -1155,7 +1220,9 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
     const plain = compose(rows(", style TableNormal"));
     const loose = cellTop(plain.composed, "A2") - cellTop(plain.composed, "A1");
     plain.done();
-    const named = compose(rows(", style Ledger", "\n  tables: TableNormal, Ledger, cell paragraphs after 2pt line 1"));
+    const named = compose(
+      rows(", style Ledger", "\n  tables: TableNormal, Ledger, cell paragraphs after 2pt line 1"),
+    );
     const ledger = cellTop(named.composed, "A2") - cellTop(named.composed, "A1");
     named.done();
     // Rows step one single line, never Normal's 10pt after.
@@ -1165,7 +1232,9 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
   });
   it("the gap is the larger of space after and space before, not their sum", () => {
     const { composed, done } = compose(
-      doc("<!-- p0 after 36pt -->\nONE\n\n<!-- p1 before 18pt -->\nTWO\n\n<!-- p2 after 6pt -->\nTHREE\n\n<!-- p3 before 24pt -->\nFOUR\n"),
+      doc(
+        "<!-- p0 after 36pt -->\nONE\n\n<!-- p1 before 18pt -->\nTWO\n\n<!-- p2 after 6pt -->\nTHREE\n\n<!-- p3 before 24pt -->\nFOUR\n",
+      ),
     );
     expect(at(composed, "TWO").y - at(composed, "ONE").y).toBeCloseTo(NORMAL + 36 * PX, 2);
     expect(at(composed, "FOUR").y - at(composed, "THREE").y).toBeCloseTo(NORMAL + 24 * PX, 2);
@@ -1184,7 +1253,9 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
   });
   it("exact and at-least rules set the line, and auto spacing is 14pt", () => {
     const { composed, done } = compose(
-      doc("<!-- p0 line 18pt exact -->\nEXACT\n\n<!-- p1 line 40pt atLeast, after auto -->\nLEAST\n\n<!-- p2 -->\nNEXT\n"),
+      doc(
+        "<!-- p0 line 18pt exact -->\nEXACT\n\n<!-- p1 line 40pt atLeast, after auto -->\nLEAST\n\n<!-- p2 -->\nNEXT\n",
+      ),
     );
     expect(at(composed, "EXACT").advance).toBeCloseTo(18 * PX, 2);
     expect(at(composed, "LEAST").advance).toBeCloseTo(40 * PX, 2);
@@ -1219,7 +1290,9 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
   it("a paragraph that does not fit starts the next page at its top, without its space before", () => {
     // 24 Normal paragraphs take 720px of the 864px page; TOPPED needs 160px even without its 48px before.
     const fill = Array.from({ length: 24 }, (_, i) => `<!-- p${i} -->\nFILL${i}\n`).join("\n");
-    const { composed, done } = compose(doc(`${fill}\n<!-- p24 before 36pt, line 120pt exact -->\nTOPPED\n`));
+    const { composed, done } = compose(
+      doc(`${fill}\n<!-- p24 before 36pt, line 120pt exact -->\nTOPPED\n`),
+    );
     expect(at(composed, "FILL23").page).toBe(0);
     const topped = at(composed, "TOPPED");
     expect(topped.page).toBe(1);
@@ -1244,7 +1317,10 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
       [...container.querySelectorAll(".paged-line span")].find((e) => e.textContent === text);
     const ascent = 0.75 * 11 * PX;
     // Calibri: line gap 0.2207em, ascent 0.75em, glyph box 1em tall.
-    expect(parseFloat(span("AUTOLINE").style.top)).toBeCloseTo((0.220703 + 0.75) * 11 * PX - ascent, 2);
+    expect(parseFloat(span("AUTOLINE").style.top)).toBeCloseTo(
+      (0.220703 + 0.75) * 11 * PX - ascent,
+      2,
+    );
     expect(parseFloat(span("AUTOLINE").style.lineHeight)).toBeCloseTo(11 * PX, 2);
     expect(parseFloat(span("EXACTLINE").style.top)).toBeCloseTo(0.8 * 18 * PX - ascent, 2);
     done();
@@ -1280,7 +1356,9 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     done();
   });
   it("an unstyled table's rows are single lines with no space after: Word's Table Grid (#124)", () => {
-    const { composed, done } = compose(`${head()}<!-- t0 2x1, cells p0-p1 by row, p1-p1 after 4pt, width auto -->\n|GRID|\n|-|\n|OWN|\n`);
+    const { composed, done } = compose(
+      `${head()}<!-- t0 2x1, cells p0-p1 by row, p1-p1 after 4pt, width auto -->\n|GRID|\n|-|\n|OWN|\n`,
+    );
     const [grid, own] = rowsOf(composed);
     expect(grid).toBeCloseTo(SINGLE, 2);
     // A cell paragraph's own spacing still wins over the table style's.
@@ -1288,7 +1366,10 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     done();
   });
   it("lines inside a cell advance by Word's line height, not 29px", () => {
-    for (const [style, height] of [["", SINGLE], [", style TableNormal", NORMAL]]) {
+    for (const [style, height] of [
+      ["", SINGLE],
+      [", style TableNormal", NORMAL],
+    ]) {
       const { composed, done } = compose(
         `${head()}<!-- t0 1x1, cells p0-p1 by row, width auto${style} -->\n|CELL_ONE<br/>CELL_TWO|\n|-|\n`,
       );
@@ -1304,7 +1385,9 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     const { composed, done } = compose(
       `${head()}<!-- t0 2x2, cells t0.row0 p0-p2 t0.row1 p3-p4, p0-p4 before 0pt after 0pt line 2, width auto -->\n|A|B|\n|-|-|\n|C|D|\n`,
     );
-    const cell = composed.tableFragments[0].cells.find((c) => c.lines.some((l) => l.runs.some((r) => r.text === "D")));
+    const cell = composed.tableFragments[0].cells.find((c) =>
+      c.lines.some((l) => l.runs.some((r) => r.text === "D")),
+    );
     expect(cell.lines[0].advance).toBeCloseTo(2 * 1.220703 * 11 * PX, 2);
     expect(composed.diagnostics?.find?.((d) => /cells t0/.test(d.message ?? ""))).toBeUndefined();
     done();
@@ -1327,9 +1410,20 @@ describe("table rows and footnotes take Word's line heights (#102)", () => {
     const label = single.lines[0].y;
     expect(single.height - label).toBeCloseTo(NORMAL + 8 * PX, 2);
     one.done();
-    const two = compose(`${head()}<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: FIRST\n\n    SECOND\n`);
-    const lines = two.composed.footnoteFragments[0].lines.filter((l) => l.runs.some((r) => r.text?.trim()));
-    expect(lines.map((l) => l.runs.map((r) => r.text).join("").trim())).toEqual(["FIRST", "SECOND"]);
+    const two = compose(
+      `${head()}<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 -->\n[^1]: FIRST\n\n    SECOND\n`,
+    );
+    const lines = two.composed.footnoteFragments[0].lines.filter((l) =>
+      l.runs.some((r) => r.text?.trim()),
+    );
+    expect(
+      lines.map((l) =>
+        l.runs
+          .map((r) => r.text)
+          .join("")
+          .trim(),
+      ),
+    ).toEqual(["FIRST", "SECOND"]);
     expect(lines[1].y - lines[0].y).toBeCloseTo(NORMAL + 8 * PX, 2);
     two.done();
   });
@@ -1342,7 +1436,10 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
   beforeAll(async () => {
     ({ composeDocument } = await import("../reader/pagination.js"));
   });
-  const cellTexts = (out) => out.tableFragments.flatMap((f) => f.cells.flatMap((c) => c.lines.flatMap((l) => l.runs.map((r) => r.text))));
+  const cellTexts = (out) =>
+    out.tableFragments.flatMap((f) =>
+      f.cells.flatMap((c) => c.lines.flatMap((l) => l.runs.map((r) => r.text))),
+    );
   it("a cell line taller than the page takes a page and the table goes on", () => {
     const md = `${head}<!-- t0 2x1, cells p0-p1 by row, p0-p0 line 700pt exact, width auto -->\n|HUGE|\n|-|\n|AFTER|\n`;
     const out = composeDocument(parseJubarte(md));
@@ -1357,10 +1454,13 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
     expect(new Set(drawn).size).toBe(100);
     // A cut crosses no line, so no line hangs past the foot of its page's slice.
     for (const f of out.tableFragments)
-      for (const c of f.cells) for (const l of c.lines) expect(c.y + l.y + l.advance).toBeLessThanOrEqual(f.height + 0.01);
+      for (const c of f.cells)
+        for (const l of c.lines) expect(c.y + l.y + l.advance).toBeLessThanOrEqual(f.height + 0.01);
   });
   it("a footnote referenced from a table row is scheduled by that reference", () => {
-    const filler = Array.from({ length: 70 }, (_, i) => `<!-- p${i + 2} -->\nFILL${i}`).join("\n\n");
+    const filler = Array.from({ length: 70 }, (_, i) => `<!-- p${i + 2} -->\nFILL${i}`).join(
+      "\n\n",
+    );
     const md = `${head}<!-- t0 1x2, cells r0 p0 p1, p0-p0 line 15pt exact, p1-p1 line 22.5pt exact, width auto -->\n|A0<br/>A1|REFERENCE[^1]|\n|-|-|\n\n${filler}\n\n[^1]: NOTE\n`;
     const out = composeDocument(parseJubarte(md));
     expect(out.footnoteFragments[0].orphan).toBe(false);
@@ -1376,7 +1476,11 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
     const md = `${head}<!-- p0 line 450pt exact -->\nLEAD\n\n<!-- p1 line 150pt exact -->\n# HEADING\n\n<!-- t0 2x1, cells p2-p2 by row, p2-p2 line 67.5pt exact, merged t0.row0.cell0 down 2, width auto -->\n|CELL|\n|-|\n||\n`;
     const out = composeDocument(parseJubarte(md));
     const pageOf = (word) =>
-      out.layout.pages.find((p) => p.frames[0].fragments.some((f) => f.lines.some((l) => l.runs.some((r) => r.text.includes(word))))).index;
+      out.layout.pages.find((p) =>
+        p.frames[0].fragments.some((f) =>
+          f.lines.some((l) => l.runs.some((r) => r.text.includes(word))),
+        ),
+      ).index;
     expect(pageOf("HEADING")).toBe(pageOf("CELL"));
   });
 });
@@ -1388,14 +1492,17 @@ describe("pictures take their extent on the page (#95)", () => {
   const EMU = 9525;
   const drawing = (label, w, h, kind = "inline") =>
     `<!-- ${label} drawing:${Buffer.from(
-      JSON.stringify({ xml: `<w:drawing><wp:${kind}><wp:extent cx="${w * EMU}" cy="${h * EMU}"/></wp:${kind}></w:drawing>` }),
+      JSON.stringify({
+        xml: `<w:drawing><wp:${kind}><wp:extent cx="${w * EMU}" cy="${h * EMU}"/></wp:${kind}></w:drawing>`,
+      }),
     ).toString("base64url")} -->`;
   const doc = (body, defs) =>
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n---\n\n${body}\n${defs}\n`;
   const lineOf = (composed, text) => {
     for (const page of composed.layout.pages)
       for (const f of page.frames[0].fragments)
-        for (const l of f.lines || []) if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, ...l };
+        for (const l of f.lines || [])
+          if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, ...l };
     return null;
   };
   const PICTURE = (w, h, kind) =>
@@ -1409,7 +1516,12 @@ describe("pictures take their extent on the page (#95)", () => {
     const line = lineOf(composed, "PICALT");
     expect(line.advance).toBeCloseTo(200 + BELOW, 2);
     const run = line.runs.find((r) => r.picture);
-    expect(run.picture).toMatchObject({ id: "image1", mime: "image/png", drawWidth: 300, drawHeight: 200 });
+    expect(run.picture).toMatchObject({
+      id: "image1",
+      mime: "image/png",
+      drawWidth: 300,
+      drawHeight: 200,
+    });
     expect(run.top).toBeCloseTo(line.baseline - 200, 2);
     expect(lineOf(composed, "BELOW").y - line.y).toBeCloseTo(200 + BELOW + 8 * PX, 2);
     done();
@@ -1437,7 +1549,10 @@ describe("pictures take their extent on the page (#95)", () => {
     expect(lineOf(floating.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
     floating.done();
     const inText = compose(
-      doc("<!-- p0 -->\nWORDS ![PICALT][image1] MORE\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`),
+      doc(
+        "<!-- p0 -->\nWORDS ![PICALT][image1] MORE\n",
+        `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`,
+      ),
     );
     expect(lineOf(inText.composed, "PICALT").advance).toBeCloseTo(NORMAL, 2);
     expect(inText.container.querySelector(".paged-picture")).toBeNull();
@@ -1473,9 +1588,13 @@ describe("pictures take their extent on the page (#95)", () => {
     done();
   });
   it("pictures that do not fit one line wrap at their extents, as Word wraps characters (#122)", () => {
-    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 400, 200)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 400, 100)}`);
+    const md = doc(
+      "<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", 400, 200)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 400, 100)}`,
+    );
     const { composed, done } = compose(md);
-    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    const a = lineOf(composed, "PICA"),
+      b = lineOf(composed, "PICB");
     expect(a.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
     expect(b.runs.find((r) => r.picture).picture.drawWidth).toBe(400);
     expect(b.y).toBeGreaterThan(a.y);
@@ -1484,7 +1603,10 @@ describe("pictures take their extent on the page (#95)", () => {
     done();
   });
   it("a picture keeps its paragraph's first-line indent (#122)", () => {
-    const md = doc("<!-- p0 first-line 0.5in -->\n![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const md = doc(
+      "<!-- p0 first-line 0.5in -->\n![PICALT][image1]\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`,
+    );
     const { composed, done } = compose(md);
     expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).x).toBe(48);
     done();
@@ -1497,19 +1619,29 @@ describe("pictures take their extent on the page (#95)", () => {
     const run = line.runs.find((r) => r.picture);
     expect(run.picture.drawWidth / run.picture.drawHeight).toBeCloseTo(300 / 1500, 6);
     done();
-    const note = doc("<!-- p0 -->\nBODY[^1]\n\n[^1]: ![PICALT][image1]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}`);
+    const note = doc(
+      "<!-- p0 -->\nBODY[^1]\n\n[^1]: ![PICALT][image1]\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 1200)}`,
+    );
     expect(() => compose(note).done()).not.toThrow();
   });
   it("a picture with no drawing comment is drawn at its stand-in's raster size (#122)", () => {
     const md = doc("<!-- p0 -->\n![PICALT][image1]\n", "[image1]: <image/png, 2 KB, 40x30 px>");
     const { composed, done } = compose(md);
-    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).picture).toMatchObject({ drawWidth: 40, drawHeight: 30 });
+    expect(lineOf(composed, "PICALT").runs.find((r) => r.picture).picture).toMatchObject({
+      drawWidth: 40,
+      drawHeight: 30,
+    });
     done();
   });
   it("a picture too tall for the frame is scaled before it takes its room on the line (#125)", () => {
-    const md = doc("<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 100)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 1000, 10000)}`);
+    const md = doc(
+      "<!-- p0 -->\n![PICA][image1] ![PICB][image2]\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 100)}\n[image2]: <image/png, 2 KB>\n${drawing("image2", 1000, 10000)}`,
+    );
     const { composed, done } = compose(md);
-    const a = lineOf(composed, "PICA"), b = lineOf(composed, "PICB");
+    const a = lineOf(composed, "PICA"),
+      b = lineOf(composed, "PICB");
     expect(b.y).toBe(a.y);
     expect(composed.layout.pages.length).toBe(1);
     const tall = b.runs.find((r) => r.picture?.id === "image2").picture;
@@ -1523,7 +1655,8 @@ describe("pictures take their extent on the page (#95)", () => {
     view.done();
   });
   // Two sections: margins `a`in, then `b`in, the note's FIRST reference in the first.
-  const twoSections = (a, b, note, extra = "") => `---\nview: tracked\npage: Letter portrait, margins top ${a}in, right 1in, bottom ${a}in, left 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top ${b}in, right 1in, bottom ${b}in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left${extra}\n---\n\n<!-- p0 -->\nFIRST[^1]\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 400)}\n`;
+  const twoSections = (a, b, note, extra = "") =>
+    `---\nview: tracked\npage: Letter portrait, margins top ${a}in, right 1in, bottom ${a}in, left 1in\nsections:\n  2: {p2-p2, page: Letter portrait, margins top ${b}in, right 1in, bottom ${b}in, left 1in}\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left${extra}\n---\n\n<!-- p0 -->\nFIRST[^1]\n\n<!-- p1 section-break -->\n\n<!-- p2 -->\nSECOND\n\n<!-- footnotes.p0 -->\n[^1]: ${note}\n\n[image1]: <image/png, 2 KB>\n${drawing("image1", 100, 400)}\n`;
   const words = Array.from({ length: 900 }, (_, i) => `N${String(i).padStart(4, "0")}`).join(" ");
   it("a picture line already drawn leaves the continued label its room in a shorter frame (#126)", () => {
     const { composed, done } = compose(twoSections(1, 4, `![PIC][image1]\n\n    ${words}`));
@@ -1535,13 +1668,20 @@ describe("pictures take their extent on the page (#95)", () => {
     done();
   });
   it("a rewrap keeps a later note paragraph's first-line indent (#126)", () => {
-    const { composed, done } = compose(twoSections(1, 3, `${words}\n\n    LATERPARAGRAPH`, ", first-line 0.5in"));
-    const run = composed.footnoteFragments.flatMap((f) => f.lines.flatMap((l) => l.runs)).find((r) => r.text.includes("LATERPARAGRAPH"));
+    const { composed, done } = compose(
+      twoSections(1, 3, `${words}\n\n    LATERPARAGRAPH`, ", first-line 0.5in"),
+    );
+    const run = composed.footnoteFragments
+      .flatMap((f) => f.lines.flatMap((l) => l.runs))
+      .find((r) => r.text.includes("LATERPARAGRAPH"));
     expect(run.x).toBe(48);
     done();
   });
   it("a commented picture still opens its discussion by mouse and keyboard (#122)", () => {
-    const md = doc("<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n", `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`);
+    const md = doc(
+      "<!-- p0 -->\n{==![PICALT][image1]==}{>>c0 @J: Review this picture<<}\n",
+      `[image1]: <image/png, 2 KB>\n${drawing("image1", 300, 200)}`,
+    );
     const { container, done } = compose(md);
     const box = container.querySelector(".paged-picture");
     expect(box.getAttribute("role")).toBe("button");
