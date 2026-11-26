@@ -1965,6 +1965,14 @@ fn c44_adopted_theme_refreshes_live_colors_without_recoloring_history() {
         let (dom, root) = parse(&part(&accept_revisions(&out).unwrap(), "word/styles.xml"));
         let rpr = child(&dom, style(&dom, root, "Tint").unwrap(), "rPr").unwrap();
         assert_eq!(val(&dom, child(&dom, rpr, "color")), "00FF00");
+
+        let (dom, root) = parse(&part(&reject_revisions(&out).unwrap(), "word/styles.xml"));
+        let rpr = child(&dom, style(&dom, root, "Tint").unwrap(), "rPr").unwrap();
+        assert_eq!(
+            val(&dom, child(&dom, rpr, "color")),
+            "FF0000",
+            "Reject restores the original's live color"
+        );
     }
 }
 
@@ -1975,6 +1983,12 @@ fn c48_compat_container_without_mode_gets_mode_12() {
         for (source, expected) in [
             (format!("<w:compat>{extra}</w:compat>"), "12"),
             (compat(14, extra), "14"),
+            (
+                format!(
+                    r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://example.invalid" w:val="14"/>{extra}</w:compat>"#
+                ),
+                "14",
+            ),
         ] {
             let revised = settings_document("Shared text", &source);
             let out = redline(&original, &revised, CompareMode::WordWindows);
@@ -2031,6 +2045,64 @@ fn c52_adoption_writes_the_active_output_parts() {
     assert_eq!(val(&dom, child(&dom, root, "defaultTabStop")), "360");
     assert_eq!(
         doc_defaults(&part(&out, &related_document_part(&out, STYLES_REL))),
+        ("36".into(), "0".into())
+    );
+}
+
+/// The review's residual C52 combination: both packages keep their active
+/// settings and stylesheet under non-conventional names, so both the output
+/// and the revised lookups have to follow relationships rather than the
+/// conventional parts.
+#[test]
+fn c52_adoption_writes_the_active_output_parts_when_both_sides_rename_them() {
+    let original_settings_xml = settings(r#"<w:defaultTabStop w:val="720"/>"#);
+    let original_styles_xml = styles(Some((22, 160)));
+    let original = docx::docx_with(
+        &docx::para("Shared text"),
+        &[
+            Part {
+                name: "word/layout.xml",
+                content_type: SETTINGS_CT,
+                rel_type: SETTINGS_REL,
+                xml: &original_settings_xml,
+            },
+            Part {
+                name: "word/formatting.xml",
+                content_type: STYLES,
+                rel_type: STYLES_REL,
+                xml: &original_styles_xml,
+            },
+        ],
+    );
+    let revised_settings_xml = settings(r#"<w:defaultTabStop w:val="360"/>"#);
+    let revised_styles_xml = styles(Some((36, 0)));
+    let revised = docx::docx_with(
+        &docx::para("Shared text"),
+        &[
+            Part {
+                name: "word/revised-layout.xml",
+                content_type: SETTINGS_CT,
+                rel_type: SETTINGS_REL,
+                xml: &revised_settings_xml,
+            },
+            Part {
+                name: "word/revised-formatting.xml",
+                content_type: STYLES,
+                rel_type: STYLES_REL,
+                xml: &revised_styles_xml,
+            },
+        ],
+    );
+
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let settings_part = related_document_part(&out, SETTINGS_REL);
+    let styles_part = related_document_part(&out, STYLES_REL);
+    assert_eq!(settings_part, "word/layout.xml");
+    assert_eq!(styles_part, "word/formatting.xml");
+    let (dom, root) = parse(&part(&out, &settings_part));
+    assert_eq!(val(&dom, child(&dom, root, "defaultTabStop")), "360");
+    assert_eq!(
+        doc_defaults(&part(&out, &styles_part)),
         ("36".into(), "0".into())
     );
 }

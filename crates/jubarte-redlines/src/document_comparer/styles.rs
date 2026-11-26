@@ -1892,11 +1892,17 @@ pub(super) fn merge_revised_style_definitions(
     };
     let out_by_id = index_by_id(dom, out_root);
     let b_by_id = index_by_id(dom, b_root);
-    // A base can be revised earlier in this loop. Windows' new inheritance
-    // records must compare and preserve the original chain, not that live one.
-    let original_root =
-        (settings.word_platform == WordPlatform::Windows).then(|| dom.clone_subtree(out_root));
-    let original_ids = original_root.map(|root| index_by_id(dom, root));
+
+    fn base_key(
+        dom: &Dom,
+        style: NodeId,
+        ids: &std::collections::HashMap<String, NodeId>,
+    ) -> Option<(String, String)> {
+        dom.element(style, &W::name("basedOn"))
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|id| ids.get(id))
+            .and_then(|&base| style_match_key(dom, base))
+    }
 
     let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
         std::collections::HashMap::new();
@@ -1905,6 +1911,29 @@ pub(super) fn merge_revised_style_definitions(
             b_by_key.entry(k).or_insert(s);
         }
     }
+
+    // A base can be revised earlier in this loop. Windows' new inheritance
+    // records must compare and preserve the original chain, not that live one.
+    // Take the snapshot only when the loop can reach that branch: an eager
+    // clone paid for every Windows compare, though no style changes `basedOn`
+    // in the common case. The predicate runs before any style is mutated, so
+    // the snapshot still holds the untouched tree.
+    let needs_original = settings.word_platform == WordPlatform::Windows
+        && dom
+            .elements(out_root, Some(&style_nm))
+            .into_iter()
+            .any(|style| {
+                Some(style) != normal_out
+                    && style_match_key(dom, style).is_some_and(|key| {
+                        b_by_key.get(&key).is_some_and(|&b_style| {
+                            Some(b_style) != normal_b
+                                && base_key(dom, style, &out_by_id)
+                                    != base_key(dom, b_style, &b_by_id)
+                        })
+                    })
+            });
+    let original_root = needs_original.then(|| dom.clone_subtree(out_root));
+    let original_ids = original_root.map(|root| index_by_id(dom, root));
 
     let mut changed = false;
     for style in dom.elements(out_root, Some(&style_nm)) {
@@ -1928,14 +1957,8 @@ pub(super) fn merge_revised_style_definitions(
             let b_declared = declared_props_signature(dom, b_style, local);
             // Windows adopts B's basedOn later. Equal declared properties
             // do not imply equal formatting when that inheritance changes.
-            let base_key = |s, ids: &std::collections::HashMap<String, NodeId>| {
-                dom.element(s, &W::name("basedOn"))
-                    .and_then(|b| dom.attribute(b, &W::val()))
-                    .and_then(|id| ids.get(id))
-                    .and_then(|&base| style_match_key(dom, base))
-            };
             let changed_base = settings.word_platform == WordPlatform::Windows
-                && base_key(style, &out_by_id) != base_key(b_style, &b_by_id);
+                && base_key(dom, style, &out_by_id) != base_key(dom, b_style, &b_by_id);
             if a_declared == b_declared && !changed_base {
                 continue;
             }
@@ -3361,13 +3384,14 @@ fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs, out_main: &str, revis
             .map(|(_, element)| element);
         if local == "compat" {
             let compat = source.unwrap_or_else(|| default_compat(&mut dom));
+            // The name is what makes a setting the mode setting. A malformed
+            // uri does not turn it into a missing mode: writing a second one
+            // would leave two compatibilityMode settings in the output.
             let has_mode = dom
                 .elements(compat, Some(&W::name("compatSetting")))
                 .into_iter()
                 .any(|setting| {
                     dom.attribute(setting, &W::name("name")) == Some("compatibilityMode")
-                        && dom.attribute(setting, &W::name("uri"))
-                            == Some("http://schemas.microsoft.com/office/word")
                 });
             if !has_mode {
                 let defaults = default_compat(&mut dom);
