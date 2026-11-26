@@ -37,6 +37,14 @@ written deletion first, then insertion, inside a paragraph and between the
 paragraphs of a replaced block (#2550), where Mac Word 16 writes the
 insertion first.
 
+arthrod/jubarte#156 adds three more, all in the alignment: a heading and
+the table under it that a deleted gap precedes stay `Equal` (the skip-ahead
+promotion stays off for them, since a run of `Equal` sequences cannot have
+relocated), and where they are not common by hash, the whole blocks that
+end a replaced region and read the same (a table, cell for cell) pair
+before Step H zips the region in order; the move pass's expansion drop
+also keeps candidates that are all relocations.
+
 The other fields are public for existing struct-update callers:
 `detect_moves`, `move_similarity_threshold` (0.9) and
 `move_minimum_word_count` (6) for moves; `detect_format_changes` (on) for

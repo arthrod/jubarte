@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Same-slot word pairing and `find_common_at_beginning_and_end`.
+//! Same-slot word pairing, `find_common_at_beginning_and_end`, and the
+//! blocks that end a region and read the same under Windows Word (arthrod/jubarte#156).
 
 use super::*;
+use crate::comparer::atoms::ComparisonUnitGroup;
 
 /// English closed-class words: shared scaffolding ("with", "this"), not
 /// evidence that two paragraphs correspond (docxodus `FunctionWords`).
@@ -317,5 +319,116 @@ pub fn find_common_at_beginning_and_end(
         cul1[n1 - cce..].to_vec(),
         cul2[n2 - cce..].to_vec(),
     ));
+    Some(out)
+}
+
+/// The `w:t` text of a unit, in document order.
+fn unit_text(dom: &Dom, u: &ComparisonUnit) -> String {
+    let mut text = String::new();
+    u.try_for_each_atom(&mut |a| {
+        if dom.name_is(a.content_element, &W::t()) {
+            text.push_str(&dom.value_str(a.content_element));
+        }
+        true
+    });
+    text
+}
+
+/// How a table reads: the text of each of its cells, row by row.
+fn table_text(dom: &Dom, table: &ComparisonUnitGroup) -> Vec<Vec<String>> {
+    table
+        .contents
+        .iter()
+        .filter_map(as_group)
+        .map(|row| {
+            row.contents
+                .iter()
+                .map(|cell| unit_text(dom, cell))
+                .collect()
+        })
+        .collect()
+}
+
+/// Two whole blocks of one kind — paragraphs, or tables — that hold text
+/// and read the same, and are not common by hash: what
+/// [`find_common_at_beginning_and_end`] cannot see.
+///
+/// A paragraph reads as its text. A table reads as its rows and cells, each
+/// cell's text where it sits: `["Tax", " rate12%"]` and `["Tax rate", "12%"]`
+/// hold the same text once it runs together. Matched that way, a trailing
+/// table came off the end of a region in place of the table the revision
+/// had edited, which then came out deleted whole (the review of #162).
+fn same_block_by_text(dom: &Dom, a: &ComparisonUnit, b: &ComparisonUnit) -> bool {
+    let (ComparisonUnit::Group(ga), ComparisonUnit::Group(gb)) = (a, b) else {
+        return false;
+    };
+    if ga.group_type != gb.group_type || a.sha1() == b.sha1() || !unit_has_text_token(dom, a) {
+        return false;
+    }
+    match ga.group_type {
+        ComparisonUnitGroupType::Paragraph => unit_text(dom, a) == unit_text(dom, b),
+        ComparisonUnitGroupType::Table => table_text(dom, ga) == table_text(dom, gb),
+        _ => false,
+    }
+}
+
+/// arthrod/jubarte#156 — the whole paragraphs and tables that end a
+/// replaced region and read the same in both documents, for Windows Word.
+///
+/// [`find_common_at_beginning_and_end`] pairs what ends the region and is
+/// common by hash. Windows Word's compare of broken_ones_two file_8 →
+/// file_9 keeps the capability matrix after the cut executive-summary
+/// block, and the heading over it, unmarked, and neither pair is common
+/// by hash: the two headings differ by a comment anchor, the two matrices
+/// by their grid column widths. With nothing common by hash, Step H then
+/// pairs the region in order, the original's callout table with the
+/// revision's matrix, and the heading and matrix come out deleted and
+/// inserted, which the move pass pairs into a second matrix. So, under
+/// [`WordPlatform::Windows`], whole paragraphs and tables that end the
+/// region, hold text and read the same come off its end as pairs of their
+/// own, in document order after the rest, each for the resolvers that
+/// follow. A table reads the same as another when its rows and cells do,
+/// cell for cell ([`same_block_by_text`]). A block without text reads the
+/// same as any other empty one, so it stays in the region for the pilcrow
+/// logic to judge.
+///
+/// Returns `None` when nothing comes off, or when the region is that one
+/// pair: then it is the next resolver's, as it was.
+pub(super) fn find_common_end_by_text(
+    dom: &Dom,
+    unknown: &CorrelatedSequence,
+    settings: &WmlComparerSettings,
+) -> Option<Vec<CorrelatedSequence>> {
+    if !settings.merge_replaced_paragraphs || settings.word_platform != WordPlatform::Windows {
+        return None;
+    }
+    let cul1 = unknown.com_units_1.as_deref().unwrap_or(&[]);
+    let cul2 = unknown.com_units_2.as_deref().unwrap_or(&[]);
+    let (n1, n2) = (cul1.len(), cul2.len());
+    if n1 == 1 && n2 == 1 {
+        return None;
+    }
+    let mut common = 0;
+    while common < n1.min(n2)
+        && same_block_by_text(dom, &cul1[n1 - 1 - common], &cul2[n2 - 1 - common])
+    {
+        common += 1;
+    }
+    if common == 0 {
+        return None;
+    }
+    let mut out = Vec::new();
+    cascade(
+        cul1[..n1 - common].to_vec(),
+        cul2[..n2 - common].to_vec(),
+        &mut out,
+    );
+    for k in 0..common {
+        out.push(CorrelatedSequence::paired(
+            CorrelationStatus::Unknown,
+            vec![cul1[n1 - common + k].clone()],
+            vec![cul2[n2 - common + k].clone()],
+        ));
+    }
     Some(out)
 }
