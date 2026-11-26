@@ -313,7 +313,23 @@ export function parseTableLegend(raw) {
 /** Port of view_styles.rs::unquote. A YAML scalar as the legend prints it: plain, or a JSON string. */
 function unquote(value) {
   if (value.startsWith('"')) {
-    try { return JSON.parse(value); } catch { return null; }
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'string' && !hasLoneSurrogate(parsed) ? parsed : null;
+    } catch { return null; }
+/** True when a string holds an unpaired UTF-16 surrogate, which serde_json refuses. */
+function hasLoneSurrogate(value) {
+  for (let at = 0; at < value.length; at++) {
+    const unit = value.charCodeAt(at);
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const next = value.charCodeAt(at + 1);
+      if (!(next >= 0xDC00 && next <= 0xDFFF)) return true;
+      at++;
+    } else if (unit >= 0xDC00 && unit <= 0xDFFF) return true;
+  }
+  return false;
+}
+
   }
   return value;
 }
@@ -322,6 +338,43 @@ function unquote(value) {
 function takeClause(value) {
   let quoted = false;
   let escaped = false;
+/** Port of view_styles.rs::without_comment: only two or more spaces make `#` a comment. */
+function withoutComment(line) {
+  let quoted = false;
+  let escaped = false;
+  let spaces = 0;
+  for (let at = 0; at < line.length; at++) {
+    const c = line[at];
+    if (escaped) escaped = false;
+    else if (quoted && c === '\\') escaped = true;
+    else if (c === '"') quoted = !quoted;
+    else if (c === '#' && spaces >= 2 && !quoted) return line.slice(0, at);
+    spaces = c === ' ' ? spaces + 1 : 0;
+  }
+  return line;
+}
+
+/**
+ * Port of view_styles.rs::legend_line. The `tables:`/`table:` value is read
+ * from the raw YAML line, not from YAML.parse's scalar: ` #FF0000` has only
+ * one preceding space, so Rust reads it as a colour, not a comment.
+ */
+function legendLineFromYaml(yaml, key) {
+  let inside = false;
+  for (const line of String(yaml ?? '').split(/\r?\n/)) {
+    if (!line.startsWith(' ')) {
+      inside = rustTrimEnd(line) === 'styles:';
+      continue;
+    }
+    if (!inside) continue;
+    const value = rustTrim(withoutComment(line));
+    if (!value.startsWith(key)) continue;
+    const read = unquote(rustTrim(value.slice(key.length)));
+    if (read !== null) return read;
+  }
+  return null;
+}
+
   for (let i = 0; i < value.length; i++) {
     const c = value[i];
     if (escaped) escaped = false;
@@ -598,7 +651,7 @@ function readAuthors(raw, yamlDocument, warnings) {
   }));
 }
 
-function normalizeMetadata(data, yamlDocument, options, warnings, agentView) {
+function normalizeMetadata(data, yamlDocument, options, warnings, agentView, yamlText) {
   const source = typeof data.source === 'string' ? data.source : null;
   const authorDetails = readAuthors(data.authors, yamlDocument, warnings);
   const eligibleAuthors = Object.values(authorDetails).filter(author => !author.documentOwner);
@@ -753,7 +806,7 @@ export function parseDocumentMetadata(source, options = {}) {
   const parsedFrontmatter = frontmatterAtStart(source, warnings);
   const data = parsedFrontmatter?.valid ? parsedFrontmatter.data : {};
   const agentView = !!parsedFrontmatter?.valid && own(data, 'view');
-  const metadata = normalizeMetadata(data, parsedFrontmatter?.document, options, warnings, agentView);
+  const metadata = normalizeMetadata(data, parsedFrontmatter?.document, options, warnings, agentView, parsedFrontmatter?.yaml);
   let body = parsedFrontmatter?.valid ? blank(parsedFrontmatter.raw) + source.slice(parsedFrontmatter.range.end) : source;
   const directives = [];
   if (agentView) {
