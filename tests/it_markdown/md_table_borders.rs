@@ -985,3 +985,74 @@ fn a_table_style_carries_the_spacing_it_gives_cell_paragraphs() {
     );
     assert_eq!(second, first);
 }
+
+/// Integration watchdog: a malformed style graph must not hang DOCX reading.
+#[test]
+fn review128_spacing_free_style_cycles_terminate() {
+    let (send, receive) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for (parent, extra) in [
+            ("Ledger", String::new()),
+            ("Parent", r#"<w:style w:type="table" w:styleId="Parent"><w:basedOn w:val="Ledger"/></w:style>"#.to_string()),
+            ("Parent", r#"<w:style w:type="table" w:styleId="Parent"><w:pPr><w:spacing w:after="120"/></w:pPr></w:style>"#.to_string()),
+        ] {
+            let styles = format!(
+                r#"<w:styles xmlns:w="{}"><w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/><w:basedOn w:val="{parent}"/></w:style>{extra}</w:styles>"#,
+                jubarte::namespaces::W::URI
+            );
+            let parts = [common::docx::Part {
+                name: "word/styles.xml",
+                content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+                xml: &styles,
+            }];
+            let output = view(&common::docx::docx_with(&table(r#"<w:tblStyle w:val="Ledger"/>"#), &parts));
+            assert!(output.contains("Ledger"), "{output}");
+            assert_eq!(output.contains("cell paragraphs after 6pt"), extra.contains("w:spacing"), "{output}");
+        }
+        send.send(()).unwrap();
+    });
+    assert!(
+        receive
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .is_ok(),
+        "table style traversal must finish, including spacing-free cycles"
+    );
+}
+
+#[test]
+fn review128_duplicate_spacing_attributes_are_not_serialized() {
+    for clause in [
+        "after 0pt after 6pt",
+        "before auto before auto",
+        "after 1 lines after 2 lines",
+        "line 1 line 12pt exact",
+        "after 6pt after 1.5 lines",
+    ] {
+        let markdown = format!(
+            "---\nview: tracked\nstyles:\n  table: Custom, cell paragraphs {clause}\n---\n\n| A |\n|---|\n"
+        );
+        let bytes = markdown_to_docx(&markdown, &DocxOptions::default())
+            .expect("view writes")
+            .docx;
+        let styles = part(&bytes, "word/styles.xml");
+        let mut reader = quick_xml::Reader::from_str(&styles);
+        loop {
+            match reader.read_event().expect("well-formed styles XML") {
+                quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
+                    for attr in e.attributes() {
+                        assert!(attr.is_ok(), "duplicate attribute for {clause}: {attr:?}");
+                    }
+                }
+                quick_xml::events::Event::Eof => break,
+                _ => {}
+            }
+        }
+        if clause == "after 6pt after 1.5 lines" {
+            assert!(
+                styles.contains(r#"w:after="120" w:afterLines="150""#),
+                "distinct attributes remain valid: {styles}"
+            );
+        }
+    }
+}

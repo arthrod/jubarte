@@ -733,9 +733,22 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
 fn cell_spacing_attrs(words: &str) -> Option<String> {
     let words: Vec<&str> = words.split_whitespace().collect();
     let mut attrs = String::new();
+    let mut assigned = std::collections::HashSet::new();
     let mut at = 0;
     while at < words.len() {
         let value = *words.get(at + 1)?;
+        // Different units set distinct attributes; repeating the same one
+        // would serialize malformed XML. Reject that entire clause.
+        let attribute = match (words[at], value, words.get(at + 2)) {
+            (side @ ("before" | "after"), "auto", _) => (side, "Autospacing"),
+            (side @ ("before" | "after"), _, Some(&"lines")) => (side, "Lines"),
+            (side @ ("before" | "after"), _, _) => (side, ""),
+            ("line", _, _) => ("line", ""),
+            _ => return None,
+        };
+        if !assigned.insert(attribute) {
+            return None;
+        }
         match words[at] {
             side @ ("before" | "after") if value == "auto" => {
                 let _ = write!(attrs, " w:{side}Autospacing=\"1\"");

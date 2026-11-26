@@ -1145,9 +1145,10 @@ fn cell_paragraph_spacing(styles: &Element, id: &str) -> Option<String> {
     ];
     let chain = |start: Option<String>| {
         let mut out: Vec<&Element> = Vec::new();
+        let mut visited = HashSet::new();
         let mut current = start;
         while let Some(sid) = current.take() {
-            if out.len() > 16 {
+            if !visited.insert(sid.clone()) {
                 break;
             }
             let Some(style) = style_by_id(styles, &sid) else {
