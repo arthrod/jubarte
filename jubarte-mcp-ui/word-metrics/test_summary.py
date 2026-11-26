@@ -164,3 +164,109 @@ def test_multiline_table_cells_merge_in_visual_order(summarize):
         ]
     )
     assert "pitch  14.00 (lines 3, spread 0.0)" in output
+
+
+def test_pages_are_sorted_even_when_extracted_out_of_order():
+    from summary import group_paragraphs
+
+    grouped = group_paragraphs([box("S02", 100, page=2), box("S01", 100, page=1)])
+    assert [(p["label"], p["page"]) for p in grouped] == [("S01", 1), ("S02", 2)]
+
+
+def test_oversized_last_box_keeps_clean_pitch():
+    from summary import line_metrics
+
+    assert line_metrics([box("l1", 100), box("l2", 114.4), box("l3", 128.8), box("BIG", 140, bottom=170)]) == (
+        4,
+        14.4,
+        0.0,
+        "3 clean lines; 1 box excluded",
+    )
+
+
+def test_superscript_alone_leaves_too_few_clean_lines():
+    from summary import line_metrics
+
+    assert line_metrics([box("text", 100, right=150), box("1", 96, left=152, right=158, bottom=103)]) == (
+        1,
+        None,
+        None,
+        "mixed-size boxes; 1 clean line; 1 box excluded",
+    )
+
+
+def test_superscript_does_not_discard_normal_line_pitch(summarize):
+    output = summarize(
+        [
+            box("S01 text", 100, right=150),
+            box("1", 96, left=152, right=158, bottom=103),
+            box("next line", 114.4),
+        ]
+    )
+    assert "pitch  14.40 (lines 2, spread 0.0; 2 clean lines; 1 box excluded)" in output
+
+
+def test_excluded_middle_line_does_not_create_double_pitch():
+    from summary import line_metrics
+
+    assert line_metrics([box("l1", 100), box("BIG", 114.4, bottom=144.4), box("l3", 128.8), box("l4", 143.2)]) == (
+        4,
+        14.4,
+        0.0,
+        "3 clean lines; 1 box excluded",
+    )
+
+
+def test_closest_baseline_wins_when_two_visual_lines_overlap():
+    import summary
+
+    # A and B share horizontal space, so they are distinct lines. C could
+    # join either; its bottom (a baseline proxy) is nearer B's.
+    grouped = summary.visual_lines(
+        [
+            box("A", 100, right=150),
+            box("B", 104, left=100, right=380),
+            box("C", 106, left=400, right=500),
+        ]
+    )
+    assert [[b["text"] for b in line["boxes"]] for line in grouped] == [["A"], ["B", "C"]]
+
+
+def test_review_abc_chain_still_has_no_bogus_pitch():
+    from summary import line_metrics
+
+    assert line_metrics(
+        [
+            box("A", 100, right=150),
+            box("B", 104, left=300, right=380),
+            box("C", 106, left=400, right=500),
+        ]
+    ) == (1, None, None, "mixed-size boxes; 0 clean lines; 3 boxes excluded")
+
+
+@pytest.mark.parametrize("pitch", [10.0, 14.4])
+def test_two_columns_preserve_rows_with_closest_merge(pitch):
+    from summary import line_metrics
+
+    assert line_metrics(
+        [
+            box("left top", 100, right=150),
+            box("left bottom", 100 + pitch, right=150),
+            box("right top", 100, left=300, right=380),
+            box("right bottom", 100 + pitch, left=300, right=380),
+        ]
+    ) == (2, pitch, 0.0, None)
+
+
+@pytest.mark.parametrize("delta, count", [(0.4, 1), (0.5, 1), (0.6, 2), (-0.4, 1)])
+@pytest.mark.parametrize("top", [100.24, 100.25])
+def test_table_row_tolerance_across_rounded_keys(delta, count, top):
+    from summary import group_paragraphs
+
+    assert len(group_paragraphs([box("T01", top), box("T01", top + delta)])) == count
+
+
+def test_non_table_labels_are_not_coalesced():
+    from summary import group_paragraphs
+
+    assert len(group_paragraphs([box("S01", 100), box("S01", 100)])) == 2

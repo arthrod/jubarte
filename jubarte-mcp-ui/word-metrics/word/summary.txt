@@ -139,14 +139,14 @@ L-times-14-atleast20     page 4 top  236.72  gap  86.40  pitch  19.92 (lines 4, 
 L-times-14-atleast8      page 4 top  325.04  gap  88.32  pitch  16.08 (lines 4, spread 0.0)
 ## mixed_byword.pdf
 M00                      page 1 top   72.05  pitch  14.40 (lines 2, spread 0.0)
-M01                      page 1 top  109.73  gap  37.68  pitch n/a (invalid: mixed-size boxes; lines 2)
+M01                      page 1 top  109.73  gap  37.68  pitch n/a (invalid: mixed-size boxes; 1 clean line; 2 boxes excluded; lines 2)
 M02                      page 1 top  141.89  gap  32.16  pitch  14.40 (lines 2, spread 0.0)
 M03                      page 1 top  170.73  gap  28.84  pitch  14.60 (lines 2, spread 0.0)
 ## overtall_byword.pdf
 O00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)
 O01                      page 2 top  621.65  pitch n/a (lines 1; no within-page interval)
 O02                      page 3 top   72.05  pitch n/a (lines 1; no within-page interval)
-O03                      page 4 top  727.97  pitch n/a (invalid: mixed-size boxes; lines 1)
+O03                      page 4 top  727.97  pitch n/a (invalid: mixed-size boxes; 0 clean lines; 2 boxes excluded; lines 1)
 O04                      page 5 top   72.05  pitch n/a (lines 1; no within-page interval)
 ## pagetop_byword.pdf
 F00                      page 1 top   72.05  pitch n/a (lines 1; no within-page interval)

@@ -73,11 +73,17 @@ Word's own noise is 0.24pt: identical paragraph pairs sit 14.40pt or 14.64pt apa
 The summary retains continuation lines across pages and measures pitch only
 between lines on the same page. Table cells with the same label, page and row
 top are reported together, in page order. Horizontally separate, vertically
-overlapping boxes are grouped as one visual line. These PDF boxes do not give
-true baselines: mixed-size boxes (including M01 and the overtall O03 glyph) and
-non-increasing line tops are marked invalid, with no numeric pitch. A paragraph
-without a within-page line interval has no pitch either. Line counts include
-continuations on all pages.
+overlapping boxes are grouped as one visual line, choosing the closest original
+box bottom when more than one line overlaps. PDF boxes do not give true
+baselines. Raised, smaller fragments (such as superscript footnote markers) are
+excluded before measuring the line; a taller or shifted fragment makes its
+whole visual line ambiguous. Lines matching the median retained box height
+(within 0.5pt) supply the pitch. Reports count excluded boxes and clean lines.
+Only adjacent clean lines on the same page supply intervals: an excluded line
+cannot turn a two-line distance into a bogus pitch. M01 and the overtall O03
+glyph still have too few clean lines and are marked invalid, as are
+non-increasing line tops. A paragraph without a within-page interval has no
+pitch either. Total line counts include continuations on all pages.
 
 ## Page counts
 
