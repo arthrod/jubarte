@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {fontBox} from './line-box.mjs';
 import {composeLayout,NO_LINE_START,NO_LINE_END} from '@premirror/composer';
 import {createFootnoteAllocator,flattenLayoutBlocks} from './footnote-layout.js';
 
@@ -159,7 +160,7 @@ export function composeWithTables(snapshot,runtime,input){
    // the right margin (#93). A manual break ends a block, so the line before it stays as set.
    // Right-to-left lines keep their alignment.
    const justified=(line,i)=>{if(align!=='justify'||bidi||i===lines.length-1)return line;const extra=alignShift(line,inner,false);const last=line.runs.findLastIndex(r=>r.text?.trim());const spaces=line.runs.map((r,k)=>k>last?0:((k===last?r.text.replace(/[ \u00a0]+$/,''):r.text).match(/[ \u00a0]/g)||[]).length);const total=spaces.reduce((a,b)=>a+b,0);if(!total||extra<=0)return line;const add=extra/total;let before=0;return {...line,runs:line.runs.map((r,k)=>{const moved={...r,x:r.x+add*before,wordSpacing:add,width:(r.width||0)+add*spaces[k]};before+=spaces[k];return moved;})};};
-   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;const advance=block.attrs?.lineBox?.advance??lh;result.push({...line,y:at,height:advance,advance,ascent:block.attrs?.lineBox?.ascent,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});at+=advance;});
+   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;const advance=block.attrs?.lineBox?.advance??lh;const baseline=block.attrs?.lineBox?.baseline;result.push({...line,y:at,height:advance,advance,ascent:block.attrs?.lineBox?.ascent,baseline,runs:line.runs.map(run=>{const glyphs=baseline==null?null:fontBox(run.font);return {...run,x:run.x+indent+shift,...(glyphs?{top:baseline-glyphs.ascent,boxHeight:glyphs.ascent+glyphs.descent}:{})};})});at+=advance;});
   }
   lineCache.set(key,result);return result;
  }

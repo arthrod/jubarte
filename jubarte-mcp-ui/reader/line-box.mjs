@@ -22,7 +22,7 @@ import { faceFor } from "./faces.mjs";
  * @param {number} sizePt the font size, in points
  * @param {{line?: number, rule?: "auto"|"exact"|"atLeast"}} [spacing] w:spacing's
  *   line (in 240ths of a line for auto, twentieths of a point otherwise) and lineRule
- * @returns {{ascent: number, descent: number, height: number}} in points
+ * @returns {{ascent: number, descent: number, height: number, baseline: number}} in points
  */
 export function lineBox(family, sizePt, { line, rule = "auto" } = {}) {
   const face = metrics[faceFor(family).bundled];
@@ -35,5 +35,31 @@ export function lineBox(family, sizePt, { line, rule = "auto" } = {}) {
     else if (rule === "atLeast") height = Math.max(line / 20, single);
     else height = (single * line) / 240;
   }
-  return { ascent, descent, height };
+  // Where the baseline sits, from the top of the line (#102, 4c): an auto multiple's extra space
+  // goes below the text, at least puts it above, and exact puts the baseline at 0.8 of the line
+  // (word-metrics, `lines-*`).
+  const natural = face.lineGap * sizePt + ascent;
+  const baseline =
+    rule === "exact" && Number.isFinite(line) && line > 0
+      ? 0.8 * height
+      : rule === "atLeast"
+        ? height - single + natural
+        : natural;
+  return { ascent, descent, height, baseline };
+}
+
+/**
+ * The ascent and descent, in px, of a CSS font shorthand such as
+ * `normal 400 14.67px "Calibri", "Jubarte Page C", sans-serif` (#102, 4c): the box a run's
+ * glyphs take when its line height is exactly that tall, so its top can sit the baseline
+ * where Word puts it.
+ * @param {string|undefined} font
+ * @returns {{ascent: number, descent: number}|null}
+ */
+export function fontBox(font) {
+  const match = /(\d+(?:\.\d+)?)px\s+(.+)$/.exec(String(font ?? ""));
+  if (!match) return null;
+  const size = Number(match[1]);
+  const face = metrics[faceFor(match[2]).bundled];
+  return { ascent: face.ascent * size, descent: face.descent * size };
 }
