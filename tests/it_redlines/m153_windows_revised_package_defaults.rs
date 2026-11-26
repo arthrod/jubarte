@@ -1983,6 +1983,8 @@ fn c48_compat_container_without_mode_gets_mode_12() {
         for (source, expected) in [
             (format!("<w:compat>{extra}</w:compat>"), "12"),
             (compat(14, extra), "14"),
+            // Kept verbatim on purpose: readers key on name and uri, so the
+            // wrong-uri setting changes no effective mode.
             (
                 format!(
                     r#"<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://example.invalid" w:val="14"/>{extra}</w:compat>"#

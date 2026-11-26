@@ -1838,6 +1838,43 @@ pub(super) fn append_style_change_record(
     dom.add(block, chg);
 }
 
+/// The style a `w:basedOn` points at, as the key [`style_match_key`] pairs
+/// stylesheets by. `None` when the style has no `basedOn` or its target is
+/// not in `ids`.
+pub(super) fn style_base_key(
+    dom: &Dom,
+    style: NodeId,
+    ids: &std::collections::HashMap<String, NodeId>,
+) -> Option<(String, String)> {
+    dom.element(style, &W::name("basedOn"))
+        .and_then(|b| dom.attribute(b, &W::val()))
+        .and_then(|id| ids.get(id))
+        .and_then(|&base| style_match_key(dom, base))
+}
+
+/// Whether the loop in [`merge_revised_style_definitions`] can reach its
+/// `changed_base` branch for `style`: the style is paired on both sides,
+/// neither side is `Normal`, and the two `basedOn` chains resolve to
+/// different targets. Callers gate on `WordPlatform::Windows` themselves.
+pub(super) fn reaches_changed_base(
+    dom: &Dom,
+    style: NodeId,
+    out_by_id: &std::collections::HashMap<String, NodeId>,
+    b_by_key: &std::collections::HashMap<(String, String), NodeId>,
+    b_by_id: &std::collections::HashMap<String, NodeId>,
+    normal_out: Option<NodeId>,
+    normal_b: Option<NodeId>,
+) -> bool {
+    Some(style) != normal_out
+        && style_match_key(dom, style).is_some_and(|key| {
+            b_by_key.get(&key).is_some_and(|&b_style| {
+                Some(b_style) != normal_b
+                    && style_base_key(dom, style, out_by_id)
+                        != style_base_key(dom, b_style, b_by_id)
+            })
+        })
+}
+
 /// Workstream S — adopt the REVISED document's definition of every style both
 /// documents define, recording the ORIGINAL definition on the `w:style` itself.
 ///
@@ -1893,17 +1930,6 @@ pub(super) fn merge_revised_style_definitions(
     let out_by_id = index_by_id(dom, out_root);
     let b_by_id = index_by_id(dom, b_root);
 
-    fn base_key(
-        dom: &Dom,
-        style: NodeId,
-        ids: &std::collections::HashMap<String, NodeId>,
-    ) -> Option<(String, String)> {
-        dom.element(style, &W::name("basedOn"))
-            .and_then(|b| dom.attribute(b, &W::val()))
-            .and_then(|id| ids.get(id))
-            .and_then(|&base| style_match_key(dom, base))
-    }
-
     let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
         std::collections::HashMap::new();
     for s in dom.elements(b_root, Some(&style_nm)) {
@@ -1923,14 +1949,9 @@ pub(super) fn merge_revised_style_definitions(
             .elements(out_root, Some(&style_nm))
             .into_iter()
             .any(|style| {
-                Some(style) != normal_out
-                    && style_match_key(dom, style).is_some_and(|key| {
-                        b_by_key.get(&key).is_some_and(|&b_style| {
-                            Some(b_style) != normal_b
-                                && base_key(dom, style, &out_by_id)
-                                    != base_key(dom, b_style, &b_by_id)
-                        })
-                    })
+                reaches_changed_base(
+                    dom, style, &out_by_id, &b_by_key, &b_by_id, normal_out, normal_b,
+                )
             });
     let original_root = needs_original.then(|| dom.clone_subtree(out_root));
     let original_ids = original_root.map(|root| index_by_id(dom, root));
@@ -1957,8 +1978,12 @@ pub(super) fn merge_revised_style_definitions(
             let b_declared = declared_props_signature(dom, b_style, local);
             // Windows adopts B's basedOn later. Equal declared properties
             // do not imply equal formatting when that inheritance changes.
+            // This is the same `reaches_changed_base` predicate the pre-scan
+            // uses: keep the two in sync or the snapshot below may be missing.
             let changed_base = settings.word_platform == WordPlatform::Windows
-                && base_key(dom, style, &out_by_id) != base_key(dom, b_style, &b_by_id);
+                && reaches_changed_base(
+                    dom, style, &out_by_id, &b_by_key, &b_by_id, normal_out, normal_b,
+                );
             if a_declared == b_declared && !changed_base {
                 continue;
             }
@@ -1968,6 +1993,10 @@ pub(super) fn merge_revised_style_definitions(
                     .copied()
             });
             let (a_root, a_style, a_ids) = if changed_base {
+                debug_assert!(
+                    original_root.is_some() && original_ids.is_some() && original_style.is_some(),
+                    "changed_base without the pre-pass original snapshot"
+                );
                 (
                     original_root.unwrap_or(out_root),
                     original_style.unwrap_or(style),
@@ -3387,6 +3416,8 @@ fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs, out_main: &str, revis
             // The name is what makes a setting the mode setting. A malformed
             // uri does not turn it into a missing mode: writing a second one
             // would leave two compatibilityMode settings in the output.
+            // Readers key on name and uri, so keeping the wrong-uri setting
+            // verbatim leaves the effective mode unchanged.
             let has_mode = dom
                 .elements(compat, Some(&W::name("compatSetting")))
                 .into_iter()
