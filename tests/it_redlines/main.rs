@@ -56,6 +56,7 @@ mod m154_windows_replaced_region_order;
 mod m155_windows_header_footer_follows_revised;
 mod m15_coalesce_revisions;
 mod m161_unit_count;
+mod m165_replaced_tail_keeps_deleted_block;
 mod m16_relationship_ids;
 mod m1709_dangling_story_relationship;
 mod m17_replace_order;

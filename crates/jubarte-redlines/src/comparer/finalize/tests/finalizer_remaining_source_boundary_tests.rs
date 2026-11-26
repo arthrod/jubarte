@@ -381,13 +381,28 @@ fn midstream_deleted_blocks_cross_only_payload_that_disappears_on_rejection() {
                 for barrier in [
                     "none",
                     "live",
+                    "kept-mark",
                     "matched-table",
                     "inserted-table",
                     "mixed-row",
                 ] {
-                    let mut prefix = vec![para("ins", anchor, PROPS)];
+                    // The revision's paragraphs carry their inserted marks, as
+                    // the pipeline writes them. An `w:ins` run on an unrevised
+                    // mark is base's empty paragraph: the `kept-mark` barrier.
+                    let inserted = |text: &str| {
+                        marked(
+                            "ins",
+                            text,
+                            PROPS,
+                            "Boundary editor",
+                            DATE,
+                            "Boundary editor",
+                            DATE,
+                        )
+                    };
+                    let mut prefix = vec![inserted(anchor)];
                     for n in 1..prefix_count {
-                        prefix.push(para("ins", &format!("Revised independent item {n}"), PROPS));
+                        prefix.push(inserted(&format!("Revised independent item {n}")));
                     }
                     let row_ins = format!(
                         "<w:trPr><w:ins w:id='31' w:author='Boundary editor' w:date='{DATE}'/></w:trPr>"
@@ -398,7 +413,7 @@ fn midstream_deleted_blocks_cross_only_payload_that_disappears_on_rejection() {
                             "<w:r><w:t>Independent table payload</w:t></w:r>",
                             &run("ins", "Independent table payload", "Boundary editor", DATE),
                         );
-                    match barrier { "live"=>prefix[20]=para("live","Original live anchor",PROPS), "matched-table"=>prefix[20]=TABLE.into(), "inserted-table"=>prefix[20]=inserted_table.clone(), "mixed-row"=>prefix[20]=inserted_table.replacen("</w:trPr>",&format!("<w:del w:id='32' w:author='Original editor' w:date='{DATE}'/></w:trPr>"),1), _=>{} }
+                    match barrier { "live"=>prefix[20]=para("live","Original live anchor",PROPS), "kept-mark"=>prefix[20]=para("ins","Revised independent item 20",PROPS), "matched-table"=>prefix[20]=TABLE.into(), "inserted-table"=>prefix[20]=inserted_table.clone(), "mixed-row"=>prefix[20]=inserted_table.replacen("</w:trPr>",&format!("<w:del w:id='32' w:author='Original editor' w:date='{DATE}'/></w:trPr>"),1), _=>{} }
                     let dels=(0..del_count).map(|n|para("del",if n==0 {"Label"} else {"Original detailed paragraph that remains in the deleted source sequence"},PROPS)).collect::<Vec<_>>();
                     let xml = prefix.concat()
                         + &dels.concat()

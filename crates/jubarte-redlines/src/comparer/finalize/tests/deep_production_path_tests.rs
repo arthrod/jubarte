@@ -1694,6 +1694,150 @@ fn short_residual_splice_majority_and_length_boundaries_do_not_invent_reordering
     assert_eq!(dom.serialize_element(root), once);
 }
 
+/// #165: behind a kept paragraph the deleted run is a tail, and the
+/// numbered heading leaves its short title in the block. Only a whole-body
+/// replacement, with nothing of base ahead of the deleted run, nests the
+/// title (the first case of
+/// `short_residual_splice_prefers_tip_then_toc_and_moves_only_the_short_numbered_title`).
+#[test]
+fn short_title_splice_leaves_a_replaced_tail_whole_behind_kept_paragraphs() {
+    let mut fragment = live("Earlier original text").repeat(20);
+    for i in 20..40 {
+        fragment.push_str(&para(
+            "ins",
+            if i == 24 {
+                "1. First section"
+            } else {
+                "New body"
+            },
+            "",
+        ));
+    }
+    fragment.push_str(&para("del", "Old", ""));
+    fragment.push_str(&para(
+        "del",
+        "Much longer original deleted body paragraph",
+        "",
+    ));
+    unchanged(&fragment, splice_trailing_short_pure_dels_midstream);
+}
+
+/// #172 review: the whole-body gate asks whether the paragraph itself goes
+/// on rejection, mark and all. Inserted text alone does not say so: on a
+/// mark that stays it rejects to an empty paragraph, which keeps its
+/// section break and its bookmarks. Reject All is the measurer: the title
+/// moves only when it leaves exactly base's three paragraphs. A bookmark is
+/// a marker, not text: Reject All lifts it to the next paragraph that stays.
+#[test]
+fn short_title_splice_crosses_only_paragraphs_that_reject_all_removes() {
+    fn rejected_paragraphs(dom: &mut Dom, root: NodeId) -> Vec<String> {
+        let copy = dom.clone_subtree(root);
+        let copy = crate::revision_processor::reject_revisions_document(dom, copy);
+        let body = dom.element(copy, &W::body()).unwrap();
+        dom.descendants(body, Some(&W::p()))
+            .into_iter()
+            .map(|p| markup_text(dom, p))
+            .collect()
+    }
+    let mark = |kind: &str| {
+        format!("<w:rPr><w:{kind} w:id=\"31\" w:author=\"Editor\" w:date=\"{DATE}\"/></w:rPr>")
+    };
+    let with_properties =
+        |properties: &str, body: &str| format!("<w:p><w:pPr>{properties}</w:pPr>{body}</w:p>");
+    let section = "<w:sectPr><w:pgSz w:w='12240' w:h='15840'/></w:sectPr>";
+    let bookmark = "<w:bookmarkStart w:id='5' w:name='kept'/><w:bookmarkEnd w:id='5'/>";
+    let inserted = revision("ins", "New start");
+    let live = "<w:r><w:t>Old words</w:t></w:r>";
+    let base_tail = [
+        "Old Demo",
+        "First longer original paragraph of base",
+        "Second longer original paragraph of base",
+    ];
+    for (shape, first, gone) in [
+        ("inserted mark", para("ins", "New start", ""), true),
+        ("inserted mark, no text", empty("ins", ""), true),
+        (
+            "inserted mark, section break",
+            with_properties(&format!("{}{section}", mark("ins")), &inserted),
+            true,
+        ),
+        (
+            "inserted mark, bookmark",
+            format!(
+                "<w:p><w:pPr>{}</w:pPr>{inserted}{bookmark}</w:p>",
+                mark("ins")
+            ),
+            true,
+        ),
+        ("kept mark", with_properties("", &inserted), false),
+        (
+            "kept section break",
+            with_properties(section, &inserted),
+            false,
+        ),
+        (
+            "kept bookmark",
+            format!("<w:p>{inserted}{bookmark}</w:p>"),
+            false,
+        ),
+        (
+            "inserted mark, deleted text",
+            with_properties(
+                &mark("ins"),
+                &format!("{inserted}{}", revision("del", "Old words")),
+            ),
+            false,
+        ),
+        (
+            "inserted mark, live text",
+            with_properties(&mark("ins"), &format!("{inserted}{live}")),
+            false,
+        ),
+    ] {
+        let mut fragment = first;
+        for i in 1..45 {
+            fragment.push_str(&para(
+                "ins",
+                if i == 5 {
+                    "1. First section"
+                } else {
+                    "New body"
+                },
+                "",
+            ));
+        }
+        for line in base_tail {
+            fragment.push_str(&para("del", line, ""));
+        }
+        fragment.push_str("<w:sectPr/>");
+        let (mut dom, root, body) = document(&fragment);
+        let old = blocks(&dom, body);
+        let rejected = rejected_paragraphs(&mut dom, root);
+        assert_eq!(
+            rejected == base_tail,
+            gone,
+            "{shape}: Reject All {} exactly base's paragraphs",
+            if gone { "leaves" } else { "does not leave" }
+        );
+        splice_trailing_short_pure_dels_midstream(&mut dom, root);
+        let after = blocks(&dom, body);
+        if gone {
+            let mut expected = old.clone();
+            let title = expected.remove(45);
+            expected.insert(6, title);
+            assert_eq!(
+                after, expected,
+                "{shape}: the title nests after the heading and every other block stays"
+            );
+        } else {
+            assert_eq!(
+                after, old,
+                "{shape}: the pass moves base's deleted title out of its block"
+            );
+        }
+    }
+}
+
 #[test]
 fn revised_internal_hyperlink_fields_preserve_result_text_and_revision_attribution() {
     for kind in ["ins", "del"] {
