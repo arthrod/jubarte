@@ -5,6 +5,7 @@
 //! Style-sheet reconciliation: Normal spacing, style chains and records.
 
 use super::*;
+use crate::namespaces::MC;
 
 /// The `w:style[@w:type='paragraph' @w:styleId='Normal']` element under a
 /// styles root, falling back to the `w:default="1"` paragraph style.
@@ -1837,6 +1838,43 @@ pub(super) fn append_style_change_record(
     dom.add(block, chg);
 }
 
+/// The style a `w:basedOn` points at, as the key [`style_match_key`] pairs
+/// stylesheets by. `None` when the style has no `basedOn` or its target is
+/// not in `ids`.
+pub(super) fn style_base_key(
+    dom: &Dom,
+    style: NodeId,
+    ids: &std::collections::HashMap<String, NodeId>,
+) -> Option<(String, String)> {
+    dom.element(style, &W::name("basedOn"))
+        .and_then(|b| dom.attribute(b, &W::val()))
+        .and_then(|id| ids.get(id))
+        .and_then(|&base| style_match_key(dom, base))
+}
+
+/// Whether the loop in [`merge_revised_style_definitions`] can reach its
+/// `changed_base` branch for `style`: the style is paired on both sides,
+/// neither side is `Normal`, and the two `basedOn` chains resolve to
+/// different targets. Callers gate on `WordPlatform::Windows` themselves.
+pub(super) fn reaches_changed_base(
+    dom: &Dom,
+    style: NodeId,
+    out_by_id: &std::collections::HashMap<String, NodeId>,
+    b_by_key: &std::collections::HashMap<(String, String), NodeId>,
+    b_by_id: &std::collections::HashMap<String, NodeId>,
+    normal_out: Option<NodeId>,
+    normal_b: Option<NodeId>,
+) -> bool {
+    Some(style) != normal_out
+        && style_match_key(dom, style).is_some_and(|key| {
+            b_by_key.get(&key).is_some_and(|&b_style| {
+                Some(b_style) != normal_b
+                    && style_base_key(dom, style, out_by_id)
+                        != style_base_key(dom, b_style, b_by_id)
+            })
+        })
+}
+
 /// Workstream S — adopt the REVISED document's definition of every style both
 /// documents define, recording the ORIGINAL definition on the `w:style` itself.
 ///
@@ -1862,7 +1900,8 @@ pub(super) fn append_style_change_record(
 ///   result through `basedOn` is not marked), and
 /// - the DECLARED properties must differ (so a difference that actually lives
 ///   in an ancestor is recorded on that ancestor, once, and not restated on
-///   every style below it).
+///   every style below it). Windows also records a changed `basedOn` chain
+///   when it changes effective properties, since the old chain is not retained.
 ///
 /// `Normal` is excluded — it is owned by [`merge_normal_style_spacing`] /
 /// [`merge_normal_style_rpr`], whose rules are calibrated against a separate
@@ -1899,6 +1938,24 @@ pub(super) fn merge_revised_style_definitions(
         }
     }
 
+    // A base can be revised earlier in this loop. Windows' new inheritance
+    // records must compare and preserve the original chain, not that live one.
+    // Take the snapshot only when the loop can reach that branch: an eager
+    // clone paid for every Windows compare, though no style changes `basedOn`
+    // in the common case. The predicate runs before any style is mutated, so
+    // the snapshot still holds the untouched tree.
+    let needs_original = settings.word_platform == WordPlatform::Windows
+        && dom
+            .elements(out_root, Some(&style_nm))
+            .into_iter()
+            .any(|style| {
+                reaches_changed_base(
+                    dom, style, &out_by_id, &b_by_key, &b_by_id, normal_out, normal_b,
+                )
+            });
+    let original_root = needs_original.then(|| dom.clone_subtree(out_root));
+    let original_ids = original_root.map(|root| index_by_id(dom, root));
+
     let mut changed = false;
     for style in dom.elements(out_root, Some(&style_nm)) {
         if Some(style) == normal_out {
@@ -1919,11 +1976,36 @@ pub(super) fn merge_revised_style_definitions(
         ] {
             let a_declared = declared_props_signature(dom, style, local);
             let b_declared = declared_props_signature(dom, b_style, local);
-            if a_declared == b_declared {
+            // Windows adopts B's basedOn later. Equal declared properties
+            // do not imply equal formatting when that inheritance changes.
+            // This is the same `reaches_changed_base` predicate the pre-scan
+            // uses: keep the two in sync or the snapshot below may be missing.
+            let changed_base = settings.word_platform == WordPlatform::Windows
+                && reaches_changed_base(
+                    dom, style, &out_by_id, &b_by_key, &b_by_id, normal_out, normal_b,
+                );
+            if a_declared == b_declared && !changed_base {
                 continue;
             }
-            let a_eff =
-                effective_style_props(dom, out_root, &out_by_id, style, local, default_local);
+            let original_style = original_ids.as_ref().and_then(|ids| {
+                dom.attribute(style, &style_id)
+                    .and_then(|id| ids.get(id))
+                    .copied()
+            });
+            let (a_root, a_style, a_ids) = if changed_base {
+                debug_assert!(
+                    original_root.is_some() && original_ids.is_some() && original_style.is_some(),
+                    "changed_base without the pre-pass original snapshot"
+                );
+                (
+                    original_root.unwrap_or(out_root),
+                    original_style.unwrap_or(style),
+                    original_ids.as_ref().unwrap_or(&out_by_id),
+                )
+            } else {
+                (out_root, style, &out_by_id)
+            };
+            let a_eff = effective_style_props(dom, a_root, a_ids, a_style, local, default_local);
             let b_eff = effective_style_props(dom, b_root, &b_by_id, b_style, local, default_local);
             if a_eff == b_eff {
                 continue;
@@ -1957,6 +2039,17 @@ pub(super) fn merge_revised_style_definitions(
                 }
                 None => dom.new_element(W::name(local)),
             };
+
+            if changed_base {
+                crate::revision_processor::style_records::complete_from_original_chain(
+                    dom,
+                    old,
+                    a_root,
+                    a_style,
+                    local,
+                    &|_| false,
+                );
+            }
 
             // Live = B's declared block. Materialize A's when absent, keeping
             // CT_Style order (pPr precedes rPr).
@@ -3054,6 +3147,10 @@ pub(super) fn add_rpr_child_in_order(dom: &mut Dom, rpr: NodeId, child: NodeId, 
 /// (see [`ensure_factory_package_chrome`]).
 /// Full docDefaults swap regressed sales_report×sample_document — leave
 /// docDefaults to the Normal merge path; only fill **missing** chrome parts.
+///
+/// Mac Word 16's redline (`word`) is what this describes. Windows Word 2024's
+/// (`word-windows`) does take the revised theme and `w:docDefaults`, and the
+/// layout settings: [`adopt_revised_package_defaults`], which runs last.
 pub(super) fn adopt_revised_styles_chrome(out: &mut PartFs, pkg2: &PartFs, out_main: &str) {
     // people.xml: Word redlines always carry author identity when B has comments
     // (C2 residual layout for document_100×lots_of_comments).
@@ -3183,7 +3280,8 @@ pub(super) fn ensure_factory_package_chrome(out: &mut PartFs, out_main: &str) {
     }
     // theme: Word gives an original without a referenced theme its own
     // default theme, never the revision's (an unreferenced theme part does
-    // not count).
+    // not count). Windows Word 2024 then ships the revision's in its place
+    // (`adopt_revised_package_defaults`).
     if referenced_theme_part(out, out_main).is_none() {
         const THEME_PART: &str = "word/theme/theme1.xml";
         out.set_part(
@@ -3225,6 +3323,492 @@ pub(super) fn referenced_theme_part(out: &PartFs, main: &str) -> Option<String> 
         .filter(|r| r.rel_type.ends_with("/relationships/theme"))
         .map(|r| out.resolve_rel_target(main, &r.target))
         .find(|part| out.part_bytes(part).is_some())
+}
+
+/// #153: Windows Word 2024's Compare builds its result on the revised
+/// package. The redline carries the revised document's theme, its
+/// `w:docDefaults` and the layout settings in [`REVISED_SETTINGS_CHILDREN`].
+/// Mac Word 16's redline (`word`) keeps the original's, as every pass above
+/// wrote them; this runs after those, on the parts as they ship.
+///
+/// A setting the revised document lacks removes the original's, except
+/// `w:compat`: a missing compatibilityMode setting is supplied as mode 12.
+/// The theme and `w:docDefaults` are replaced only when both packages have
+/// them, and the styles' current properties follow the `w:docDefaults`
+/// (#170): [`adopt_revised_style_properties`]. The revision's parts are the
+/// ones its main document relates, wherever it keeps them; each is read and
+/// written through the output document's own relationships.
+pub(super) fn adopt_revised_package_defaults(
+    out: &mut PartFs,
+    pkg2: &PartFs,
+    out_main: &str,
+    numbering: &std::collections::HashMap<String, String>,
+    settings: &WmlComparerSettings,
+) {
+    let revised_main = pkg2
+        .main_document_part()
+        .unwrap_or_else(|| "word/document.xml".to_string());
+    adopt_revised_settings(out, pkg2, out_main, &revised_main);
+    adopt_revised_doc_defaults(out, pkg2, out_main, &revised_main, numbering, settings);
+    adopt_revised_theme(out, pkg2, out_main, &revised_main);
+    // Re-cache only the live stylesheet after the final theme adoption.
+    // Historical records retain the original theme's resolved values.
+    if let (Some(styles), Some(theme)) = (
+        revised_part(out, out_main, "/styles", "word/styles.xml"),
+        referenced_theme_part(out, out_main),
+    ) && let (Some(xml), Some(theme_xml)) = (out.part_string(&styles), out.part_string(&theme))
+    {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&xml);
+        if let Some(root) = dom.root(doc)
+            && reresolve_theme_color_hexes_impl(&mut dom, root, &theme_xml, true)
+        {
+            out.set_part(&styles, dom.serialize_element(root).into_bytes());
+        }
+    }
+}
+
+/// The `w:settings` children the redline takes from the revised document.
+const REVISED_SETTINGS_CHILDREN: [&str; 8] = [
+    "defaultTabStop",
+    "hyphenationZone",
+    "autoHyphenation",
+    "consecutiveHyphenLimit",
+    "doNotHyphenateCaps",
+    "characterSpacingControl",
+    "themeFontLang",
+    "compat",
+];
+
+/// Replace, add or drop the [`REVISED_SETTINGS_CHILDREN`] of the output's
+/// active settings part as the revised document's settings have them. A
+/// setting the original holds inside an `mc:AlternateContent` is replaced or
+/// removed where it is, in each branch; the revision's is read from the first
+/// branch that holds it.
+fn adopt_revised_settings(out: &mut PartFs, pkg2: &PartFs, out_main: &str, revised_main: &str) {
+    const SETTINGS: &str = "word/settings.xml";
+    let Some(out_part) = revised_part(out, out_main, "/settings", SETTINGS) else {
+        return;
+    };
+    let Some(out_xml) = out.part_string(&out_part) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let out_doc = dom.parse_xdocument(&out_xml);
+    let revised_doc = revised_part(pkg2, revised_main, "/settings", SETTINGS)
+        .and_then(|part| pkg2.part_string(&part))
+        .map(|xml| dom.parse_xdocument(&xml));
+    let settings = W::name("settings");
+    let Some(out_root) = dom.root(out_doc).filter(|&r| dom.name_is(r, &settings)) else {
+        return;
+    };
+    // A revision without a settings part lacks every one of them.
+    let revised_root = revised_doc.and_then(|d| dom.root(d));
+    let mut changed = false;
+    for local in REVISED_SETTINGS_CHILDREN {
+        let name = W::name(local);
+        let current = settings_seats(&dom, out_root, &name);
+        let mut source = revised_root
+            .and_then(|r| settings_seats(&dom, r, &name).into_iter().next())
+            .map(|(_, element)| element);
+        if local == "compat" {
+            let compat = source.unwrap_or_else(|| default_compat(&mut dom));
+            // The name is what makes a setting the mode setting. A malformed
+            // uri does not turn it into a missing mode: writing a second one
+            // would leave two compatibilityMode settings in the output.
+            // Readers key on name and uri, so keeping the wrong-uri setting
+            // verbatim leaves the effective mode unchanged.
+            let has_mode = dom
+                .elements(compat, Some(&W::name("compatSetting")))
+                .into_iter()
+                .any(|setting| {
+                    dom.attribute(setting, &W::name("name")) == Some("compatibilityMode")
+                });
+            if !has_mode {
+                let defaults = default_compat(&mut dom);
+                for setting in dom.elements(defaults, None) {
+                    dom.add(compat, setting);
+                }
+            }
+            source = Some(compat);
+        }
+        match (source, current.as_slice()) {
+            (Some(source), []) => insert_settings_child(&mut dom, out_root, source),
+            (Some(source), _) => {
+                for &(_, at) in &current {
+                    dom.replace_with(at, &[source]);
+                }
+            }
+            (None, _) => {
+                for &(_, at) in &current {
+                    dom.remove(at);
+                }
+            }
+        }
+        changed |= source.is_some() || !current.is_empty();
+    }
+    if changed {
+        out.set_part(&out_part, dom.serialize_element(out_root).into_bytes());
+    }
+}
+
+/// The `w:compat` Windows Word writes for a revision that has none:
+/// compatibility mode 12.
+fn default_compat(dom: &mut Dom) -> NodeId {
+    let compat = dom.new_element(W::name("compat"));
+    let setting = dom.new_element(W::name("compatSetting"));
+    for (local, value) in [
+        ("name", "compatibilityMode"),
+        ("uri", "http://schemas.microsoft.com/office/word"),
+        ("val", "12"),
+    ] {
+        dom.set_attribute_value(setting, &W::name(local), Some(value));
+    }
+    dom.add(compat, setting);
+    compat
+}
+
+/// Whether `node` is an `mc:AlternateContent`: one place in a sequence whose
+/// content depends on the consumer, so that what its `mc:Choice` and
+/// `mc:Fallback` branches hold stands where it does.
+fn is_alternate_content(dom: &Dom, node: NodeId) -> bool {
+    dom.name_is(node, &MC::name("AlternateContent"))
+}
+
+/// Where a `w:settings` root holds its child `name`: under itself, and in
+/// each branch of an `mc:AlternateContent` that stands in for it there. Each
+/// is the container the element is replaced in or removed from, and the
+/// element.
+fn settings_seats(dom: &Dom, root: NodeId, name: &XName) -> Vec<(NodeId, NodeId)> {
+    let mut seats: Vec<(NodeId, NodeId)> = dom
+        .elements(root, Some(name))
+        .into_iter()
+        .map(|element| (root, element))
+        .collect();
+    let wrapper = MC::name("AlternateContent");
+    for alternate in dom.elements(root, Some(&wrapper)) {
+        for branch in dom.elements(alternate, None) {
+            seats.extend(
+                dom.elements(branch, Some(name))
+                    .into_iter()
+                    .map(|element| (branch, element)),
+            );
+        }
+    }
+    seats
+}
+
+/// The rank of the `w:settings` child `node` of `dom` in the `CT_Settings`
+/// sequence (`crate::settings::SETTINGS_ORDER`); `None` for one the sequence
+/// does not name.
+fn settings_rank(dom: &Dom, node: NodeId) -> Option<usize> {
+    let name = dom.name(node)?;
+    crate::settings::SETTINGS_ORDER
+        .iter()
+        .position(|&(ns, local)| name.namespace_name() == ns && name.local_name() == local)
+}
+
+/// The ranks in the `CT_Settings` sequence that the `w:settings` child `node`
+/// stands for, in order: its own ([`settings_rank`]); for an
+/// `mc:AlternateContent`, of every child its branches hold, a nested one
+/// included. Empty for a child the sequence does not name.
+fn settings_ranks(dom: &Dom, node: NodeId) -> Vec<usize> {
+    if !is_alternate_content(dom, node) {
+        return settings_rank(dom, node).into_iter().collect();
+    }
+    let mut ranks = Vec::new();
+    for branch in dom.elements(node, None) {
+        for held in dom.elements(branch, None) {
+            ranks.extend(settings_ranks(dom, held));
+        }
+    }
+    ranks.sort_unstable();
+    ranks.dedup();
+    ranks
+}
+
+/// Put `child` under the `w:settings` `root` where the `CT_Settings`
+/// sequence has it: before the first child that must follow it, else last.
+/// An `mc:AlternateContent` counts as what its branches hold. One whose
+/// branches disagree about the place, a child there having to follow `child`
+/// and another to precede it, takes `child` in each branch instead, where
+/// each branch has it. A child the sequence does not name is neither moved
+/// for it nor displaced by it.
+fn insert_settings_child(dom: &mut Dom, root: NodeId, child: NodeId) {
+    let ours = settings_rank(dom, child).unwrap_or(usize::MAX);
+    for at in dom.elements(root, None) {
+        let ranks = settings_ranks(dom, at);
+        let Some(latest) = ranks.last().copied() else {
+            continue;
+        };
+        if ranks[0] > ours {
+            return dom.add_before_self(at, child);
+        }
+        if latest > ours {
+            for branch in dom.elements(at, None) {
+                insert_settings_child(dom, branch, child);
+            }
+            return;
+        }
+    }
+    dom.add(root, child);
+}
+
+/// Replace the output stylesheet's `w:docDefaults` with the revised
+/// document's, when both have them. The styles then show the revised
+/// document's current properties under them:
+/// [`adopt_revised_style_properties`].
+fn adopt_revised_doc_defaults(
+    out: &mut PartFs,
+    pkg2: &PartFs,
+    out_main: &str,
+    revised_main: &str,
+    numbering: &std::collections::HashMap<String, String>,
+    settings: &WmlComparerSettings,
+) {
+    const STYLES: &str = "word/styles.xml";
+    let Some(out_part) = revised_part(out, out_main, "/styles", STYLES) else {
+        return;
+    };
+    let (Some(out_xml), Some(revised_xml)) = (
+        out.part_string(&out_part),
+        revised_part(pkg2, revised_main, "/styles", STYLES)
+            .and_then(|part| pkg2.part_string(&part)),
+    ) else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let out_doc = dom.parse_xdocument(&out_xml);
+    let revised_doc = dom.parse_xdocument(&revised_xml);
+    let defaults = W::name("docDefaults");
+    let (Some(out_root), Some(revised_root)) = (dom.root(out_doc), dom.root(revised_doc)) else {
+        return;
+    };
+    if let (Some(current), Some(revised)) = (
+        dom.element(out_root, &defaults),
+        dom.element(revised_root, &defaults),
+    ) {
+        dom.replace_with(current, &[revised]);
+        adopt_revised_style_properties(&mut dom, out_root, revised_root, numbering, settings);
+        out.set_part(&out_part, dom.serialize_element(out_root).into_bytes());
+    }
+}
+
+/// #170: under the adopted `w:docDefaults`, each style the revision defines
+/// shows the revision's own `w:pPr`, `w:rPr` and `w:basedOn`.
+///
+/// Windows Word's redline is built on the revised package, so its styles
+/// resolve as the revised document's do: through the `w:basedOn` the revision
+/// gives each and the revision's `w:docDefaults`. The original's properties
+/// are in the `w:pPrChange` / `w:rPrChange` records, which stay as the passes
+/// above wrote them.
+///
+/// Those passes write a style's current properties as a difference against
+/// the ORIGINAL's `w:docDefaults`, which `word` keeps: a property the
+/// original's defaults supply is left out of the current block. Under the
+/// revised defaults it then resolves to another value (a Normal that declares
+/// `sz 24` where the original's defaults set it came out at 10pt; a `line
+/// 240` the original's defaults supplied became 276).
+///
+/// A style pairs with the revision's style of the same (type, name), as
+/// everywhere else. Its current `w:pPr` and `w:rPr` become the revised
+/// style's declared children; a block left with nothing to show goes, unless
+/// it holds a record. Its `w:basedOn` is the revised style's, naming that
+/// style's counterpart in the output; when the output has no style of that
+/// type and name, the style has none, so that no chain can close. A `w:rStyle`
+/// the revised block names is sent to its counterpart's id the same way. A
+/// style the revision lacks stays as the original defines it.
+fn adopt_revised_style_properties(
+    dom: &mut Dom,
+    out_root: NodeId,
+    revised_root: NodeId,
+    numbering: &std::collections::HashMap<String, String>,
+    settings: &WmlComparerSettings,
+) {
+    let style_nm = W::name("style");
+    let style_id = W::style_id();
+    let mut out_by_key: std::collections::HashMap<(String, String), String> =
+        std::collections::HashMap::new();
+    for s in dom.elements(out_root, Some(&style_nm)) {
+        if let (Some(key), Some(id)) = (style_match_key(dom, s), dom.attribute(s, &style_id)) {
+            out_by_key.entry(key).or_insert_with(|| id.to_string());
+        }
+    }
+    let mut revised_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    // Where a reference to the revised style of a key points in the output:
+    // the revised id, and the id that style's counterpart has there.
+    let mut out_id_of_revised: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for s in dom.elements(revised_root, Some(&style_nm)) {
+        let Some(key) = style_match_key(dom, s) else {
+            continue;
+        };
+        revised_by_key.entry(key.clone()).or_insert(s);
+        if let (Some(id), Some(out_id)) = (dom.attribute(s, &style_id), out_by_key.get(&key)) {
+            out_id_of_revised
+                .entry(id.to_string())
+                .or_insert_with(|| out_id.clone());
+        }
+    }
+
+    for style in dom.elements(out_root, Some(&style_nm)) {
+        let Some(revised) = style_match_key(dom, style).and_then(|k| revised_by_key.get(&k)) else {
+            continue;
+        };
+        let revised = *revised;
+        for (local, change_local) in [("pPr", "pPrChange"), ("rPr", "rPrChange")] {
+            let block_nm = W::name(local);
+            let block = dom.element(style, &block_nm);
+            let mut record = block.and_then(|b| dom.element(b, &W::name(change_local)));
+            // Only B's newly cloned properties use this map. Existing live
+            // paragraphs and historical records have already been mapped.
+            let mut remapped_numbering = false;
+            let mut declared = Vec::new();
+            if let Some(revised_block) = dom.element(revised, &block_nm) {
+                for c in dom.elements(revised_block, None) {
+                    if dom.name(c).is_none_or(|n| is_style_prop_noise(&n)) {
+                        continue;
+                    }
+                    let c = dom.clone_subtree(c);
+                    if dom.name_is(c, &W::name("rStyle"))
+                        && let Some(out_id) = dom
+                            .attribute(c, &W::val())
+                            .and_then(|v| out_id_of_revised.get(v))
+                    {
+                        dom.set_attribute_value(c, &W::val(), Some(out_id));
+                    }
+                    if dom.name_is(c, &W::num_pr()) {
+                        for num in dom.elements(c, Some(&W::name("numId"))) {
+                            if let Some(mapped) = dom
+                                .attribute(num, &W::val())
+                                .and_then(|id| numbering.get(id))
+                            {
+                                dom.set_attribute_value(num, &W::val(), Some(mapped));
+                                remapped_numbering = true;
+                            }
+                        }
+                    }
+                    declared.push(c);
+                }
+            }
+            if remapped_numbering && record.is_none() {
+                let old = block
+                    .map(|b| dom.clone_subtree(b))
+                    .unwrap_or_else(|| dom.new_element(block_nm.clone()));
+                let holder = dom.new_element(block_nm.clone());
+                append_style_change_record(dom, out_root, holder, old, change_local, settings);
+                record = dom.element(holder, &W::name(change_local));
+            }
+            if record.is_none() && declared.is_empty() {
+                if let Some(block) = block {
+                    dom.remove(block);
+                }
+                continue;
+            }
+            let block = match block {
+                Some(block) => {
+                    dom.remove_nodes(block);
+                    block
+                }
+                None => {
+                    let block = dom.new_element(block_nm.clone());
+                    insert_child_by_rank(dom, style, block, local, &style_child_rank);
+                    block
+                }
+            };
+            for c in declared {
+                dom.add(block, c);
+            }
+            if let Some(record) = record {
+                dom.add(block, record);
+            }
+        }
+
+        let based_nm = W::name("basedOn");
+        let current = dom.element(style, &based_nm);
+        let adopted = dom
+            .element(revised, &based_nm)
+            .and_then(|b| dom.attribute(b, &W::val()))
+            .and_then(|id| out_id_of_revised.get(id));
+        match (adopted, current) {
+            (Some(out_id), Some(current)) => {
+                dom.set_attribute_value(current, &W::val(), Some(out_id));
+            }
+            (Some(out_id), None) => {
+                let based = dom.new_element(based_nm);
+                dom.set_attribute_value(based, &W::val(), Some(out_id));
+                insert_child_by_rank(dom, style, based, "basedOn", &style_child_rank);
+            }
+            (None, Some(current)) => dom.remove(current),
+            (None, None) => {}
+        }
+    }
+}
+
+/// The part the package's main part `revised_main` relates by a
+/// relationship of type `…/suffix`, wherever the package keeps it; else the
+/// conventional `conventional` part, for a package that keeps it there
+/// without the relationship.
+fn revised_part(
+    pkg2: &PartFs,
+    revised_main: &str,
+    suffix: &str,
+    conventional: &str,
+) -> Option<String> {
+    pkg2.read_rels_for(revised_main)
+        .into_iter()
+        .flat_map(|rels| rels.items.iter())
+        .filter(|r| r.rel_type.ends_with(suffix) && r.target_mode.as_deref() != Some("External"))
+        .map(|r| pkg2.resolve_rel_target(revised_main, &r.target))
+        .find(|part| pkg2.part_bytes(part).is_some())
+        .or_else(|| {
+            pkg2.part_bytes(conventional)
+                .is_some()
+                .then(|| conventional.to_string())
+        })
+}
+
+/// Replace the theme the output's main document references with the one the
+/// revised document's does, wherever each package keeps it, when both have
+/// one. The theme's own relationships come along: the picture it names by
+/// `r:embed` is the revised package's, carried under the output theme part's
+/// relationships, not whatever the output's resolves that id to. A theme
+/// whose references already resolve to the same targets in the output is
+/// copied untouched.
+fn adopt_revised_theme(out: &mut PartFs, pkg2: &PartFs, out_main: &str, revised_main: &str) {
+    let Some(out_theme) = referenced_theme_part(out, out_main) else {
+        return;
+    };
+    let Some(revised_theme) = referenced_theme_part(pkg2, revised_main) else {
+        return;
+    };
+    let Some(bytes) = pkg2.part_bytes(&revised_theme) else {
+        return;
+    };
+    let theme = if part_rels_agree(
+        (&*out, &out_theme),
+        (pkg2, &revised_theme),
+        &String::from_utf8_lossy(bytes),
+    ) {
+        bytes.to_vec()
+    } else {
+        let mut dom = Dom::new();
+        let doc = dom.parse_xdocument(&String::from_utf8_lossy(bytes));
+        let Some(root) = dom.root(doc) else {
+            return;
+        };
+        crate::comparer::parts::carry_part_relationships(
+            out,
+            &out_theme,
+            pkg2,
+            &revised_theme,
+            &mut dom,
+            root,
+        );
+        dom.serialize_document(doc).into_bytes()
+    };
+    out.set_part(&out_theme, theme);
 }
 
 /// Word-canonical `w:styleId` for a human-readable `w:name` (C3 / C5).
@@ -4322,6 +4906,15 @@ pub(super) fn reresolve_theme_color_hexes(
     styles_root: NodeId,
     theme_xml: &str,
 ) -> bool {
+    reresolve_theme_color_hexes_impl(dom, styles_root, theme_xml, false)
+}
+
+fn reresolve_theme_color_hexes_impl(
+    dom: &mut Dom,
+    styles_root: NodeId,
+    theme_xml: &str,
+    live_only: bool,
+) -> bool {
     let slot_hex = |slot: &str| -> Option<String> {
         let i = theme_xml.find(&format!("<a:{slot}>"))?;
         let seg = &theme_xml[i..theme_xml[i..]
@@ -4437,6 +5030,19 @@ pub(super) fn reresolve_theme_color_hexes(
     .map(|(t, sh, ti, hex)| (W::name(t), W::name(sh), W::name(ti), W::name(hex)));
     let mut changed = false;
     for e in dom.descendants(styles_root, None) {
+        if live_only
+            && dom.ancestors(e, None).into_iter().any(|ancestor| {
+                dom.name(ancestor).is_some_and(|name| {
+                    name.namespace_name() == W::URI
+                        && matches!(
+                            name.local_name(),
+                            "pPrChange" | "rPrChange" | "tblPrChange" | "trPrChange" | "tcPrChange"
+                        )
+                })
+            })
+        {
+            continue;
+        }
         for (theme_attr, shade_attr, tint_attr, hex_attr) in &slots {
             let Some(name) = dom.attribute(e, theme_attr).map(str::to_string) else {
                 continue;

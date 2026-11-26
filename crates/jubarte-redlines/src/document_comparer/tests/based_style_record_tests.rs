@@ -4,7 +4,10 @@
 
 //! PR #246: old records preserve the original style's inherited properties.
 
-use super::complete_based_style_change_records;
+use super::{
+    complete_based_style_change_records, find_normal_style, reaches_changed_base, style_base_key,
+    style_match_key,
+};
 use crate::namespaces::W;
 use crate::revision_processor::style_records::complete_from_original_chain;
 use crate::xmllinq::{Dom, NodeId};
@@ -522,4 +525,86 @@ fn recorded_ancestors_are_matched_in_original_ids_and_tracked_per_block() {
         let old = child(&dom, child(&dom, child(&dom, s, "rPr"), "rPrChange"), "rPr");
         assert_block(&mut dom, old, "rPr", expected);
     }
+}
+
+/// N1 (#159 round 4): the pre-scan and the loop share one guard. The
+/// reviewer's `Early`/`Late` stylesheet pins the agreement: `Early` is
+/// rewritten earlier in document order (`w:b` gains `w:color FF0000`) while
+/// `Late` moves from `basedOn Early` to `basedOn BaseB`, so only `Late` can
+/// reach the `changed_base` branch.
+#[test]
+fn prescan_and_loop_agree_on_early_late_stylesheet() {
+    let mut dom = Dom::new();
+    let out_root = parse(
+        &mut dom,
+        "styles",
+        r#"
+        <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        <w:style w:type="paragraph" w:styleId="BaseA"><w:name w:val="BaseA"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="BaseB"><w:name w:val="BaseB"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Early"><w:name w:val="Early"/><w:basedOn w:val="BaseA"/><w:rPr><w:b/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Late"><w:name w:val="Late"/><w:basedOn w:val="Early"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>"#,
+    );
+    let b_root = parse(
+        &mut dom,
+        "styles",
+        r#"
+        <w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+        <w:style w:type="paragraph" w:styleId="BaseA"><w:name w:val="BaseA"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="BaseB"><w:name w:val="BaseB"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Early"><w:name w:val="Early"/><w:basedOn w:val="BaseA"/><w:rPr><w:b/><w:color w:val="FF0000"/></w:rPr></w:style>
+        <w:style w:type="paragraph" w:styleId="Late"><w:name w:val="Late"/><w:basedOn w:val="BaseB"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>"#,
+    );
+    let index_by_id = |dom: &Dom, root: NodeId| -> std::collections::HashMap<String, NodeId> {
+        dom.elements(root, Some(&W::name("style")))
+            .into_iter()
+            .filter_map(|s| Some((dom.attribute(s, &W::name("styleId"))?.to_string(), s)))
+            .collect()
+    };
+    let out_by_id = index_by_id(&dom, out_root);
+    let b_by_id = index_by_id(&dom, b_root);
+    let mut b_by_key: std::collections::HashMap<(String, String), NodeId> =
+        std::collections::HashMap::new();
+    for s in dom.elements(b_root, Some(&W::name("style"))) {
+        if let Some(k) = style_match_key(&dom, s) {
+            b_by_key.entry(k).or_insert(s);
+        }
+    }
+    let normal_out = find_normal_style(&dom, out_root);
+    let normal_b = find_normal_style(&dom, b_root);
+    assert!(normal_out.is_some() && normal_b.is_some());
+
+    let reaches = |style: NodeId| {
+        reaches_changed_base(
+            &dom, style, &out_by_id, &b_by_key, &b_by_id, normal_out, normal_b,
+        )
+    };
+    // The pre-scan: any style reaches the branch.
+    assert!(
+        dom.elements(out_root, Some(&W::name("style")))
+            .into_iter()
+            .any(reaches),
+        "the pre-scan must see Late's changed base"
+    );
+    // The loop: the same predicate per style.
+    let mut reached: Vec<String> = Vec::new();
+    for s in dom.elements(out_root, Some(&W::name("style"))) {
+        if reaches(s) {
+            reached.push(dom.attribute(s, &W::name("styleId")).unwrap().to_string());
+        }
+    }
+    assert_eq!(reached, vec!["Late".to_string()]);
+    // Pin why: Early's base is unchanged, Late's is not.
+    let early = style(&dom, out_root, "Early");
+    let late = style(&dom, out_root, "Late");
+    let b_early = style(&dom, b_root, "Early");
+    let b_late = style(&dom, b_root, "Late");
+    assert_eq!(
+        style_base_key(&dom, early, &out_by_id),
+        style_base_key(&dom, b_early, &b_by_id)
+    );
+    assert_ne!(
+        style_base_key(&dom, late, &out_by_id),
+        style_base_key(&dom, b_late, &b_by_id)
+    );
 }
