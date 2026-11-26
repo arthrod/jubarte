@@ -7,7 +7,6 @@
 // #47). The bodies follow read_view's own output for codex's documents.
 import { beforeAll, describe, expect, it } from "vitest";
 import { parseJubarte } from "../reader/jubarte.mjs";
-import { lineBox } from "../reader/line-box.mjs";
 
 let mountPagination;
 beforeAll(async () => {
@@ -542,7 +541,11 @@ describe("paragraph indents are Word's w:ind (#63)", () => {
     const { composed, done } = compose(
       `${header(styles)}<!-- p0 Hang -->\n${words("sty")}\n\n<!-- p1 Hang, left 2in -->\n${words("own")}\n\n<!-- p2 First -->\n${words("fst")}\n\n<!-- p3 Hang, first-line 0.25in -->\n${words("pair")}\n`,
     );
-    const [styled, own, first] = [lines(composed, "sty"), lines(composed, "own"), lines(composed, "fst")];
+    const [styled, own, first] = [
+      lines(composed, "sty"),
+      lines(composed, "own"),
+      lines(composed, "fst"),
+    ];
     // Word's PDF: the paragraph's own first-line replaces the style's hanging, the style's left stays.
     const pair = lines(composed, "pair");
     expect(pair[0]).toBeCloseTo(120, 0);
@@ -977,7 +980,9 @@ describe("a paragraph's style draws its bold, italic, underline and strike (#87)
   it("a named style's underline and strike reach its runs, the engine prints neither inline (#96)", () => {
     const md = `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n  Emph: Calibri underline strike 11pt\n---\n\n<!-- p0 Emph -->\nSTYLED\n`;
     const { container, done } = compose(md);
-    expect([...drawn(container).classList]).toEqual(expect.arrayContaining(["underline", "strikethrough"]));
+    expect([...drawn(container).classList]).toEqual(
+      expect.arrayContaining(["underline", "strikethrough"]),
+    );
     done();
   });
   it("a double underline and a double strike keep their kind, not the font's name (#96)", () => {
@@ -1007,21 +1012,34 @@ describe("a paragraph draws in its style's font: local first, then the bundled t
     [...container.querySelectorAll(".premirror-run")].find((r) => r.textContent.includes(text));
   it("an implicit Normal paragraph is Calibri, then Jubarte Page C", () => {
     const { container, done } = compose(doc("", "<!-- p0 -->\nPLAIN\n"));
-    expect(runOf(container, "PLAIN").style.font).toContain('"Calibri", "Jubarte Page C", sans-serif');
+    expect(runOf(container, "PLAIN").style.font).toContain(
+      '"Calibri", "Jubarte Page C", sans-serif',
+    );
     done();
   });
   it("a named style's family reaches its runs, with its twin behind it", () => {
     const { container, done } = compose(
-      doc("  Body: Arial 11pt\n  Legal: Times New Roman 12pt\n", "<!-- p0 Body -->\nSANS\n\n<!-- p1 Legal -->\nSERIF\n"),
+      doc(
+        "  Body: Arial 11pt\n  Legal: Times New Roman 12pt\n",
+        "<!-- p0 Body -->\nSANS\n\n<!-- p1 Legal -->\nSERIF\n",
+      ),
     );
-    expect(runOf(container, "SANS").style.font).toContain('"Arial", "Jubarte Page Sans", sans-serif');
-    expect(runOf(container, "SERIF").style.font).toContain('"Times New Roman", "Jubarte Page Serif", serif');
+    expect(runOf(container, "SANS").style.font).toContain(
+      '"Arial", "Jubarte Page Sans", sans-serif',
+    );
+    expect(runOf(container, "SERIF").style.font).toContain(
+      '"Times New Roman", "Jubarte Page Serif", serif',
+    );
     expect(container.innerHTML).not.toContain("Source Serif 4");
     done();
   });
   it("a family with no twin falls back by class and the card says so", () => {
-    const { container, composed, done } = compose(doc("  Body: Georgia 11pt\n", "<!-- p0 Body -->\nCLASSIC\n"));
-    expect(runOf(container, "CLASSIC").style.font).toContain('"Georgia", "Jubarte Page Serif", serif');
+    const { container, composed, done } = compose(
+      doc("  Body: Georgia 11pt\n", "<!-- p0 Body -->\nCLASSIC\n"),
+    );
+    expect(runOf(container, "CLASSIC").style.font).toContain(
+      '"Georgia", "Jubarte Page Serif", serif',
+    );
     expect(composed.warnings.join(" ")).toMatch(/Georgia/);
     done();
   });
@@ -1036,24 +1054,101 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
   const doc = (styles, body) =>
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${styles}---\n\n${body}`;
   const spacingOf = (composed, text) =>
-    composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs.spacing;
-  it("K112: paragraph and cell line gaps reach layout as metric-backed points", () => {
-    const { composed, done } = compose(doc(
-      "  Body: Arial 14pt, before 6pt, after 12pt\n",
-      "<!-- p0 Body, size 10pt, before 1.5 lines, after 2 lines -->\nOWN\n\n" +
-      "<!-- t0 1x1, cells p1-p1 by row, p1 before 1.5 lines after 2 lines -->\n| CELL |\n|---|\n",
-    ));
+    composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs
+      .spacing;
+  it("K112: paragraph and cell line gaps reach layout as 12pt-based points", () => {
+    const { composed, done } = compose(
+      doc(
+        "  Body: Arial 14pt, before 6pt, after 12pt\n",
+        "<!-- p0 Body, size 10pt, before 1.5 lines, after 2 lines -->\nOWN\n\n" +
+          "<!-- t0 1x1, cells p1-p1 by row, p1 before 1.5 lines after 2 lines -->\n| CELL |\n|---|\n",
+      ),
+    );
     try {
       expect(spacingOf(composed, "OWN")).toMatchObject({
-        beforeLines: 1.5, afterLines: 2,
-        beforePt: 1.5 * lineBox("Arial", 10).height,
-        afterPt: 2 * lineBox("Arial", 10).height,
+        beforeLines: 1.5,
+        afterLines: 2,
+        beforePt: 18,
+        afterPt: 24,
       });
       const cell = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells[0];
       expect(cell.blocks[0].attrs.spacing).toMatchObject({
-        beforeLines: 1.5, afterLines: 2,
-        beforePt: 1.5 * lineBox("Calibri", 11).height,
-        afterPt: 2 * lineBox("Calibri", 11).height,
+        beforeLines: 1.5,
+        afterLines: 2,
+        beforePt: 18,
+        afterPt: 24,
+      });
+    } finally {
+      done();
+    }
+  });
+  it.each(["line grid", "line and char grid"])(
+    "K112: %s pitch follows section boundaries for paragraphs and cells",
+    (grid) => {
+      const source =
+        header(
+          `styles:\n  Normal: Calibri 11pt, after 8pt\n` +
+            `sections:\n  2: {p1-p2, page: Letter portrait, ${grid} 15.6pt}\n` +
+            `  3: {p3-p4}\n`,
+        ) +
+        "<!-- p0 section-break, before 1.5 lines, after 2 lines -->\nFIRST\n\n" +
+        "<!-- p1 before 1.5 lines, after 2 lines -->\nGRID\n\n" +
+        "<!-- t0 1x1, cells p2-p2 by row, p2 before 1.5 lines after 2 lines -->\n| GRIDCELL |\n|---|\n\n" +
+        "<!-- p3 before 1.5 lines, after 2 lines -->\nRESET\n\n" +
+        "<!-- t1 1x1, cells p4-p4 by row, p4 before 1.5 lines after 2 lines -->\n| RESETCELL |\n|---|\n";
+      const { composed, done } = compose(source);
+      try {
+        expect(spacingOf(composed, "FIRST")).toMatchObject({ beforePt: 18, afterPt: 24 });
+        expect(spacingOf(composed, "GRID")).toMatchObject({ beforePt: 23.4, afterPt: 31.2 });
+        expect(spacingOf(composed, "RESET")).toMatchObject({ beforePt: 18, afterPt: 24 });
+        const tables = composed.snapshot.blocks.filter((b) => b.type === "table");
+        expect(tables[0].rows[0].cells[0].blocks[0].attrs.spacing).toMatchObject({
+          beforePt: 23.4,
+          afterPt: 31.2,
+        });
+        expect(tables[1].rows[0].cells[0].blocks[0].attrs.spacing).toMatchObject({
+          beforePt: 18,
+          afterPt: 24,
+        });
+      } finally {
+        done();
+      }
+    },
+  );
+  it("K112: the first section's pitch reaches a table and a section with omitted page setup", () => {
+    const source =
+      header("sections:\n  2: {p1-p2}\n").replace(
+        "page: Letter portrait",
+        "page: Letter portrait, line grid 15.6pt",
+      ) +
+      "<!-- p0 section-break, before 1.5 lines -->\nFIRST\n\n" +
+      "<!-- p1 before 1.5 lines -->\nINHERITED\n\n" +
+      "<!-- t0 1x1, cells p2-p2 by row, p2 before 1.5 lines -->\n| CELL |\n|---|\n";
+    const { composed, done } = compose(source);
+    try {
+      expect(spacingOf(composed, "FIRST").beforePt).toBe(23.4);
+      expect(spacingOf(composed, "INHERITED").beforePt).toBe(23.4);
+      expect(
+        composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells[0].blocks[0].attrs
+          .spacing.beforePt,
+      ).toBe(23.4);
+    } finally {
+      done();
+    }
+  });
+  it("K112: row-group cell paragraph ids select the section pitch", () => {
+    const source =
+      header("sections:\n  2: {p1-p2, page: Letter portrait, line grid 15.6pt}\n") +
+      "<!-- p0 section-break -->\nFIRST\n\n" +
+      "<!-- t0 1x1, cells r0 p1-p2, p1-p2 before 1.5 lines after 2 lines -->\n| CELL |\n|---|\n";
+    const { composed, done } = compose(source);
+    try {
+      const cell = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells[0];
+      expect(cell.blocks[0].attrs.spacing).toMatchObject({
+        beforeLines: 1.5,
+        afterLines: 2,
+        beforePt: 23.4,
+        afterPt: 31.2,
       });
     } finally {
       done();
@@ -1067,12 +1162,26 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
       ),
     );
     expect(spacingOf(composed, "PLAIN")).toEqual({
-      beforePt: 0, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "auto", multiple: 1.08 }, contextual: false,
+      beforePt: 0,
+      afterPt: 8,
+      beforeAuto: false,
+      afterAuto: false,
+      line: { rule: "auto", multiple: 1.08 },
+      contextual: false,
     });
     expect(spacingOf(composed, "STYLED")).toEqual({
-      beforePt: 12, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "exact", points: 18 }, contextual: true,
+      beforePt: 12,
+      afterPt: 8,
+      beforeAuto: false,
+      afterAuto: false,
+      line: { rule: "exact", points: 18 },
+      contextual: true,
     });
-    expect(spacingOf(composed, "OWN")).toMatchObject({ beforeAuto: true, afterPt: 0, line: { rule: "exact", points: 18 } });
+    expect(spacingOf(composed, "OWN")).toMatchObject({
+      beforeAuto: true,
+      afterPt: 0,
+      line: { rule: "exact", points: 18 },
+    });
     done();
   });
   it("a cell's paragraphs take their cell group's spacing over Normal's", () => {
@@ -1084,7 +1193,8 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
     ].join("\n");
     const { composed, done } = compose(doc("", `<!-- p0 -->\nLEAD\n\n${table}`));
     const cells = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells;
-    for (const cell of cells) expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
+    for (const cell of cells)
+      expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
     expect(spacingOf(composed, "LEAD").afterPt).toBe(8);
     done();
   });

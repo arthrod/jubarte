@@ -10,8 +10,6 @@
 //   line 1.08 (a multiple) | line 8.65pt exact | line 20pt atLeast
 //   contextual spacing | contextual spacing off
 
-import { lineBox } from "./line-box.mjs";
-
 const NUM = String.raw`(\d+(?:\.\d*)?|\.\d+)`;
 // Each word group, anchored at the start, ends at a space or the end.
 const WORDS = [
@@ -86,22 +84,19 @@ function styleSpacing(style) {
  * @param {object} [own] the id line's spacing
  * @param {object} [style] the paragraph's legend style
  * @param {object} [normal] the legend's Normal
- * @param {object} [font] the paragraph's direct font properties
+ * @param {number} [gridPitchPt] the section's line-grid pitch in points
  */
-export function resolveSpacing(own, style, normal, font = {}) {
+export function resolveSpacing(own, style, normal, gridPitchPt = 12) {
   const layers = [own ?? {}, styleSpacing(style), styleSpacing(normal)];
-  // Before/after lines are multiples of the font's single-line height,
-  // independent of the paragraph's exact/atLeast/multiple line rule.
-  const single = () => lineBox(
-    font.fontFamily ?? style?.fontFamily ?? normal?.fontFamily,
-    font.fontSizePt ?? style?.fontSizePt ?? normal?.fontSizePt ?? 11,
-  ).height;
+  // Word counts before/after lines in the section's docGrid pitch, or 12pt
+  // without a typed line grid (docs/WORD_LAYOUT_RULES.md: Paragraph spacing).
+  // Font metrics and the paragraph's line rule do not change this unit.
   const side = (name) => {
     for (const layer of layers) {
       if (layer[`${name}Auto`]) return { pt: 0, auto: true };
       if (layer[`${name}Lines`] != null) {
         const lines = layer[`${name}Lines`];
-        return { pt: lines * single(), lines, auto: false };
+        return { pt: lines * gridPitchPt, lines, auto: false };
       }
       if (layer[`${name}Pt`] != null) return { pt: layer[`${name}Pt`], auto: false };
     }

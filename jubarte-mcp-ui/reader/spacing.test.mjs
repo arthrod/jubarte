@@ -10,19 +10,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { parseSpacing, takeSpacing, resolveSpacing } from "./spacing.mjs";
-import { lineBox } from "./line-box.mjs";
 import { parseDirective, parseDocumentMetadata as parseSourceDocument } from "./metadata.mjs";
 
 const VIEWS = new URL("../word-metrics/views/", import.meta.url);
 
-test("K112: own line-based gaps override style points and use single-line font metrics", () => {
+test("K112: own line-based gaps override style points and use the 12pt no-grid pitch", () => {
   for (const side of ["before", "after"]) {
-    for (const lines of [0, 1.5]) {
+    for (const [lines, points] of [
+      [0, 0],
+      [1.5, 18],
+    ]) {
       const style = { fontFamily: "Arial", fontSizePt: 14, [`${side}Pt`]: 6 };
       const own = parseSpacing(`${side} ${lines} lines line 30pt exact`);
       const resolved = resolveSpacing(own, style, { [`${side}Pt`]: 12 });
       assert.equal(resolved[`${side}Lines`], lines);
-      assert.equal(resolved[`${side}Pt`], lines * lineBox("Arial", 14).height);
+      assert.equal(resolved[`${side}Pt`], points);
       assert.equal(resolved[`${side}Auto`], false);
     }
   }
@@ -35,12 +37,39 @@ test("K112: automatic spacing wins over lines, and lines win over points in one 
     assert.equal(automatic[`${side}Auto`], true);
     assert.equal(automatic[`${side}Lines`], undefined);
     assert.equal(automatic[`${side}Pt`], 0);
-    const lines = resolveSpacing({ ...own, [`${side}Auto`]: false }, {}, {
-      fontFamily: "Calibri", fontSizePt: 11,
-    });
-    assert.equal(lines[`${side}Pt`], 2 * lineBox("Calibri", 11).height);
+    const lines = resolveSpacing(
+      { ...own, [`${side}Auto`]: false },
+      {},
+      {
+        fontFamily: "Calibri",
+        fontSizePt: 11,
+      },
+    );
+    assert.equal(lines[`${side}Pt`], 24);
     assert.equal(lines[`${side}Lines`], 2);
   }
+});
+
+// Word 16: docs/WORD_LAYOUT_RULES.md, Paragraph spacing. Literal oracles
+// catch font-height conversion and ignoring the section's explicit pitch.
+test("K112: Calibri 11pt gaps count 12pt without a grid", () => {
+  const resolved = resolveSpacing(parseSpacing("before 1.5 lines after 2 lines line 30pt exact"), {
+    fontFamily: "Calibri",
+    fontSizePt: 11,
+  });
+  assert.equal(resolved.beforePt, 18);
+  assert.equal(resolved.afterPt, 24);
+});
+
+test("K112: line-based gaps count the section's 15.6pt pitch", () => {
+  const resolved = resolveSpacing(
+    parseSpacing("before 1.5 lines after 2 lines line 3"),
+    { beforePt: 6, afterPt: 8 },
+    { afterPt: 12 },
+    15.6,
+  );
+  assert.equal(resolved.beforePt, 23.4);
+  assert.equal(resolved.afterPt, 31.2);
 });
 
 test("each clause spacing_clauses can write reads as typed fields", () => {

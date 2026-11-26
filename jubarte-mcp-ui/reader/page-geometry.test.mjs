@@ -2,78 +2,91 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {resolvePageGeometry} from './page-geometry.mjs';
-import {parseJubarte} from './jubarte.mjs';
-const read = page => resolvePageGeometry({metadata: {page: {raw: page}}});
-const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.001, `${actual} ≈ ${expected}`);
-test('default Letter with one-inch margins', () => {
-  assert.deepEqual(resolvePageGeometry(), {page: {widthPx:816,heightPx:1056,preset:'letter'},margins:{topPx:96,rightPx:96,bottomPx:96,leftPx:96},label:'Letter portrait',warnings:[]});
+import test from "node:test";
+import assert from "node:assert/strict";
+import { resolvePageGeometry } from "./page-geometry.mjs";
+import { parseJubarte } from "./jubarte.mjs";
+const read = (page) => resolvePageGeometry({ metadata: { page: { raw: page } } });
+const close = (actual, expected) =>
+  assert.ok(Math.abs(actual - expected) < 0.001, `${actual} ≈ ${expected}`);
+test("default Letter with one-inch margins", () => {
+  assert.deepEqual(resolvePageGeometry(), {
+    page: { widthPx: 816, heightPx: 1056, preset: "letter" },
+    margins: { topPx: 96, rightPx: 96, bottomPx: 96, leftPx: 96 },
+    label: "Letter portrait",
+    warnings: [],
+  });
 });
-test('legend supports all paper sizes and orientations', () => {
-  assert.equal(read('Legal landscape, margins 0.5in').page.widthPx, 1344);
-  assert.equal(read('Letter landscape').page.heightPx, 816);
-  close(read('A4 portrait').page.widthPx, 210 * 96 / 25.4);
-  close(read('A4 landscape').page.widthPx, 297 * 96 / 25.4);
+test("legend supports all paper sizes and orientations", () => {
+  assert.equal(read("Legal landscape, margins 0.5in").page.widthPx, 1344);
+  assert.equal(read("Letter landscape").page.heightPx, 816);
+  close(read("A4 portrait").page.widthPx, (210 * 96) / 25.4);
+  close(read("A4 landscape").page.widthPx, (297 * 96) / 25.4);
 });
-test('all length units and individual margin overrides', () => {
-  const value = read('Letter portrait, margins 25.4mm, top 2.54cm, right margin 72pt, bottom 48px, left 0.25in, header/footer 0.5in');
-  assert.deepEqual(value.margins, {topPx:96,rightPx:96,bottomPx:48,leftPx:24});
+test("all length units and individual margin overrides", () => {
+  const value = read(
+    "Letter portrait, margins 25.4mm, top 2.54cm, right margin 72pt, bottom 48px, left 0.25in, header/footer 0.5in",
+  );
+  assert.deepEqual(value.margins, { topPx: 96, rightPx: 96, bottomPx: 48, leftPx: 24 });
   assert.deepEqual(value.warnings, []);
 });
-test('structured page preserved by old metadata parser is interpreted losslessly', () => {
-  const result = parseJubarte('---\npage:\n  size: Legal\n  orientation: landscape\n  margins:\n    top: 12mm\n    right: 0.5in\n    bottom: 36pt\n    left: 48px\n---\n# Hello');
+test("structured page preserved by old metadata parser is interpreted losslessly", () => {
+  const result = parseJubarte(
+    "---\npage:\n  size: Legal\n  orientation: landscape\n  margins:\n    top: 12mm\n    right: 0.5in\n    bottom: 36pt\n    left: 48px\n---\n# Hello",
+  );
   const original = JSON.stringify(result.metadata.page);
   const value = resolvePageGeometry(result);
   assert.equal(value.page.widthPx, 1344);
-  close(value.margins.topPx, 12 * 96 / 25.4);
+  close(value.margins.topPx, (12 * 96) / 25.4);
   assert.equal(value.margins.leftPx, 48);
   assert.equal(JSON.stringify(result.metadata.page), original);
   assert.deepEqual(value.warnings, []);
 });
-test('raw Legal legend overrides older parser’s Letter fallback', () => {
-  const result = parseJubarte('---\npage: Legal portrait, margins 18mm\n---\nText');
+test("raw Legal legend overrides older parser’s Letter fallback", () => {
+  const result = parseJubarte("---\npage: Legal portrait, margins 18mm\n---\nText");
   const value = resolvePageGeometry(result);
   assert.equal(value.page.heightPx, 1344);
-  close(value.margins.topPx, 18 * 96 / 25.4);
+  close(value.margins.topPx, (18 * 96) / 25.4);
 });
-test('normalized compatibility, scalar margins and numeric inches', () => {
-  const value = resolvePageGeometry({metadata:{page:{size:'A4',orientation:'landscape',margins:0.5}}});
-  close(value.page.widthPx, 297 * 96 / 25.4);
+test("normalized compatibility, scalar margins and numeric inches", () => {
+  const value = resolvePageGeometry({
+    metadata: { page: { size: "A4", orientation: "landscape", margins: 0.5 } },
+  });
+  close(value.page.widthPx, (297 * 96) / 25.4);
   assert.equal(value.margins.leftPx, 48);
 });
-test('invalid, negative, infinite and huge margins produce visible warnings', () => {
-  for (const margin of [-1, Infinity, NaN, 'enormous', '50in', [], true]) {
-    const value = read({margins:margin});
+test("invalid, negative, infinite and huge margins produce visible warnings", () => {
+  for (const margin of [-1, Infinity, NaN, "enormous", "50in", [], true]) {
+    const value = read({ margins: margin });
     assert.equal(value.margins.topPx, 96);
     assert.ok(value.warnings.length);
   }
-  assert.ok(read({size:'banana',orientation:'sideways'}).warnings.length === 2);
+  assert.ok(read({ size: "banana", orientation: "sideways" }).warnings.length === 2);
 });
-test('margins cannot consume the content frame', () => {
-  const value = read('Letter, margins 5in');
-  assert.ok(value.page.widthPx-value.margins.leftPx-value.margins.rightPx >= 96);
-  assert.ok(value.page.heightPx-value.margins.topPx-value.margins.bottomPx >= 96);
+test("margins cannot consume the content frame", () => {
+  const value = read("Letter, margins 5in");
+  assert.ok(value.page.widthPx - value.margins.leftPx - value.margins.rightPx >= 96);
+  assert.ok(value.page.heightPx - value.margins.topPx - value.margins.bottomPx >= 96);
   assert.ok(value.warnings.length);
 });
-test('custom dimensions and safe bounds', () => {
-  const value = read({width:'20cm',height:'30cm',margins:'12mm'});
-  close(value.page.widthPx, 20 * 96 / 2.54);
+test("custom dimensions and safe bounds", () => {
+  const value = read({ width: "20cm", height: "30cm", margins: "12mm" });
+  close(value.page.widthPx, (20 * 96) / 2.54);
   assert.equal(value.page.preset, undefined);
-  for (const width of [0,-1,Infinity,'100in']) assert.ok(read({width,height:'11in'}).warnings.length);
-  const small = read({width:'2in',height:'2in'});
-  assert.equal(small.page.widthPx-small.margins.leftPx-small.margins.rightPx,96);
+  for (const width of [0, -1, Infinity, "100in"])
+    assert.ok(read({ width, height: "11in" }).warnings.length);
+  const small = read({ width: "2in", height: "2in" });
+  assert.equal(small.page.widthPx - small.margins.leftPx - small.margins.rightPx, 96);
 });
-test('unknown fields do not disappear without a warning', () => {
-  assert.ok(read({size:'A4',bleed:'3mm'}).warnings[0].includes('bleed'));
-  assert.ok(read('Letter, decorative').warnings[0].includes('decorative'));
+test("unknown fields do not disappear without a warning", () => {
+  assert.ok(read({ size: "A4", bleed: "3mm" }).warnings[0].includes("bleed"));
+  assert.ok(read("Letter, decorative").warnings[0].includes("decorative"));
 });
 
-test('eight substantial reader examples parse and cover the four paper layouts', async () => {
-  const {readerExamples} = await import('./examples.mjs');
+test("eight substantial reader examples parse and cover the four paper layouts", async () => {
+  const { readerExamples } = await import("./examples.mjs");
   assert.equal(readerExamples.length, 8);
-  assert.equal(new Set(readerExamples.map(example => example.id)).size, 8);
+  assert.equal(new Set(readerExamples.map((example) => example.id)).size, 8);
   const layouts = [];
   for (const example of readerExamples) {
     assert.ok(example.title && example.description && example.source);
@@ -86,23 +99,45 @@ test('eight substantial reader examples parse and cover the four paper layouts',
     assert.deepEqual(geometry.warnings, []);
     layouts.push(geometry.label);
   }
-  assert.deepEqual(layouts, ['Letter portrait','Letter portrait','Letter portrait','A4 portrait','A4 landscape','Legal portrait','Letter portrait','A4 landscape']);
+  assert.deepEqual(layouts, [
+    "Letter portrait",
+    "Letter portrait",
+    "Letter portrait",
+    "A4 portrait",
+    "A4 landscape",
+    "Legal portrait",
+    "Letter portrait",
+    "A4 landscape",
+  ]);
 });
 
-test('the engine names each side after `margins` (b106)', () => {
-  const g = read('Letter landscape, margins top 0.5in, right 0.5in, bottom 0.3in, left 0.5in, header/footer 0.5in');
+test("the engine names each side after `margins` (b106)", () => {
+  const g = read(
+    "Letter landscape, margins top 0.5in, right 0.5in, bottom 0.3in, left 0.5in, header/footer 0.5in",
+  );
   assert.deepEqual(g.warnings, []);
   assert.equal(g.margins.topPx, 48);
   assert.equal(g.margins.rightPx, 48);
   assert.equal(Math.round(g.margins.bottomPx * 10) / 10, 28.8);
   assert.equal(g.margins.leftPx, 48);
 });
-test('every paper the engine names, and its WxHin custom size (#42)', () => {
+test("every paper the engine names, and its WxHin custom size (#42)", () => {
   // A4 keeps the reader's 210mm, 0.03px off Word's 11906 twips.
-  const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.05, `${actual} ≈ ${expected}`);
+  const close = (actual, expected) =>
+    assert.ok(Math.abs(actual - expected) < 0.05, `${actual} ≈ ${expected}`);
   // The engine's WORD_PAGE_SIZES in twips, short side first; twips / 15 = CSS px.
-  const papers = {Letter: [12240, 15840], Legal: [12240, 20160], Executive: [10440, 15120], Tabloid: [15840, 24480],
-    Ledger: [15840, 24480], A3: [16838, 23811], A4: [11906, 16838], A5: [8391, 11906], 'B4 (JIS)': [14570, 20636], 'B5 (JIS)': [10318, 14570]};
+  const papers = {
+    Letter: [12240, 15840],
+    Legal: [12240, 20160],
+    Executive: [10440, 15120],
+    Tabloid: [15840, 24480],
+    Ledger: [15840, 24480],
+    A3: [16838, 23811],
+    A4: [11906, 16838],
+    A5: [8391, 11906],
+    "B4 (JIS)": [14570, 20636],
+    "B5 (JIS)": [10318, 14570],
+  };
   for (const [name, [short, long]] of Object.entries(papers)) {
     const portrait = read(`${name} portrait, margins 1in, header/footer 0.5in`);
     assert.deepEqual(portrait.warnings, [], name);
@@ -113,11 +148,26 @@ test('every paper the engine names, and its WxHin custom size (#42)', () => {
     close(landscape.page.widthPx, long / 15);
     close(landscape.page.heightPx, short / 15);
   }
-  for (const [page, w, h] of [['6x9in portrait', 576, 864], ['9x6in landscape', 864, 576], ['5.83x8.27in portrait', 5.83 * 96, 8.27 * 96]]) {
+  for (const [page, w, h] of [
+    ["6x9in portrait", 576, 864],
+    ["9x6in landscape", 864, 576],
+    ["5.83x8.27in portrait", 5.83 * 96, 8.27 * 96],
+  ]) {
     const value = read(`${page}, margins 1in, header/footer 0.5in`);
     assert.deepEqual(value.warnings, [], page);
     close(value.page.widthPx, w);
     close(value.page.heightPx, h);
     assert.equal(value.label, page);
+  }
+});
+
+test("K112: line grids expose their point pitch without using character-only grids", () => {
+  for (const grid of ["line grid", "line and char grid"]) {
+    const geometry = read(`Letter portrait, ${grid} 15.6pt`);
+    assert.equal(geometry.gridPitchPt, 15.6);
+    assert.deepEqual(geometry.warnings, []);
+  }
+  for (const clause of ["", ", char grid 18pt", ", line grid 0pt", ", line grid -1pt"]) {
+    assert.equal(read(`Letter portrait${clause}`).gridPitchPt, undefined);
   }
 });
