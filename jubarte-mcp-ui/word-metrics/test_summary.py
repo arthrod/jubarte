@@ -232,6 +232,22 @@ def test_closest_baseline_wins_when_two_visual_lines_overlap():
     assert [[b["text"] for b in line["boxes"]] for line in grouped] == [["A"], ["B", "C"]]
 
 
+def test_review_stale_baseline_case_groups_by_nearest_bottom():
+    import summary
+
+    # The #111 round-2 review's case: A2 (bottom 122.0) is 1.48 from B's bottom
+    # and 8.52 from A's, so it joins B, not A; C then joins B too.
+    grouped = summary.visual_lines(
+        [
+            {"page": 1, "text": "A", "xMin": 72, "xMax": 200, "yMin": 100, "yMax": 113.48},
+            {"page": 1, "text": "B", "xMin": 72, "xMax": 200, "yMin": 110, "yMax": 123.48},
+            {"page": 1, "text": "A2", "xMin": 250, "xMax": 300, "yMin": 105, "yMax": 122.0},
+            {"page": 1, "text": "C", "xMin": 350, "xMax": 400, "yMin": 107.52, "yMax": 121.0},
+        ]
+    )
+    assert [[b["text"] for b in line["boxes"]] for line in grouped] == [["A"], ["B", "A2", "C"]]
+
+
 def test_review_abc_chain_still_has_no_bogus_pitch():
     from summary import line_metrics
 
