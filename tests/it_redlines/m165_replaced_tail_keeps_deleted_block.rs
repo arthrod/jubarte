@@ -23,9 +23,17 @@
 //! The pairs are synthetic, in the shape that reaches the page: a next whose
 //! first numbered heading follows a table and is itself followed by one,
 //! closing on an empty paragraph.
+//!
+//! The nest asks that every paragraph ahead of the deleted run disappears on
+//! rejection: its mark is inserted and nothing of base is under it. Inserted
+//! text is not enough. On a paragraph mark that stays it rejects to an empty
+//! paragraph, which keeps its section break and its bookmarks: base's
+//! structure ahead of the deleted run. The last tests feed that shape to the
+//! pass directly, as the finalizer receives it.
 
 use std::io::{Cursor, Read};
 
+use jubarte::comparer::finalize::splice_trailing_short_pure_dels_midstream;
 use jubarte::comparer::{CompareMode, WmlComparerSettings};
 use jubarte::document_comparer::compare_documents_with_settings;
 use jubarte::namespaces::W;
@@ -204,10 +212,97 @@ fn deleted(docx: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// The block of base's deleted title, [`BASE_TAIL`]'s first paragraph.
+fn title_block(dom: &Dom, root: NodeId) -> Option<usize> {
+    body_blocks(dom, root)
+        .into_iter()
+        .position(|b| text(dom, b) == BASE_TAIL[0])
+}
+
+/// `text` inserted, with revision id `id`.
+fn inserted(text: &str, id: u32) -> String {
+    format!("<w:ins w:id=\"{id}\" w:author=\"Review\"><w:r><w:t>{text}</w:t></w:r></w:ins>")
+}
+
+/// One revised paragraph as the finalizer receives it: `text` under one
+/// `w:ins` or one `w:del`, on a paragraph mark revised the same way.
+fn revised(kind: &str, text: &str, next_id: &mut u32) -> String {
+    let tag = if kind == "ins" { "t" } else { "delText" };
+    let (mark_id, run_id) = (*next_id, *next_id + 1);
+    *next_id += 2;
+    format!(
+        "<w:p><w:pPr><w:rPr><w:{kind} w:id=\"{mark_id}\" w:author=\"Review\"/></w:rPr></w:pPr>\
+         <w:{kind} w:id=\"{run_id}\" w:author=\"Review\">\
+         <w:r><w:{tag}>{text}</w:{tag}></w:r></w:{kind}></w:p>"
+    )
+}
+
+/// A redline as the finalizer receives it, parsed: `first` standing at block
+/// `at` among 44 structurally inserted paragraphs whose fifth is next's
+/// first numbered heading, then base's three deleted paragraphs. The shape
+/// is the review of #172's direct probe: base's short title is block 45, and
+/// the pass moves it to the block after the numbered heading, 6 when `at` is
+/// ahead of it ([`FIRST`]) and 5 when it is behind ([`BEHIND`]).
+fn finalizer_input(first: &str, at: usize) -> (Dom, NodeId) {
+    let mut next_id = 10;
+    let mut blocks: Vec<String> = (1..45)
+        .map(|i| {
+            revised(
+                "ins",
+                if i == 5 {
+                    "1. First section"
+                } else {
+                    "New body"
+                },
+                &mut next_id,
+            )
+        })
+        .collect();
+    blocks.insert(at, first.to_string());
+    blocks.extend(
+        BASE_TAIL
+            .iter()
+            .map(|line| revised("del", line, &mut next_id)),
+    );
+    parse(&format!(
+        "<w:document xmlns:w=\"{}\"><w:body>{}<w:sectPr/></w:body></w:document>",
+        docx::W_NS,
+        blocks.concat()
+    ))
+}
+
+/// `first` stands at block 0, as in the review's probe.
+const FIRST: usize = 0;
+
+/// `first` stands at block 20, behind the numbered heading the title would
+/// move to: the move would cross it.
+const BEHIND: usize = 20;
+
+/// The pass leaves the input whole: `first` is base's structure ahead of
+/// the deleted run, so the short title stays in its block, whether the move
+/// would cross `first` or not.
+fn keeps_the_block_whole(shape: &str, first: &str) {
+    for at in [FIRST, BEHIND] {
+        let (mut dom, root) = finalizer_input(first, at);
+        let before = dom.serialize_element(root);
+        splice_trailing_short_pure_dels_midstream(&mut dom, root);
+        assert_eq!(
+            title_block(&dom, root),
+            Some(45),
+            "{shape}, block {at}: the pass moves base's deleted title out of its block"
+        );
+        assert_eq!(
+            dom.serialize_element(root),
+            before,
+            "{shape}, block {at}: the pass rewrites the body"
+        );
+    }
+}
+
 /// The text of each body paragraph and table cell paragraph under `root`,
-/// in order, without a closing empty paragraph.
+/// in order, closing empty paragraphs included.
 fn texts(dom: &Dom, root: NodeId) -> Vec<String> {
-    let mut out: Vec<String> = body_blocks(dom, root)
+    body_blocks(dom, root)
         .into_iter()
         .flat_map(|b| {
             if dom.name_is(b, &W::tbl()) {
@@ -217,11 +312,7 @@ fn texts(dom: &Dom, root: NodeId) -> Vec<String> {
             }
         })
         .map(|p| text(dom, p))
-        .collect();
-    while out.last().is_some_and(|t| t.is_empty()) {
-        out.pop();
-    }
-    out
+        .collect()
 }
 
 /// Source paragraphs as [`texts`] reads them.
@@ -231,12 +322,24 @@ fn source(docx: &[u8]) -> Vec<String> {
 }
 
 /// Accepting the redline reads the revised document, rejecting it the
-/// original, in both orders.
+/// original, in both orders. Closing empty paragraphs count.
 #[test]
 fn both_orders_accept_and_reject_to_the_two_documents() {
     let (original, revised) = (base(true), next());
     let (expected_rejected, expected_accepted) = (source(&original), source(&revised));
     for mode in [CompareMode::Word, CompareMode::WordWindows] {
+        // #171: Windows Word 2024's order loses next's closing empty
+        // paragraph on Accept All, and nothing else. In the redline that
+        // paragraph is only the mark of base's last deleted paragraph
+        // (`INSERTED`); the order stands that paragraph with the deleted
+        // block behind the title, its mark deleted, and ends on next's last
+        // inserted paragraph. The base branch (20e3c3662) reads the same:
+        // the final mark's pairing is issue #171, and it is not fixed here.
+        let expected_accepted = if mode == CompareMode::WordWindows {
+            expected_accepted[..expected_accepted.len() - 1].to_vec()
+        } else {
+            expected_accepted.clone()
+        };
         let out = redline(&original, &revised, mode);
         let (mut dom, root) = parse(&part(&out, "word/document.xml"));
         let accepted = accept_revisions_document(&mut dom, root);
@@ -315,4 +418,67 @@ fn a_whole_body_replacement_still_nests_its_short_title() {
         "the other deleted paragraphs keep base's order at the end"
     );
     crate::common::validity::assert_word_valid_package(&out);
+}
+
+/// The review of #172: the gate read a paragraph's text, and inserted text
+/// on a paragraph mark that stays passed it. Rejecting leaves the empty
+/// paragraph behind, so base's structure stands ahead of the deleted run
+/// and the title stays in its block.
+#[test]
+fn inserted_text_on_a_kept_paragraph_mark_keeps_the_deleted_block_whole() {
+    keeps_the_block_whole(
+        "inserted text on a kept paragraph mark",
+        &format!("<w:p>{}</w:p>", inserted("New start", 1)),
+    );
+}
+
+/// A paragraph mark that stays and ends a section rejects to an empty
+/// paragraph that still ends it.
+#[test]
+fn a_kept_section_break_keeps_the_deleted_block_whole() {
+    keeps_the_block_whole(
+        "a kept section break",
+        &format!(
+            "<w:p><w:pPr><w:sectPr><w:type w:val=\"nextPage\"/></w:sectPr></w:pPr>{}</w:p>",
+            inserted("New start", 1)
+        ),
+    );
+}
+
+/// A bookmark in a paragraph whose mark stays rejects with its paragraph.
+#[test]
+fn a_kept_bookmark_keeps_the_deleted_block_whole() {
+    keeps_the_block_whole(
+        "a kept bookmark",
+        &format!(
+            "<w:p>{}<w:bookmarkStart w:id=\"5\" w:name=\"kept\"/>\
+             <w:bookmarkEnd w:id=\"5\"/></w:p>",
+            inserted("New start", 1)
+        ),
+    );
+}
+
+/// The same paragraph with its mark inserted disappears on rejection: the
+/// whole-body replacement, and the pass still nests the short title beside
+/// next's first numbered heading.
+#[test]
+fn a_structurally_inserted_paragraph_still_nests_the_short_title() {
+    let first = format!(
+        "<w:p><w:pPr><w:rPr><w:ins w:id=\"2\" w:author=\"Review\"/></w:rPr></w:pPr>{}</w:p>",
+        inserted("New start", 1)
+    );
+    for (at, beside) in [(FIRST, 6), (BEHIND, 5)] {
+        let (mut dom, root) = finalizer_input(&first, at);
+        splice_trailing_short_pure_dels_midstream(&mut dom, root);
+        assert_eq!(
+            title_block(&dom, root),
+            Some(beside),
+            "block {at}: the short deleted title nests beside next's first numbered heading"
+        );
+        assert_eq!(
+            body_blocks(&dom, root).len(),
+            48,
+            "block {at}: no block is lost"
+        );
+    }
 }

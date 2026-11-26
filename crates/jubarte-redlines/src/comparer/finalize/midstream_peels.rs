@@ -151,12 +151,32 @@ pub fn mark_fully_revised_rows(
 /// after a wholesale insert run and moves it to the next anchor
 /// position inside a TOC / section break / heading paragraph.
 ///
+/// Whether Reject All removes the paragraph `p` itself, mark and all.
+///
+/// The mark must be inserted. Inserted text on a mark that stays rejects to
+/// an empty paragraph, which keeps its section break and its bookmarks: the
+/// paragraph is base's structure, standing ahead of whatever crosses it.
+/// Nothing of base may be under the mark either, or rejection brings it
+/// back or leaves it live: a deleted run returns as text, an unrevised run
+/// stays. That is [`para_replacement_class`]'s `Some(true)` over the body.
+/// A section break and a bookmark of an inserted paragraph are not content:
+/// Reject All takes the break with the mark and lifts the bookmark to the
+/// paragraph after it.
+fn para_disappears_on_rejection(dom: &Dom, p: NodeId) -> bool {
+    para_mark_revision(dom, p, &W::ins())
+        && !para_mark_revision(dom, p, &W::del())
+        && para_replacement_class(dom, p) == Some(true)
+}
+
 /// The numbered-heading anchor moves the short title alone, out of a
 /// block of deleted paragraphs. That is a whole-body replacement's
 /// layout, so it asks that nothing of base stands ahead of the deleted
 /// run: behind a kept title the deleted paragraphs are a tail, and Word
 /// writes the block whole (#165, file_145 × file_146: the heading beside
 /// next's first numbered heading, the other two paragraphs at the end).
+/// A paragraph stands there unless Reject All removes it itself
+/// ([`para_disappears_on_rejection`]): a paragraph of next whose text is
+/// inserted on a mark of base is still base's empty paragraph.
 /// The Tip and TOC anchors move the whole run and keep the block.
 pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     let Some(body) = dom.element(root, &W::body()) else {
@@ -241,9 +261,11 @@ pub fn splice_trailing_short_pure_dels_midstream(dom: &mut Dom, root: NodeId) {
     // A table disappears with its structurally inserted direct rows, including
     // all nested payload owned by those rows. Revised cell text alone cannot
     // establish that ownership: an existing row may still survive rejection.
+    // A paragraph must lose its own mark: inserted text alone leaves base's
+    // empty paragraph behind.
     let disappears_on_rejection = |node| {
         if dom.name_is(node, &W::p()) {
-            return para_replacement_class(dom, node) == Some(true);
+            return para_disappears_on_rejection(dom, node);
         }
         if !dom.name_is(node, &W::tbl()) {
             return false;
