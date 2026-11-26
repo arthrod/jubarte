@@ -158,10 +158,12 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  // Table identity and merge intent remain on nodes; CSS honors non-overlapping merges.
  for(const table of blocks.filter(b=>b.type==='table')){
   const d=table.directives?.find(d=>d.type==='table');
-  // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's,
-  // else the writer's Table Grid, Word's own, which the legend leaves unnamed (write.rs; xml.rs `tight`).
+  // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's.
+  // A legend naming TableGrid but leaving Word's thin border (or naming none) keeps the writer's built-in style,
+  // Word's own tight spacing even though the legend says nothing about it (write.rs; xml.rs `tight`); a different
+  // border makes the style custom and gives its cells no table spacing.
   const tableId=d?.tableStyle??document.metadata?.tableStyle??'TableGrid',tableEntry=document.metadata?.tableStyles?.[tableId];
-  const tableSpacing=tableEntry?tableEntry.cellSpacing:tableId==='TableGrid'?WORD_TABLE_GRID_CELLS:undefined;
+  const tableSpacing=tableEntry?.cellSpacing??(tableId==='TableGrid'&&(!tableEntry?.border||tableEntry.border==='all borders 0.5pt')?WORD_TABLE_GRID_CELLS:undefined);
   if(tableSpacing)for(const row of table.children)for(const cell of row.children)cell.tableSpacing=tableSpacing;
   if(!d)continue;
   // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).

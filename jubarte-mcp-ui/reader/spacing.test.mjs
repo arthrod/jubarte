@@ -388,3 +388,53 @@ test('round 7: id-line spacing rounds to the units Word stores, like cell-group 
   }
   assert.equal(checked, 2961);
 });
+
+test('round 8: a TableGrid legend with borders only keeps Word\'s default cell spacing', async () => {
+  const {parseJubarte} = await import('./jubarte.mjs');
+  // The engine keeps Word's built-in TableGrid style when its legend entry
+  // only names borders: the written style gives cell paragraphs Word's own
+  // `after 0pt line 1`. A custom style based on TableNormal names no Word
+  // default, so its cells fall back to Normal, as before.
+  const cells = (legend) => {
+    const result = parseJubarte(`---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n${legend}---\n\n| A | B |\n|---|---|\n| C | D |\n`);
+    const out = [];
+    result.doc.descendants(node => {
+      if (['td', 'th'].includes(node.type.name)) {
+        const data = node.attrs.data;
+        out.push({
+          tableSpacing: data.tableSpacing,
+          spacing: resolveSpacing(data.cellSpacing, data.documentStyle, result.metadata.styles.Normal, data.tableSpacing),
+        });
+      }
+    });
+    return out;
+  };
+  const plain = cells('');
+  assert.equal(plain.length, 4);
+  for (const cell of plain) {
+    assert.equal(cell.spacing.afterPt, 0);
+    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1});
+  }
+  const grid = cells('  table: TableGrid, all borders 0.5pt\n');
+  assert.equal(grid.length, 4);
+  for (const cell of grid) {
+    assert.deepEqual(cell.tableSpacing, {afterPt: 0, line: {rule: 'auto', multiple: 1}});
+    assert.deepEqual(cell.spacing, plain[0].spacing);
+  }
+  // A TableGrid legend that changes Word's thin border makes the style
+  // custom in the engine too: its cells then get no table spacing either.
+  const thick = cells('  table: TableGrid, all borders 1.5pt\n');
+  assert.equal(thick.length, 4);
+  for (const cell of thick) {
+    assert.equal(cell.tableSpacing, undefined);
+    assert.equal(cell.spacing.afterPt, 8);
+    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1.08});
+  }
+  const custom = cells('  table: Ledger, all borders 0.5pt\n');
+  assert.equal(custom.length, 4);
+  for (const cell of custom) {
+    assert.equal(cell.tableSpacing, undefined);
+    assert.equal(cell.spacing.afterPt, 8);
+    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1.08});
+  }
+});

@@ -2810,6 +2810,13 @@ mod branch_tests {
             r#""\ud83d\ude00", A, cell paragraphs after 6pt"#,
             "__proto__, cell paragraphs after 24pt, constructor, cell paragraphs after 6pt, 5, all borders 0.5pt",
             "tables: A, borders top single 1pt #FF0000, B, cell paragraphs after 6pt",
+            // A TableGrid legend that names only a border still reads as the
+            // built-in style: no cell spacing in the parsed entry (#128).
+            "TableGrid",
+            "TableGrid, all borders 0.5pt",
+            "TableGrid, all borders 1.5pt",
+            "TableGrid, borders vary",
+            "Ledger, all borders 0.5pt",
         ];
         for legend in review_cases {
             cases.push(serde_json::json!({"legend": legend, "expected": expected_for(legend)}));

@@ -246,6 +246,51 @@
   },
   {
     "expected": {
+      "TableGrid": {
+        "border": null,
+        "cellSpacing": null
+      }
+    },
+    "legend": "TableGrid"
+  },
+  {
+    "expected": {
+      "TableGrid": {
+        "border": "all borders 0.5pt",
+        "cellSpacing": null
+      }
+    },
+    "legend": "TableGrid, all borders 0.5pt"
+  },
+  {
+    "expected": {
+      "TableGrid": {
+        "border": "all borders 1.5pt",
+        "cellSpacing": null
+      }
+    },
+    "legend": "TableGrid, all borders 1.5pt"
+  },
+  {
+    "expected": {
+      "TableGrid": {
+        "border": null,
+        "cellSpacing": null
+      }
+    },
+    "legend": "TableGrid, borders vary"
+  },
+  {
+    "expected": {
+      "Ledger": {
+        "border": "all borders 0.5pt",
+        "cellSpacing": null
+      }
+    },
+    "legend": "Ledger, all borders 0.5pt"
+  },
+  {
+    "expected": {
       "S": {
         "border": null,
         "cellSpacing": {
