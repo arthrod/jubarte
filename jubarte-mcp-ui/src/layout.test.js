@@ -1030,3 +1030,39 @@ describe("a paragraph draws in its style's font: local first, then the bundled t
     done();
   });
 });
+
+describe("each block carries the spacing Word applies to it (#101)", () => {
+  const doc = (styles, body) =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${styles}---\n\n${body}`;
+  const spacingOf = (composed, text) =>
+    composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs.spacing;
+  it("a paragraph's own clause wins, its style fills the rest, and Normal the rest of that", () => {
+    const { composed, done } = compose(
+      doc(
+        "  Tight: Calibri 11pt, before 12pt, line 18pt exact, contextual spacing\n",
+        "<!-- p0 -->\nPLAIN\n\n<!-- p1 Tight -->\nSTYLED\n\n<!-- p2 Tight, after 0pt, before auto -->\nOWN\n",
+      ),
+    );
+    expect(spacingOf(composed, "PLAIN")).toEqual({
+      beforePt: 0, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "auto", multiple: 1.08 }, contextual: false,
+    });
+    expect(spacingOf(composed, "STYLED")).toEqual({
+      beforePt: 12, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "exact", points: 18 }, contextual: true,
+    });
+    expect(spacingOf(composed, "OWN")).toMatchObject({ beforeAuto: true, afterPt: 0, line: { rule: "exact", points: 18 } });
+    done();
+  });
+  it("a cell's paragraphs take their cell group's spacing over Normal's", () => {
+    const table = [
+      "<!-- t0 1x2, cells p1-p2 by row, p1-p2 before 0pt after 0pt -->",
+      "| LEFT | RIGHT |",
+      "|---|---|",
+      "",
+    ].join("\n");
+    const { composed, done } = compose(doc("", `<!-- p0 -->\nLEAD\n\n${table}`));
+    const cells = composed.snapshot.blocks.find((b) => b.type === "table").rows[0].cells;
+    for (const cell of cells) expect(cell.blocks[0].attrs.spacing).toMatchObject({ beforePt: 0, afterPt: 0 });
+    expect(spacingOf(composed, "LEAD").afterPt).toBe(8);
+    done();
+  });
+});

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {parseSpacing, takeSpacing} from './spacing.mjs';
 import YAML from 'yaml';
 
 /**
@@ -154,6 +155,16 @@ function parseClause(raw, context) {
   }
   const NUM = '(\\d+(?:\\.\\d*)?|\\.\\d+)';
   if ((match = value.match(new RegExp(`^size\\s+${NUM}pt$`)))) return {...scopedBase, type: 'size', points: Number(match[1])};
+  // Spacing (#101): `before 6pt`, `before auto`, `line 8.65pt exact`, `contextual spacing`.
+  const spacing = parseSpacing(value);
+  if (spacing) return {...scopedBase, type: 'spacing', spacing};
+  // A table line's cell group: `p8-p38 line 8.65pt exact size 9pt mark style`
+  // (from_docx cell_spacings), the cells' spacing and their size.
+  if ((match = value.match(/^p(\d+)(?:-p(\d+))?\s+(.+)$/s))) {
+    const taken = takeSpacing(match[3]);
+    const size = taken.rest.match(new RegExp(`^size\\s+${NUM}pt(?:\\s+mark\\s+style)?$`));
+    if (taken.spacing && (size || !taken.rest)) return {...scopedBase, type: 'cell-format', from: Number(match[1]), to: Number(match[2] ?? match[1]), spacing: taken.spacing, points: size ? Number(size[1]) : null};
+  }
   // A table line sizes its cells' paragraphs: `p153-p249 size 10pt`, among
   // the space-joined words the engine writes for a cell group
   // (`p8-p38 line 8.65pt exact size 9pt mark style`; from_docx cell_spacings).
@@ -201,6 +212,11 @@ function normalizeDirective(directive) {
       case 'cells': properties.cells = clause; break;
       case 'size': properties.fontSizePt = clause.points; break;
       case 'cell-size': (properties.cellSizes ??= []).push({from: clause.from, to: clause.to, points: clause.points}); break;
+      case 'spacing': properties.spacing = {...properties.spacing, ...clause.spacing}; break;
+      case 'cell-format':
+        (properties.cellSpacings ??= []).push({from: clause.from, to: clause.to, spacing: clause.spacing});
+        if (clause.points != null) (properties.cellSizes ??= []).push({from: clause.from, to: clause.to, points: clause.points});
+        break;
       case 'widths': properties.columnWidthsIn = clause.inches; break;
       case 'header-row': properties.headerRowRepeats = true; break;
       case 'cant-split': properties.cantSplitRows = [...(properties.cantSplitRows || []), ...clause.rows]; break;
@@ -326,6 +342,7 @@ function parseStyle(raw, key, warnings) {
     else if (['keep-next', 'keep-lines', 'page-break-before'].includes(value)) { style[value.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = true; clause = {type: value}; }
     // A style's own indents (#96): `indent` is w:ind's left, `right Xin` its right (`right` alone is the alignment).
     else if ((match = value.match(/^(indent|right|first-line|hanging)\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))in$/))) { const kind = match[1] === 'indent' ? 'left' : match[1]; style.indents = {...style.indents, [kind]: Number(match[2])}; clause = {type: 'indent', kind, inches: Number(match[2])}; }
+    else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))pt\s+(exact|atLeast)$/))) { style.line = {rule: match[2], points: Number(match[1])}; clause = {type: 'line-height', rule: match[2], points: Number(match[1])}; }
     else if (value === 'contextual spacing') { style.contextualSpacing = true; clause = {type: 'contextual-spacing'}; }
     else if ((match = value.match(/^all borders\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { style.borders = {allPt: Number(match[1])}; clause = {type: 'borders', points: Number(match[1])}; }
     else if ((match = value.match(/^(.*?)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) {

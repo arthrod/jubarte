@@ -16,6 +16,7 @@ This folder holds the evidence for the card's line and page metrics (#61): small
 | `ytable.py` | every text line of a PDF with its page and box, in points (`pdftotext -bbox-layout`) |
 | `summary.py` | each labelled paragraph's page, top, gap from the one before, and line pitch |
 | `word/summary.txt` | `summary.py` over all of Word's PDFs |
+| `views/*.md` | the engine's read view of each fixture (`jubarte read docx/NAME.docx`), which `reader/spacing.test.mjs` parses (#101); regenerate after an engine change to the view |
 
 Rebuild the fixtures with `python3 make.py`, and the PDFs from the bench root with `uv run python scripts/word_pdf.py -s …/word-metrics/docx -o …/word-metrics/word --no-one-osascript`.
 
