@@ -2610,28 +2610,56 @@ mod branch_tests {
             }
             serde_json::Value::Object(obj)
         }
+        fn style_entry_json(
+            border: Option<&TableBorders>,
+            name: Option<String>,
+            spacing: Option<&str>,
+        ) -> serde_json::Value {
+            let mut entry = serde_json::Map::new();
+            entry.insert(
+                "border".into(),
+                border
+                    .map(border_clause)
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            // `named` changes the writer's choice of TableGrid template, so
+            // the reader must carry it too (#128 review finding 1).
+            entry.insert(
+                "name".into(),
+                name.map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            entry.insert(
+                "cellSpacing".into(),
+                spacing
+                    .map(cell_spacing_json)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            serde_json::Value::Object(entry)
+        }
         fn expected_for(legend: &str) -> serde_json::Value {
             let mut map = serde_json::Map::new();
             let mut rest = legend.trim();
-            while let Some(((id, (border, _name, spacing)), next)) = table_style_entry(rest) {
-                let mut entry = serde_json::Map::new();
-                entry.insert(
-                    "border".into(),
-                    border
-                        .as_ref()
-                        .map(border_clause)
-                        .map(serde_json::Value::String)
-                        .unwrap_or(serde_json::Value::Null),
+            while let Some(((id, (border, name, spacing)), next)) = table_style_entry(rest) {
+                map.insert(
+                    id,
+                    style_entry_json(border.as_ref(), name, spacing.as_deref()),
                 );
-                entry.insert(
-                    "cellSpacing".into(),
-                    spacing
-                        .as_ref()
-                        .map(|s| cell_spacing_json(s))
-                        .unwrap_or(serde_json::Value::Null),
-                );
-                map.insert(id, serde_json::Value::Object(entry));
                 rest = next;
+            }
+            serde_json::Value::Object(map)
+        }
+        /// The singular `table:` line reads only its first entry, as
+        /// `table_style` does; the plural `tables:` line is `expected_for`.
+        fn expected_for_singular(legend: &str) -> serde_json::Value {
+            let yaml = format!("styles:\n  table: {legend}\n");
+            let mut map = serde_json::Map::new();
+            if let Some((id, (border, name, spacing))) = table_style(&yaml) {
+                map.insert(
+                    id,
+                    style_entry_json(border.as_ref(), name, spacing.as_deref()),
+                );
             }
             serde_json::Value::Object(map)
         }
@@ -2810,16 +2838,42 @@ mod branch_tests {
             r#""\ud83d\ude00", A, cell paragraphs after 6pt"#,
             "__proto__, cell paragraphs after 24pt, constructor, cell paragraphs after 6pt, 5, all borders 0.5pt",
             "tables: A, borders top single 1pt #FF0000, B, cell paragraphs after 6pt",
-            // A TableGrid legend that names only a border still reads as the
-            // built-in style: no cell spacing in the parsed entry (#128).
+            // Table Grid boundary: a thin border keeps Word's built-in while
+            // a thick border or a name drops it. These are plural `tables:`
+            // entries here; the singular cases below pin `table_style` (#128).
             "TableGrid",
             "TableGrid, all borders 0.5pt",
             "TableGrid, all borders 1.5pt",
             "TableGrid, borders vary",
+            "TableGrid, all borders 0.5pt, named \"My Grid\"",
+            "TableGrid, named \"Table Grid\"",
+            "TableGrid, all borders 0.5pt, named \"\"",
+            "TableGrid, cell paragraphs after 1 lines",
+            "TableGrid, cell paragraphs before 1.5 lines after 0pt",
+            "LightShading-Accent1, borders vary",
+            "LightShading-Accent1, borders vary, named \"My Shading\", cell paragraphs after 6pt",
+            "MediumList1-Accent1, borders vary",
             "Ledger, all borders 0.5pt",
         ];
         for legend in review_cases {
             cases.push(serde_json::json!({"legend": legend, "expected": expected_for(legend)}));
+        }
+        // The singular legend's first-only rule changes which entry a table
+        // without a directive gets; a corpus built only from `tables:` could
+        // never fail for it (review finding 3).
+        for legend in [
+            "TableGrid, all borders 0.5pt, named \"My Grid\"",
+            "TableGrid, all borders 0.5pt, named \"\"",
+            "A, cell paragraphs after 6pt, B, cell paragraphs after 12pt",
+            "TableGrid, cell paragraphs after 6pt, TableGrid, cell paragraphs after 0pt",
+            "Ledger, all borders 1pt, TableGrid, all borders 1.5pt",
+            "Ledger, cell paragraphs after 6pt, TableGrid, cell paragraphs after 0pt",
+        ] {
+            cases.push(serde_json::json!({
+                "kind": "table",
+                "legend": legend,
+                "expected": expected_for_singular(legend),
+            }));
         }
         // Every side, value, size spelling and spacing word gets its own
         // case, so the corpus cannot pass by never generating e.g. insideV.

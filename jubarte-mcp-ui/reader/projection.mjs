@@ -6,6 +6,40 @@ import {pictureMime} from './pictures.mjs';
 import {decodeString} from 'micromark-util-decode-string';
 // Word's Table Grid gives its cells' paragraphs no space after and single lines (#124).
 const WORD_TABLE_GRID_CELLS=Object.freeze({afterPt:0,line:Object.freeze({rule:'auto',multiple:1})});
+// Every Word Grid/List table template has the same tight `w:pPr`, and the writer
+// keeps it whatever the legend says about borders, names or cell spacing
+// (package.rs `with_table_styles`). Derived from the engine's `word/styles.xml`
+// for each id in `word_table_styles.tsv` (.scratch/bot128/r9/builtins.json).
+const WORD_TIGHT_TABLE_IDS=new Set([
+ 'ColorfulGrid-Accent1', 'ColorfulGrid-Accent2', 'ColorfulGrid-Accent3', 'ColorfulGrid-Accent4', 'ColorfulGrid-Accent5', 'ColorfulGrid-Accent6',
+ 'ColorfulGrid', 'DarkList-Accent1', 'DarkList-Accent2', 'DarkList-Accent3', 'DarkList-Accent4', 'DarkList-Accent5',
+ 'DarkList-Accent6', 'DarkList', 'GridTable1Light-Accent1', 'GridTable1Light-Accent2', 'GridTable1Light-Accent3', 'GridTable1Light-Accent4',
+ 'GridTable1Light-Accent5', 'GridTable1Light-Accent6', 'GridTable2-Accent1', 'GridTable2-Accent2', 'GridTable2-Accent3', 'GridTable2-Accent4',
+ 'GridTable2-Accent5', 'GridTable2-Accent6', 'GridTable3-Accent1', 'GridTable3-Accent2', 'GridTable3-Accent3', 'GridTable3-Accent4',
+ 'GridTable3-Accent5', 'GridTable3-Accent6', 'GridTable4-Accent1', 'GridTable4-Accent2', 'GridTable4-Accent3', 'GridTable4-Accent4',
+ 'GridTable4-Accent5', 'GridTable4-Accent6', 'GridTable5Dark-Accent1', 'GridTable5Dark-Accent2', 'GridTable5Dark-Accent3', 'GridTable5Dark-Accent4',
+ 'GridTable5Dark-Accent5', 'GridTable5Dark-Accent6', 'GridTable6Colorful-Accent1', 'GridTable6Colorful-Accent2', 'GridTable6Colorful-Accent3', 'GridTable6Colorful-Accent4',
+ 'GridTable6Colorful-Accent5', 'GridTable6Colorful-Accent6', 'GridTable6Colorful', 'GridTable7Colorful-Accent1', 'GridTable7Colorful-Accent2', 'GridTable7Colorful-Accent3',
+ 'GridTable7Colorful-Accent4', 'GridTable7Colorful-Accent5', 'GridTable7Colorful-Accent6', 'GridTable7Colorful', 'LightGrid-Accent1', 'LightGrid-Accent2',
+ 'LightGrid-Accent3', 'LightGrid-Accent4', 'LightGrid-Accent5', 'LightGrid-Accent6', 'LightList-Accent1', 'LightList-Accent2',
+ 'LightList-Accent3', 'LightList-Accent4', 'LightList-Accent5', 'LightList-Accent6', 'LightShading-Accent1', 'LightShading-Accent2',
+ 'LightShading-Accent3', 'LightShading-Accent4', 'LightShading-Accent5', 'LightShading-Accent6', 'ListTable1Light-Accent1', 'ListTable1Light-Accent2',
+ 'ListTable1Light-Accent3', 'ListTable1Light-Accent4', 'ListTable1Light-Accent5', 'ListTable1Light-Accent6', 'ListTable2-Accent1', 'ListTable2-Accent2',
+ 'ListTable2-Accent3', 'ListTable2-Accent4', 'ListTable2-Accent5', 'ListTable2-Accent6', 'ListTable3-Accent1', 'ListTable3-Accent2',
+ 'ListTable3-Accent3', 'ListTable3-Accent4', 'ListTable3-Accent5', 'ListTable3-Accent6', 'ListTable4-Accent1', 'ListTable4-Accent2',
+ 'ListTable4-Accent3', 'ListTable4-Accent4', 'ListTable4-Accent5', 'ListTable4-Accent6', 'ListTable5Dark-Accent1', 'ListTable5Dark-Accent2',
+ 'ListTable5Dark-Accent3', 'ListTable5Dark-Accent4', 'ListTable5Dark-Accent5', 'ListTable5Dark-Accent6', 'ListTable6Colorful-Accent1', 'ListTable6Colorful-Accent2',
+ 'ListTable6Colorful-Accent3', 'ListTable6Colorful-Accent4', 'ListTable6Colorful-Accent5', 'ListTable6Colorful-Accent6', 'ListTable6Colorful', 'ListTable7Colorful-Accent1',
+ 'ListTable7Colorful-Accent2', 'ListTable7Colorful-Accent3', 'ListTable7Colorful-Accent4', 'ListTable7Colorful-Accent5', 'ListTable7Colorful-Accent6', 'ListTable7Colorful',
+ 'MediumGrid1-Accent1', 'MediumGrid1-Accent2', 'MediumGrid1-Accent3', 'MediumGrid1-Accent4', 'MediumGrid1-Accent5', 'MediumGrid1-Accent6',
+ 'MediumGrid2-Accent1', 'MediumGrid2-Accent2', 'MediumGrid2-Accent3', 'MediumGrid2-Accent4', 'MediumGrid2-Accent5', 'MediumGrid2-Accent6',
+ 'MediumGrid2', 'MediumGrid3-Accent1', 'MediumGrid3-Accent2', 'MediumGrid3-Accent3', 'MediumGrid3-Accent4', 'MediumGrid3-Accent5',
+ 'MediumGrid3-Accent6', 'MediumList1-Accent1', 'MediumList1-Accent2', 'MediumList1-Accent3', 'MediumList1-Accent4', 'MediumList1-Accent5',
+ 'MediumList1-Accent6', 'MediumList1', 'MediumList2-Accent1', 'MediumList2-Accent2', 'MediumList2-Accent3', 'MediumList2-Accent4',
+ 'MediumList2-Accent5', 'MediumList2-Accent6', 'MediumList2', 'MediumShading1-Accent1', 'MediumShading1-Accent2', 'MediumShading1-Accent3',
+ 'MediumShading1-Accent4', 'MediumShading1-Accent5', 'MediumShading1-Accent6', 'MediumShading2-Accent1', 'MediumShading2-Accent2', 'MediumShading2-Accent3',
+ 'MediumShading2-Accent4', 'MediumShading2-Accent5', 'MediumShading2-Accent6',
+]);
 const mdTypes={paragraph:'p',heading:'h',blockquote:'blockquote',code:'code_block',listItem:'li',table:'table',tableRow:'tr',tableCell:'td',thematicBreak:'hr',footnoteDefinition:'footnote'};
 const offset=n=>n.position?.start?.offset??0;
 const end=n=>n.position?.end?.offset??offset(n);
@@ -159,11 +193,14 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  for(const table of blocks.filter(b=>b.type==='table')){
   const d=table.directives?.find(d=>d.type==='table');
   // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's.
-  // A legend naming TableGrid but leaving Word's thin border (or naming none) keeps the writer's built-in style,
-  // Word's own tight spacing even though the legend says nothing about it (write.rs; xml.rs `tight`); a different
-  // border makes the style custom and gives its cells no table spacing.
+  // Word's Grid/List templates keep their tight `w:pPr` whatever the legend
+  // says. TableGrid keeps its built-in only with no name and no changed border
+  // (write.rs also tests `name.is_none()`); a name or a different border makes
+  // the style custom, so its cells use the legend's `cell paragraphs` or none.
   const tableId=d?.tableStyle??document.metadata?.tableStyle??'TableGrid',tableEntry=document.metadata?.tableStyles?.[tableId];
-  const tableSpacing=tableEntry?.cellSpacing??(tableId==='TableGrid'&&(!tableEntry?.border||tableEntry.border==='all borders 0.5pt')?WORD_TABLE_GRID_CELLS:undefined);
+  const tightCells=s=>s?.afterPt===0&&s.line?.rule==='auto'&&s.line.multiple===1;
+  const tableGridDefault=tableId==='TableGrid'&&tableEntry?.name==null&&(!tableEntry?.border||tableEntry.border==='all borders 0.5pt')&&(!tableEntry?.cellSpacing||tightCells(tableEntry.cellSpacing));
+  const tableSpacing=WORD_TIGHT_TABLE_IDS.has(tableId)||tableGridDefault?WORD_TABLE_GRID_CELLS:tableEntry?.cellSpacing??undefined;
   if(tableSpacing)for(const row of table.children)for(const cell of row.children)cell.tableSpacing=tableSpacing;
   if(!d)continue;
   // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).

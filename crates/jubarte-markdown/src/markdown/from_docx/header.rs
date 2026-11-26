@@ -1168,8 +1168,7 @@ fn cell_paragraph_spacing(styles: &Element, id: &str) -> Option<String> {
         styles
             .children_named("style")
             .find(|s| {
-                s.attr("type") == Some("paragraph")
-                    && matches!(s.attr("default"), Some("1" | "true" | "on"))
+                is_paragraph_style(s) && matches!(s.attr("default"), Some("1" | "true" | "on"))
             })
             .and_then(|s| s.attr("styleId"))
             .map(str::to_string),

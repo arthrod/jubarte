@@ -61,7 +61,7 @@ Hello
   assert.ok(result.metadata.page.widthIn > result.metadata.page.heightIn);
   assert.equal(result.metadata.styles.Normal.fontSizePt, 12);
   assert.equal(result.metadata.styles.Normal.afterPt, 8);
-  assert.equal(result.metadata.styles.Normal.lineHeight, 1.08);
+  assert.equal(result.metadata.styles.Normal.lineHeight, 259 / 240);
   assert.equal(result.metadata.styles['#'].styleId, 'Heading1');
   assert.equal(result.metadata.styles['#'].fontFamily, 'Calibri');
   assert.equal(result.metadata.styles['#'].bold, true);

@@ -32,7 +32,7 @@ const number = (token) => {
   const n = Number(token);
   return Number.isFinite(n) ? n : null;
 };
-const rounded = (n, unit) => {
+export const rounded = (n, unit) => {
   const value = Math.round(n * unit) / unit;
   // Rust serializes -0 as 0; assert.deepStrictEqual tells them apart.
   return Object.is(value, -0) ? 0 : value;
@@ -44,6 +44,28 @@ const points = (token) => {
   if (!match) return null;
   const n = number(match[1]);
   return n === null || n < 0 || n > 1638 ? null : rounded(n, 20);
+};
+
+// An id line reads what a file says, not what Word's dialogs allow:
+// `xml.rs::Spacing::clause` bounds the *stored* count by u32::MAX (#1479).
+const U32_MAX = 0xffffffff;
+const stored = (n, unit) => {
+  const count = Math.round(n * unit);
+  return n >= 0 && count <= U32_MAX ? count / unit : null;
+};
+const idPoints = (token) => {
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(token ?? "");
+  if (!match) return null;
+  const n = number(match[1]);
+  return n === null || !Number.isFinite(n) ? null : stored(n, 20);
+};
+const idLines = (token) => {
+  const n = number(token);
+  return n === null || !Number.isFinite(n) ? null : stored(n, 100);
+};
+const idRatio = (token) => {
+  const n = number(token);
+  return n === null || !Number.isFinite(n) ? null : stored(n, 240);
 };
 
 /**
@@ -107,7 +129,7 @@ const WORDS = [
   [
     new RegExp(String.raw`^(before|after)${GAP}${NUM}pt(?=${GAP}|$)`),
     (m) => {
-      const pt = points(`${m[2]}pt`);
+      const pt = idPoints(`${m[2]}pt`);
       return pt === null ? null : { [`${m[1]}Pt`]: pt };
     },
   ],
@@ -115,26 +137,22 @@ const WORDS = [
   [
     new RegExp(String.raw`^(before|after)${GAP}${NUM}${GAP}lines(?=${GAP}|$)`),
     (m) => {
-      const count = number(m[2]);
-      return count === null || count < 0 || count > 100
-        ? null
-        : { [`${m[1]}Lines`]: rounded(count, 100) };
+      const count = idLines(m[2]);
+      return count === null ? null : { [`${m[1]}Lines`]: count };
     },
   ],
   [
     new RegExp(String.raw`^line${GAP}${NUM}pt${GAP}(exact|atLeast)(?=${GAP}|$)`),
     (m) => {
-      const pt = points(`${m[1]}pt`);
+      const pt = idPoints(`${m[1]}pt`);
       return pt === null ? null : { line: { rule: m[2], points: pt } };
     },
   ],
   [
     new RegExp(String.raw`^line${GAP}${NUM}(?=${GAP}|$)`),
     (m) => {
-      const ratio = number(m[1]);
-      return ratio === null || ratio < 0 || ratio > 132
-        ? null
-        : { line: { rule: "auto", multiple: rounded(ratio, 240) } };
+      const ratio = idRatio(m[1]);
+      return ratio === null ? null : { line: { rule: "auto", multiple: ratio } };
     },
   ],
   [new RegExp(String.raw`^contextual${GAP}spacing${GAP}off(?=${GAP}|$)`), () => ({ contextual: false })],
@@ -183,8 +201,11 @@ export function parseSpacing(text) {
 function styleSpacing(style) {
   if (!style) return {};
   const out = {};
-  if (style.beforePt != null) out.beforePt = style.beforePt;
-  if (style.afterPt != null) out.afterPt = style.afterPt;
+  for (const side of ["before", "after"]) {
+    if (style[`${side}Pt`] != null) out[`${side}Pt`] = style[`${side}Pt`];
+    if (style[`${side}Lines`] != null) out[`${side}Lines`] = style[`${side}Lines`];
+    if (style[`${side}Auto`] != null) out[`${side}Auto`] = style[`${side}Auto`];
+  }
   if (style.line) out.line = style.line;
   else if (style.lineHeight != null) out.line = { rule: "auto", multiple: style.lineHeight };
   if (style.contextualSpacing != null) out.contextual = style.contextualSpacing;
@@ -209,6 +230,11 @@ export function resolveSpacing(own, style, normal, table) {
   const side = (name) => {
     for (const layer of layers) {
       if (layer[`${name}Auto`]) return { pt: 0, auto: true };
+      // `w:{before,after}Lines` is in hundredths of a 240-twip line, so a
+      // line count wins inside its layer and means twelve points per line.
+      if (layer[`${name}Lines`] != null) {
+        return { pt: layer[`${name}Lines`] * 12, auto: false };
+      }
       if (layer[`${name}Pt`] != null) return { pt: layer[`${name}Pt`], auto: false };
     }
     return { pt: 0, auto: false };

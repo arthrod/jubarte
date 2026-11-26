@@ -117,7 +117,7 @@ test("a view's paragraphs carry their spacing, and the legend's styles theirs", 
   );
   assert.deepEqual(
     metadata.styles.Normal.line ?? { rule: "auto", multiple: metadata.styles.Normal.lineHeight },
-    { rule: "auto", multiple: 1.08 },
+    { rule: "auto", multiple: 259 / 240 },
   );
   const byId = Object.fromEntries(
     directives.filter((d) => d.type === "paragraph").map((d) => [d.id, d.properties.spacing]),
@@ -256,12 +256,21 @@ test('table legend differential corpus (JS matches Rust-generated expected, bord
   let failures = 0;
   const first = [];
   for (const c of cases) {
-    const styles = parseTableLegend(c.legend);
+    // `kind: table` is the singular `table:` line: Rust keeps its first entry
+    // only, where `tables:` replaces a repeated id's whole entry.
+    const styles = c.kind === 'table'
+      ? parseSourceDocument(`---\nview: tracked\nstyles:\n  table: ${c.legend}\n---\n`).metadata.tableStyles
+      : parseTableLegend(c.legend);
     const got = Object.fromEntries(Object.entries(styles).map(([id, s]) => [id, {
       border: s.border ?? null,
+      name: s.name ?? null,
       cellSpacing: s.cellSpacing ?? null,
     }]));
-    const want = c.expected;
+    const want = Object.fromEntries(Object.entries(c.expected).map(([id, s]) => [id, {
+      border: s.border ?? null,
+      name: s.name ?? null,
+      cellSpacing: s.cellSpacing ?? null,
+    }]));
     try {
       assert.deepEqual(got, want);
     } catch (e) {
@@ -321,12 +330,14 @@ test('round 6: the reader agrees with Rust on the review findings', () => {
   assert.equal(singular.metadata.tableStyle, 'X');
   assert.equal(Object.getPrototypeOf(singular.metadata.tableStyles), null);
   assert.equal(Object.hasOwn(singular.metadata.tableStyles, 'X'), true);
-  assert.equal(Object.hasOwn(singular.metadata.tableStyles, '5'), true);
+  // The singular line reads one entry, as `table_style` does (review 3).
+  assert.equal(Object.hasOwn(singular.metadata.tableStyles, '5'), false);
 });
 
 // The writer's spellings (crates/jubarte-markdown/src/markdown/from_docx/agent.rs:
-// `line_ratio`, `exact_points`), reproduced here so this test covers every
-// value Word can store, without a Rust build. Rust's `format!("{:.p$}", f64)`
+// `line_ratio`, `exact_points`), reproduced so this sample can be checked
+// without a Rust build. The loops below cover `w:line` 1..960 and `w:after`
+// 0..2000 only, not every value Word can store. Rust's `format!("{:.p$}", f64)`
 // rounds ties to even on the exact binary value (unlike JS `toFixed`).
 function rustFixed(value, places) {
   const view = new DataView(new ArrayBuffer(8));
@@ -428,13 +439,137 @@ test('round 8: a TableGrid legend with borders only keeps Word\'s default cell s
   for (const cell of thick) {
     assert.equal(cell.tableSpacing, undefined);
     assert.equal(cell.spacing.afterPt, 8);
-    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1.08});
+    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 259 / 240});
   }
   const custom = cells('  table: Ledger, all borders 0.5pt\n');
   assert.equal(custom.length, 4);
   for (const cell of custom) {
     assert.equal(cell.tableSpacing, undefined);
     assert.equal(cell.spacing.afterPt, 8);
-    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1.08});
+    assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 259 / 240});
   }
+});
+
+test('round 9: a winning line count wins over lower layers and means 12pt per line', () => {
+  const normal = {afterPt: 8, lineHeight: 1.08};
+  // The engine writes `cell paragraphs after 1 lines` as w:afterLines="100":
+  // hundredths of a 240-twip line, so one line is 12pt.
+  assert.deepEqual(resolveSpacing(undefined, undefined, normal, {afterLines: 1}), {
+    beforePt: 0,
+    afterPt: 12,
+    beforeAuto: false,
+    afterAuto: false,
+    line: {rule: 'auto', multiple: 1.08},
+    contextual: false,
+  });
+  assert.equal(resolveSpacing({beforeLines: 1.5}, {}, {beforePt: 8}).beforePt, 18);
+  // Points and auto keep their existing results, including layer precedence.
+  assert.equal(resolveSpacing({afterPt: 3}, {}, normal, {afterLines: 1}).afterPt, 3);
+  assert.equal(resolveSpacing({}, {}, {beforePt: 8}, {beforeAuto: true}).beforeAuto, true);
+  assert.equal(resolveSpacing(undefined, {afterLines: 2}, normal).afterPt, 24);
+});
+
+test('round 9: the engine\'s named TableGrid and other Word styles keep their tight cell spacing', async () => {
+  const {parseJubarte} = await import('./jubarte.mjs');
+  const cells = (legend) => {
+    const result = parseJubarte(`---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n${legend}---\n\n| A | B |\n|---|---|\n| C | D |\n`);
+    const out = [];
+    result.doc.descendants(node => {
+      if (['td', 'th'].includes(node.type.name)) {
+        const data = node.attrs.data;
+        out.push({
+          tableSpacing: data.tableSpacing,
+          spacing: resolveSpacing(data.cellSpacing, data.documentStyle, result.metadata.styles.Normal, data.tableSpacing),
+        });
+      }
+    });
+    return out;
+  };
+  // write.rs drops Word's TableGrid template when the legend names a style,
+  // even when the name is Word's own (`Table Grid`): presence, not value.
+  for (const legend of [
+    '  table: TableGrid, all borders 0.5pt, named "My Grid"\n',
+    '  table: TableGrid, named "Table Grid"\n',
+    '  table: TableGrid, all borders 0.5pt, named ""\n',
+  ]) {
+    for (const cell of cells(legend)) {
+      assert.equal(cell.tableSpacing, undefined, legend);
+      assert.equal(cell.spacing.afterPt, 8, legend);
+      assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 259 / 240}, legend);
+    }
+  }
+  // Every built-in Word table style carries the same tight w:pPr, whatever
+  // the legend says about its borders, name or cell paragraphs (package.rs).
+  for (const legend of [
+    '  table: LightShading-Accent1, borders vary\n',
+    '  table: LightShading-Accent1, borders vary, named "My Shading", cell paragraphs after 6pt\n',
+    '  table: MediumList1-Accent1, borders vary\n',
+  ]) {
+    for (const cell of cells(legend)) {
+      assert.deepEqual(cell.tableSpacing, {afterPt: 0, line: {rule: 'auto', multiple: 1}}, legend);
+      assert.equal(cell.spacing.afterPt, 0, legend);
+      assert.deepEqual(cell.spacing.line, {rule: 'auto', multiple: 1}, legend);
+    }
+  }
+});
+
+test('round 9: a singular table legend keeps only the first entry, as the engine does', async () => {
+  const {parseJubarte} = await import('./jubarte.mjs');
+  const cells = (legend, directive) => {
+    const result = parseJubarte(`---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n${legend}---\n\n${directive}| A | B |\n|---|---|\n| C | D |\n`);
+    const out = [];
+    result.doc.descendants(node => {
+      if (['td', 'th'].includes(node.type.name)) {
+        const data = node.attrs.data;
+        out.push(resolveSpacing(data.cellSpacing, data.documentStyle, result.metadata.styles.Normal, data.tableSpacing));
+      }
+    });
+    return out;
+  };
+  // The engine's `table_style` reads one entry; `tables:` is the plural map
+  // where a repeated id replaces the whole entry.
+  const singular = parseSourceDocument([
+    '---', 'view: tracked', 'styles:',
+    '  table: A, cell paragraphs after 6pt, B, cell paragraphs after 12pt',
+    '---', '',
+  ].join('\n'));
+  assert.deepEqual(Object.keys(singular.metadata.tableStyles), ['A'], 'singular legend');
+  assert.equal(singular.metadata.tableStyle, 'A');
+
+  const firstOnly = [
+    ['  table: A, cell paragraphs after 6pt, B, cell paragraphs after 12pt\n', '<!-- t0 2x2, style B -->\n', 8, 259 / 240],
+    ['  table: TableGrid, cell paragraphs after 6pt, TableGrid, cell paragraphs after 0pt\n', '', 6, 259 / 240],
+    ['  table: Ledger, all borders 1pt, TableGrid, all borders 1.5pt\n', '<!-- t0 2x2, style TableGrid -->\n', 0, 1],
+    ['  table: Ledger, cell paragraphs after 6pt, TableGrid, cell paragraphs after 0pt\n', '<!-- t0 2x2, style TableGrid -->\n', 0, 1],
+  ];
+  for (const [legend, directive, afterPt, line] of firstOnly) {
+    for (const cell of cells(legend, directive)) {
+      assert.equal(cell.afterPt, afterPt, legend);
+      assert.deepEqual(cell.line, {rule: 'auto', multiple: line}, legend);
+    }
+  }
+});
+
+test('round 9: a legend style rounds spacing to the units the engine stores', () => {
+  const {metadata} = parseSourceDocument([
+    '---', 'view: tracked', 'styles:',
+    '  Normal: Aptos 11pt, after 6.666pt, line 1.038, line 8.655pt exact',
+    '---', '',
+  ].join('\n'));
+  // The engine writes w:after="133" and w:line="249" for these words.
+  assert.equal(metadata.styles.Normal.afterPt, 6.65);
+  assert.equal(metadata.styles.Normal.lineHeight, 1.0375);
+  assert.deepEqual(metadata.styles.Normal.line, {rule: 'exact', points: 8.65});
+});
+
+test('round 9: id-line spacing uses the engine\'s u32 stored-unit bounds', () => {
+  // The engine writes and prints these values: the id-line reader is not
+  // bound by the legend's 1638pt/100 lines/132-ratio limits.
+  assert.deepEqual(parseSpacing('before 101 lines'), {beforeLines: 101});
+  assert.deepEqual(parseSpacing('after 2000pt'), {afterPt: 2000});
+  assert.deepEqual(parseSpacing('line 200'), {line: {rule: 'auto', multiple: 200}});
+  // The legend and cell-clause readers keep their narrower bounds.
+  assert.equal(cellSpacingAttrs('after 2000pt'), null);
+  assert.equal(cellSpacingAttrs('before 101 lines'), null);
+  assert.equal(cellSpacingAttrs('line 200'), null);
 });

@@ -1044,7 +1044,7 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
       ),
     );
     expect(spacingOf(composed, "PLAIN")).toEqual({
-      beforePt: 0, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "auto", multiple: 1.08 }, contextual: false,
+      beforePt: 0, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "auto", multiple: 259 / 240 }, contextual: false,
     });
     expect(spacingOf(composed, "STYLED")).toEqual({
       beforePt: 12, afterPt: 8, beforeAuto: false, afterAuto: false, line: { rule: "exact", points: 18 }, contextual: true,
@@ -1078,8 +1078,9 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
           if (l.runs.some((r) => r.text?.includes(text))) return { page: page.index, y: l.y, advance: l.advance };
     return null;
   };
-  // Calibri 11pt at 1.08: hhea 1.2207 x 11 x 1.08 = 14.50pt (Word draws 14.40).
-  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  // Calibri 11pt at the engine's stored 259/240 (printed as 1.08):
+  // hhea 1.2207 x 11 x 259/240 = 14.50pt (Word draws 14.40).
+  const NORMAL = 1.220703 * 11 * (259 / 240) * PX;
   it("a Normal line is Calibri 11pt at 1.08, and the next paragraph follows after 8pt", () => {
     const { composed, done } = compose(doc("<!-- p0 -->\nALPHA\n\n<!-- p1 -->\nBETA\n"));
     expect(at(composed, "ALPHA")).toMatchObject({ page: 0, y: 0 });
@@ -1209,7 +1210,7 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
 
 describe("table rows and footnotes take Word's line heights (#102)", () => {
   const PX = 4 / 3;
-  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  const NORMAL = 1.220703 * 11 * (259 / 240) * PX;
   const head = (extra = "") =>
     `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${extra}---\n\n`;
   const rowsOf = (composed) => composed.tableFragments[0].rows.map((r) => r.height);
@@ -1317,7 +1318,7 @@ describe("table and footnote slicing keep every line (#119, codex review of #117
 
 describe("pictures take their extent on the page (#95)", () => {
   const PX = 4 / 3;
-  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  const NORMAL = 1.220703 * 11 * (259 / 240) * PX;
   const BELOW = NORMAL - (0.220703 + 0.75) * 11 * PX;
   const EMU = 9525;
   const drawing = (label, w, h, kind = "inline") =>

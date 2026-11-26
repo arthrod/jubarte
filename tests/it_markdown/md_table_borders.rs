@@ -1151,3 +1151,76 @@ fn round6_odd_eighth_border_sizes_round_trip() {
         assert_eq!(view(&write(&rendered)), rendered);
     }
 }
+
+/// ECMA-376 makes `paragraph` the default `w:style/@w:type`. A default style
+/// that omits it still wins over a table style's `w:pPr`, so the legend must
+/// not offer cell spacing Normal already overrides (round 9, CodeAnt 2).
+#[test]
+fn round9_default_style_without_type_wins_over_table_spacing() {
+    let styles = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="{}"><w:style w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:style><w:style w:type="table" w:styleId="Ledger"><w:name w:val="Ledger"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:tblPr><w:tblBorders><w:bottom w:val="double" w:sz="6" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style></w:styles>"#,
+        jubarte::namespaces::W::URI
+    );
+    let parts = [common::docx::Part {
+        name: "word/styles.xml",
+        content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml: &styles,
+    }];
+    let shown = view(&common::docx::docx_with(
+        &table(r#"<w:tblStyle w:val="Ledger"/>"#),
+        &parts,
+    ));
+    assert!(shown.contains("Normal:"), "{shown}");
+    assert!(shown.contains("after 8pt"), "{shown}");
+    assert!(!shown.contains("cell paragraphs"), "{shown}");
+}
+
+/// `write.rs` drops Word's TableGrid template when the legend names a style,
+/// even when the name is Word's own: `name.is_none()` tests presence, not
+/// value. The custom style it writes instead carries no `w:pPr` (round 9,
+/// review finding 1).
+#[test]
+fn round9_a_named_table_grid_drops_words_default() {
+    for name in ["Table Grid", "My Grid", ""] {
+        let markdown = format!(
+            "---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n  table: TableGrid, all borders 0.5pt, named \"{name}\"\n---\n\n<!-- t0 1x1 -->\n| A |\n|---|\n"
+        );
+        let bytes = markdown_to_docx(&markdown, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        let styles = part(&bytes, "word/styles.xml");
+        let style = styles
+            .split("<w:style ")
+            .find(|s| s.contains("w:styleId=\"TableGrid\""))
+            .unwrap_or_else(|| panic!("no TableGrid in {styles}"));
+        let style = &style[..style.find("</w:style>").unwrap()];
+        assert!(
+            style.contains(&format!(r#"<w:name w:val="{name}"/>"#)),
+            "{style}"
+        );
+        assert!(!style.contains("<w:pPr>"), "{style}");
+    }
+}
+
+/// The engine's own `cell paragraphs after 0pt line 1` is the tight spacing
+/// Word already puts in TableGrid; it keeps the built-in template (#124).
+#[test]
+fn round9_words_own_table_grid_spacing_keeps_the_builtin() {
+    let markdown = "---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n  table: TableGrid, cell paragraphs after 0pt line 1\n---\n\n| A |\n|---|\n";
+    let bytes = markdown_to_docx(markdown, &DocxOptions::default())
+        .unwrap()
+        .docx;
+    let styles = part(&bytes, "word/styles.xml");
+    let style = styles
+        .split("<w:style ")
+        .find(|s| s.contains("w:styleId=\"TableGrid\""))
+        .unwrap_or_else(|| panic!("no TableGrid in {styles}"));
+    let style = &style[..style.find("</w:style>").unwrap()];
+    assert!(style.contains(r#"<w:name w:val="Table Grid"/>"#), "{style}");
+    assert!(
+        style.contains(r#"<w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>"#),
+        "{style}"
+    );
+}

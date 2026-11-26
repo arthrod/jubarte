@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {parseSpacing, takeSpacing, cellSpacingAttrs, rustTrim, rustTrimEnd} from './spacing.mjs';
+import {parseSpacing, takeSpacing, cellSpacingAttrs, rounded, rustTrim, rustTrimEnd} from './spacing.mjs';
 import YAML from 'yaml';
 
 /**
@@ -506,6 +506,7 @@ function tableStyleEntry(value) {
     if (clause !== 'borders vary') {
       const look = {};
       if (border != null) look.border = border;
+      if (name != null) look.name = name;
       if (cells != null) look.cellSpacing = cells;
       return [[id, look], rest];
     }
@@ -513,8 +514,20 @@ function tableStyleEntry(value) {
   }
   const look = {};
   if (border != null) look.border = border;
+  if (name != null) look.name = name;
   if (cells != null) look.cellSpacing = cells;
   return [[id, look], ''];
+}
+
+/**
+ * The singular `table:` line reads one entry, as `view_styles.rs::table_style`
+ * does: a second id on the same line is not another legend entry, and a
+ * repeated id does not replace the first (#128 review finding 3).
+ */
+function firstTableStyleEntry(raw) {
+  if (typeof raw !== 'string') return null;
+  const entry = tableStyleEntry(rustTrim(raw));
+  return entry ? {id: entry[0][0], look: entry[0][1]} : null;
 }
 
 function parsePage(raw, warnings, path = 'page', inherited = false) {
@@ -570,12 +583,12 @@ function parseStyle(raw, key, warnings) {
     let match;
     let clause;
     if (ALIGNMENTS.includes(value)) { style.alignment = value; clause = {type: 'alignment', alignment: value}; }
-    else if ((match = value.match(/^(before|after)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { style[`${match[1]}Pt`] = Number(match[2]); clause = {type: 'spacing', side: match[1], points: Number(match[2])}; }
-    else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))$/))) { style.lineHeight = Number(match[1]); clause = {type: 'line-height', multiple: Number(match[1])}; }
+    else if ((match = value.match(/^(before|after)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { const pt = rounded(Number(match[2]), 20); style[`${match[1]}Pt`] = pt; clause = {type: 'spacing', side: match[1], points: pt}; }
+    else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))$/))) { const multiple = rounded(Number(match[1]), 240); style.lineHeight = multiple; clause = {type: 'line-height', multiple}; }
     else if (['keep-next', 'keep-lines', 'page-break-before'].includes(value)) { style[value.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = true; clause = {type: value}; }
     // A style's own indents (#96): `indent` is w:ind's left, `right Xin` its right (`right` alone is the alignment).
     else if ((match = value.match(/^(indent|right|first-line|hanging)\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))in$/))) { const kind = match[1] === 'indent' ? 'left' : match[1]; style.indents = {...style.indents, [kind]: Number(match[2])}; clause = {type: 'indent', kind, inches: Number(match[2])}; }
-    else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))pt\s+(exact|atLeast)$/))) { style.line = {rule: match[2], points: Number(match[1])}; clause = {type: 'line-height', rule: match[2], points: Number(match[1])}; }
+    else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))pt\s+(exact|atLeast)$/))) { const pt = rounded(Number(match[1]), 20); style.line = {rule: match[2], points: pt}; clause = {type: 'line-height', rule: match[2], points: pt}; }
     else if (value === 'contextual spacing') { style.contextualSpacing = true; clause = {type: 'contextual-spacing'}; }
     else if ((match = value.match(/^all borders\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { style.borders = {allPt: Number(match[1])}; clause = {type: 'borders', points: Number(match[1])}; }
     else if ((match = value.match(/^(.*?)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) {
@@ -677,10 +690,10 @@ function normalizeMetadata(data, yamlDocument, options, warnings, agentView, yam
   // one preceding space is not a YAML comment, and the first id is the one a
   // table without its own style takes (#124, #128).
   const tableLegend = parseTableLegend(legendLineFromYaml(yamlText, 'tables: '));
-  const tableStyleLegend = parseTableLegend(legendLineFromYaml(yamlText, 'table: '));
+  const singularStyle = firstTableStyleEntry(legendLineFromYaml(yamlText, 'table: '));
   const tableStyles = Object.create(null);
   for (const [key, value] of Object.entries(tableLegend)) setOwn(tableStyles, key, value);
-  for (const [key, value] of Object.entries(tableStyleLegend)) setOwn(tableStyles, key, value);
+  if (singularStyle) setOwn(tableStyles, singularStyle.id, {styleId: singularStyle.id, ...singularStyle.look});
   return {
     ...data,
     raw: data,
@@ -688,7 +701,7 @@ function normalizeMetadata(data, yamlDocument, options, warnings, agentView, yam
     page: parsePage(data.page, warnings, 'page', !!source),
     styles,
     // The `table:` legend's first named id; integer-like ids keep their place.
-    tableStyle: own(tableStyleLegend, FIRST_TABLE_ID) ? tableStyleLegend[FIRST_TABLE_ID] : null,
+    tableStyle: singularStyle?.id ?? null,
     tableStyles,
     headers: parseStories(data.headers, warnings, 'headers'),
     footers: parseStories(data.footers, warnings, 'footers'),
