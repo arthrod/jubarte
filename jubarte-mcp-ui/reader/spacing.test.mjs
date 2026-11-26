@@ -238,8 +238,14 @@ test('R2-F3 shared table legend cases (JS reads same fixture as Rust)', () => {
   const cases = JSON.parse(readFileSync(new URL('../../tests/fixtures/table_legend_cases.json', import.meta.url), 'utf8'));
   for (const c of cases) {
     const styles = parseTableLegend(c.legend);
-    const got = Object.fromEntries(Object.entries(styles).map(([id, s]) => [id, s.cellSpacing ?? null]));
-    const want = Object.fromEntries(Object.entries(c.styles).map(([id, s]) => [id, s.spacing ?? null]));
+    const got = Object.fromEntries(Object.entries(styles).map(([id, s]) => [id, {
+      border: s.border ?? null,
+      spacing: s.cellSpacing ?? null,
+    }]));
+    const want = Object.fromEntries(Object.entries(c.styles).map(([id, s]) => [id, {
+      border: s.border ?? null,
+      spacing: s.spacing ?? null,
+    }]));
     assert.deepEqual(got, want, c.name);
   }
 });

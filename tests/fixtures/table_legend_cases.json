@@ -3,7 +3,7 @@
     "name": "r2-f1-plural-rejected-spacing-keeps-same-style-border",
     "legend": "Custom, cell paragraphs after 0pt after 6pt, borders top single",
     "styles": {
-      "Custom": { "spacingAttrs": null, "spacing": null }
+      "Custom": { "border": "borders top single", "spacingAttrs": null, "spacing": null }
     }
   },
   {
@@ -11,36 +11,56 @@
     "legend": "Custom, cell paragraphs after 0pt after 6pt, borders top single",
     "kind": "table",
     "styles": {
-      "Custom": { "spacingAttrs": null, "spacing": null }
+      "Custom": { "border": "borders top single", "spacingAttrs": null, "spacing": null }
     }
   },
   {
     "name": "r2-f2-repeated-cell-paragraphs-clause-dropped",
     "legend": "A, cell paragraphs after 6pt, cell paragraphs after 0pt",
     "styles": {
-      "A": { "spacingAttrs": " w:after=\"120\"", "spacing": { "afterPt": 6 } }
+      "A": { "border": null, "spacingAttrs": " w:after=\"120\"", "spacing": { "afterPt": 6 } }
     }
   },
   {
     "name": "r2-f3-duplicate-attribute-rejects-clause",
     "legend": "Custom, cell paragraphs after 0pt after 6pt",
     "styles": {
-      "Custom": { "spacingAttrs": null, "spacing": null }
+      "Custom": { "border": null, "spacingAttrs": null, "spacing": null }
     }
   },
   {
     "name": "r2-f3-bogus-clause-consumed",
     "legend": "A, cell paragraphs bogus",
     "styles": {
-      "A": { "spacingAttrs": null, "spacing": null }
+      "A": { "border": null, "spacingAttrs": null, "spacing": null }
     }
   },
   {
     "name": "review128-rejected-spacing-keeps-next-style",
     "legend": "Custom, cell paragraphs after 0pt after 6pt, Other, cell paragraphs after 0pt",
     "styles": {
-      "Custom": { "spacingAttrs": null, "spacing": null },
-      "Other": { "spacingAttrs": " w:after=\"0\"", "spacing": { "afterPt": 0 } }
+      "Custom": { "border": null, "spacingAttrs": null, "spacing": null },
+      "Other": { "border": null, "spacingAttrs": " w:after=\"0\"", "spacing": { "afterPt": 0 } }
+    }
+  },
+  {
+    "name": "r3-f1-empty-clause-skipped-entry-continues",
+    "legend": "A, cell paragraphs after 6pt, , borders top single",
+    "styles": {
+      "A": { "border": "borders top single", "spacingAttrs": " w:after=\"120\"", "spacing": { "afterPt": 6 } }
+    }
+  },
+  {
+    "name": "r3-f2-leading-cell-paragraphs-clause-gives-no-entry",
+    "legend": "cell paragraphs after 6pt",
+    "styles": {}
+  },
+  {
+    "name": "r3-f3-single-quoted-id-splits-like-double-quote-only",
+    "legend": "'A, B', cell paragraphs after 6pt",
+    "styles": {
+      "'A": { "border": null, "spacingAttrs": null, "spacing": null },
+      "B'": { "border": null, "spacingAttrs": " w:after=\"120\"", "spacing": { "afterPt": 6 } }
     }
   }
 ]

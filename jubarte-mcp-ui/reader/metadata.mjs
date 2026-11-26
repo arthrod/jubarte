@@ -34,11 +34,8 @@ export function splitClauses(value, separator = ',') {
     const c = value[i];
     if (quote) {
       if (c === '\\' && quote === '"') i++;
-      else if (c === quote) {
-        if (quote === "'" && value[i + 1] === "'") i++;
-        else quote = null;
-      }
-    } else if (c === '"' || c === "'") quote = c;
+      else if (c === '"') quote = null;
+    } else if (c === '"') quote = c;
     else if ('([{'.includes(c)) depth++;
     else if (')]}'.includes(c)) depth = Math.max(0, depth - 1);
     else if (c === separator && depth === 0) {
@@ -318,7 +315,7 @@ export function parseTableLegend(raw) {
       continue;
     }
     if (current && value === 'borders vary') continue;
-    if (current && !hasBorder && tableBorderClause(value)) { hasBorder = true; continue; }
+    if (current && !hasBorder && tableBorderClause(value)) { current.border = value; hasBorder = true; continue; }
     if (current && !hasName && value.startsWith('named ')) {
       const name = value.slice(6).trim();
       try {
@@ -326,7 +323,7 @@ export function parseTableLegend(raw) {
       } catch { /* A malformed quoted name starts a new entry, as in view_styles.rs. */ }
     }
     const id = value.startsWith('"') && value.endsWith('"') && value.length > 1 ? decodeLabel(value.slice(1, -1)) : value;
-    if (!id) { current = null; continue; }
+    if (!id) { continue; }
     current = out[id] ??= {styleId: id};
     hasBorder = hasName = hasSpacing = false;
   }

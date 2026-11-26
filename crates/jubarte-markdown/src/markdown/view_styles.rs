@@ -688,13 +688,35 @@ pub(crate) type TableLook = (Option<TableBorders>, Option<String>, Option<String
 type TableStyleEntry = (String, TableLook);
 
 fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
-    let (id, mut rest) = take_clause(value);
-    let id = unquote(id.trim()).filter(|id| !id.is_empty())?;
+    let mut rest = value;
+    let id = loop {
+        let (clause, next) = take_clause(rest);
+        rest = next;
+        let Some(id) = unquote(clause.trim()).filter(|id| !id.is_empty()) else {
+            if rest.is_empty() {
+                return None;
+            }
+            continue;
+        };
+        // A cell-paragraphs clause belongs to a style entry; at the front,
+        // with no style id, it is dropped and never becomes a style id (R2-F2).
+        if id.starts_with("cell paragraphs ") {
+            if rest.is_empty() {
+                return None;
+            }
+            continue;
+        }
+        break id;
+    };
     let mut border = None;
     let mut name = None;
     let mut cells = None;
     while !rest.is_empty() {
         let (clause, next) = take_clause(rest);
+        if clause.trim().is_empty() {
+            rest = next;
+            continue;
+        }
         if border.is_none()
             && let Some(pt) = clause
                 .strip_prefix("all borders ")
@@ -715,8 +737,7 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
             name = Some(named);
         } else if let Some(words) = clause.strip_prefix("cell paragraphs ") {
             // A cell-paragraphs clause is consumed whole: malformed, duplicated,
-            // or repeated, it is dropped and parsing continues on this style.
-            // No clause text ever becomes a style id (R2-F1/F2).
+            // or repeated, it is dropped and never becomes a style id (R2-F1/F2).
             if cells.is_none()
                 && let Some(attrs) = cell_spacing_attrs(words)
             {
@@ -2398,6 +2419,49 @@ mod branch_tests {
     /// two parsers cannot drift on malformed, duplicated, or repeated clauses.
     #[test]
     fn r2_f3_shared_table_legend_cases() {
+        fn border_clause(b: &TableBorders) -> String {
+            match b {
+                TableBorders::All(eighths) => {
+                    let pt = *eighths as f64 / 8.0;
+                    let s = format!("{pt:.2}");
+                    format!(
+                        "all borders {}pt",
+                        s.trim_end_matches('0').trim_end_matches('.')
+                    )
+                }
+                TableBorders::Sides(sides) => {
+                    let parts: Vec<String> = sides
+                        .iter()
+                        .map(|s| {
+                            let mut out = format!("{} {}", s.side, s.val);
+                            if let Some(sz) = s.size {
+                                let pt = sz as f64 / 8.0;
+                                let p = format!("{pt:.2}");
+                                let _ = std::fmt::Write::write_fmt(
+                                    &mut out,
+                                    format_args!(
+                                        " {}pt",
+                                        p.trim_end_matches('0').trim_end_matches('.')
+                                    ),
+                                );
+                            }
+                            if let Some(color) = &s.color {
+                                let _ =
+                                    std::fmt::Write::write_fmt(&mut out, format_args!(" #{color}"));
+                            }
+                            if let Some(space) = s.space {
+                                let _ = std::fmt::Write::write_fmt(
+                                    &mut out,
+                                    format_args!(" space {space}pt"),
+                                );
+                            }
+                            out
+                        })
+                        .collect();
+                    format!("borders {}", parts.join(" "))
+                }
+            }
+        }
         let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
             "../../../../tests/fixtures/table_legend_cases.json"
         ))
@@ -2412,21 +2476,26 @@ mod branch_tests {
                     let yaml = format!("styles:\n  table: {legend}\n");
                     table_style(&yaml)
                         .into_iter()
-                        .map(|(id, (_border, _name, spacing))| (id, (None, spacing)))
+                        .map(|(id, (border, _name, spacing))| {
+                            (id, (border.as_ref().map(border_clause), spacing))
+                        })
                         .collect()
                 } else {
                     let yaml = format!("styles:\n  tables: {legend}\n");
                     table_legend(&yaml)
                         .into_iter()
-                        .map(|(id, (_border, _name, spacing))| (id, (None, spacing)))
+                        .map(|(id, (border, _name, spacing))| {
+                            (id, (border.as_ref().map(border_clause), spacing))
+                        })
                         .collect()
                 };
             let wanted: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
                 expected
                     .iter()
                     .map(|(id, v)| {
+                        let border = v["border"].as_str().map(str::to_string);
                         let spacing = v["spacingAttrs"].as_str().map(str::to_string);
-                        (id.clone(), (None, spacing))
+                        (id.clone(), (border, spacing))
                     })
                     .collect();
             assert_eq!(actual, wanted, "{name}");
