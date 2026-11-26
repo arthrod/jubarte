@@ -11,8 +11,10 @@
 //! #2555 — the hardening: the inline pass partitions within each
 //! (author, date) group and orders an all-one-kind hyperlink with its
 //! kind; the paragraph pass classifies runs behind containers, walks the
-//! text-box, content-control and comment bodies, and leaves section-break
-//! paragraphs and the story's final pilcrow where they stand.
+//! text-box and content-control bodies, steps over the indentation
+//! between two paragraphs, and leaves section-break paragraphs and the
+//! story's final pilcrow where they stand. A comment body is no container
+//! of it: the comparison never gives it one.
 
 use super::*;
 
@@ -785,14 +787,14 @@ fn runs_behind_containers_count_as_whole_revised() {
     }
 }
 
-// ---- #2555: the paragraph pass walks the text-box, content-control and
-// comment bodies ----
+// ---- #2555: the paragraph pass walks the text-box and content-control
+// bodies ----
 
-/// A `w:txbxContent`, `w:sdtContent` and `w:comment` each order their own
+/// A `w:txbxContent` and a `w:sdtContent` each order their own
 /// whole-revised paragraphs, as `w:body` and the other containers do; a
 /// `w:sdt` block between two body paragraphs ends the body's run.
 #[test]
-fn text_boxes_content_controls_and_comment_bodies_order_their_paragraphs() {
+fn text_boxes_and_content_controls_order_their_paragraphs() {
     let run = |first_id: u32| {
         format!(
             "{}{}{}",
@@ -804,15 +806,13 @@ fn text_boxes_content_controls_and_comment_bodies_order_their_paragraphs() {
     let (mut dom, root) = document(&format!(
         concat!(
             r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="tb"><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
-            "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>",
-            "<w:comments><w:comment w:id=\"0\">{}</w:comment></w:comments>"
+            "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>"
         ),
         run(10),
-        run(20),
-        run(30)
+        run(20)
     ));
     reorder_deleted_paragraphs_before_inserted(&mut dom, root);
-    for name in [W::name("txbxContent"), W::sdt_content(), W::comment()] {
+    for name in [W::name("txbxContent"), W::sdt_content()] {
         let container = dom.descendants(root, Some(&name))[0];
         assert_eq!(texts(&dom, container), ["d1", "i1", "i2"], "{name:?}");
     }
@@ -919,4 +919,184 @@ fn paragraphs_never_trade_across_a_table() {
             ]
         )
     );
+}
+
+// ---- the indentation between two paragraphs is no boundary ----
+
+/// The body, the text box and the content control of `root`.
+fn stories(dom: &Dom, root: NodeId) -> Vec<NodeId> {
+    vec![
+        body(dom, root),
+        dom.descendants(root, Some(&W::txbx_content()))[0],
+        dom.descendants(root, Some(&W::sdt_content()))[0],
+    ]
+}
+
+/// True for a text node holding only whitespace.
+fn is_indentation(dom: &Dom, node: NodeId) -> bool {
+    dom.is_text(node) && dom.text_value(node).is_some_and(|t| t.trim().is_empty())
+}
+
+/// What `node` says: the text under it, whitespace text nodes left out.
+fn words(dom: &Dom, node: NodeId) -> String {
+    dom.descendant_nodes(node)
+        .into_iter()
+        .filter(|&n| dom.is_text(n) && !is_indentation(dom, n))
+        .filter_map(|n| dom.text_value(n))
+        .collect()
+}
+
+/// For the body, the text box and the content control of `root`: the local
+/// names of the element children, and what each paragraph among them says.
+fn arranged(dom: &Dom, root: NodeId) -> Vec<(Vec<String>, Vec<String>)> {
+    stories(dom, root)
+        .into_iter()
+        .map(|c| {
+            let said = dom
+                .elements(c, Some(&W::p()))
+                .into_iter()
+                .map(|p| words(dom, p))
+                .collect();
+            (children(dom, c), said)
+        })
+        .collect()
+}
+
+/// The whitespace text nodes directly under the body, the text box and
+/// the content control of `root`, in order.
+fn indentation(dom: &Dom, root: NodeId) -> Vec<Vec<String>> {
+    stories(dom, root)
+        .into_iter()
+        .map(|c| {
+            dom.nodes(c)
+                .into_iter()
+                .filter(|&n| is_indentation(dom, n))
+                .filter_map(|n| dom.text_value(n).map(str::to_string))
+                .collect()
+        })
+        .collect()
+}
+
+/// A text node holding only whitespace — the line break and indentation a
+/// part written with them keeps between two paragraphs — reads as no text
+/// and ends no run. The body, a `w:txbxContent` and a `w:sdtContent`
+/// holding two wholly inserted paragraphs, indentation and a wholly
+/// deleted one come to the same element order as the same tree without
+/// the indentation. The indentation itself stays in the tree: it reads as
+/// nothing, so it is lost nowhere.
+#[test]
+fn indentation_between_paragraphs_does_not_end_the_run() {
+    // Two wholly inserted paragraphs and a wholly deleted one, `separator`
+    // between and around them.
+    let run = |separator: &str| {
+        format!(
+            "{s}{}{s}{}{s}{}{s}",
+            whole("ins", 1, "i1"),
+            whole("ins", 2, "i2"),
+            whole("del", 3, "d1"),
+            s = separator
+        )
+    };
+    let document_with = |separator: &str| {
+        document(&format!(
+            concat!(
+                "{}<w:p><w:r><w:t>kept</w:t></w:r></w:p>",
+                r#"<w:p><w:r><w:pict><v:shape xmlns:v="urn:schemas-microsoft-com:vml" id="tb"><v:textbox><w:txbxContent>{}</w:txbxContent></v:textbox></v:shape></w:pict></w:r></w:p>"#,
+                "<w:sdt><w:sdtPr/><w:sdtContent>{}</w:sdtContent></w:sdt>"
+            ),
+            run(separator),
+            run(separator),
+            run(separator)
+        ))
+    };
+    let (mut compact, compact_root) = document_with("");
+    let (mut indented, indented_root) = document_with("\n      ");
+    let views = (
+        view(&indented, indented_root, true),
+        view(&indented, indented_root, false),
+    );
+    let kept_indentation = indentation(&indented, indented_root);
+    reorder_deleted_paragraphs_before_inserted(&mut compact, compact_root);
+    reorder_deleted_paragraphs_before_inserted(&mut indented, indented_root);
+    // The body's paragraphs, then the text box's story, which the body's
+    // fifth paragraph holds, then the content control's.
+    let expected: [(&[&str], &[&str]); 3] = [
+        (
+            &["p", "p", "p", "p", "p", "sdt", "sectPr"],
+            &["d1", "i1", "i2", "kept", "d1i1i2"],
+        ),
+        (&["p", "p", "p"], &["d1", "i1", "i2"]),
+        (&["p", "p", "p"], &["d1", "i1", "i2"]),
+    ];
+    let arrangement = arranged(&compact, compact_root);
+    for ((names, said), (names_expected, said_expected)) in arrangement.iter().zip(expected) {
+        assert_eq!(names.as_slice(), names_expected);
+        assert_eq!(said.as_slice(), said_expected);
+    }
+    // The same element order as the same tree without the indentation.
+    assert_eq!(
+        arranged(&indented, indented_root),
+        arranged(&compact, compact_root)
+    );
+    assert_eq!(
+        (
+            view(&indented, indented_root, true),
+            view(&indented, indented_root, false),
+        ),
+        views
+    );
+    // The indentation reads as nothing and is lost nowhere: every node is
+    // still under its container, still only whitespace.
+    assert_eq!(indentation(&indented, indented_root), kept_indentation);
+    // Idempotent.
+    let once = indented.serialize_element(indented_root);
+    reorder_deleted_paragraphs_before_inserted(&mut indented, indented_root);
+    assert_eq!(indented.serialize_element(indented_root), once);
+}
+
+/// Only whitespace is transparent. A node between the paragraphs that is
+/// not a whole-revised paragraph still ends the run: text that says
+/// something, or a comment.
+#[test]
+fn anything_else_between_the_paragraphs_still_ends_the_run() {
+    for between in [" stray ", "<!--note-->"] {
+        let (mut dom, root) = document(&format!(
+            "{}{between}{}{between}{}",
+            whole("ins", 1, "i1"),
+            whole("ins", 2, "i2"),
+            whole("del", 3, "d1")
+        ));
+        let before = dom.serialize_element(root);
+        reorder_deleted_paragraphs_before_inserted(&mut dom, root);
+        assert_eq!(dom.serialize_element(root), before, "{between:?}");
+    }
+}
+
+// ---- a comment body is no container of this pass ----
+
+/// The comparison never gives this pass a comment body: the comments part
+/// is carried as a part, and only its anchors reach the result document.
+/// So `w:comment` is not one of the containers, and a comment body the
+/// pass meets keeps its paragraphs as they stand.
+#[test]
+fn a_comment_body_is_no_container_of_the_pass() {
+    let comment = format!(
+        r#"<w:comments><w:comment w:id="0">{}{}{}</w:comment></w:comments>"#,
+        whole("ins", 1, "i1"),
+        whole("ins", 2, "i2"),
+        whole("del", 3, "d1")
+    );
+    // Alone, and between two whole-revised paragraphs of the body, which
+    // it parts: no run trades across it.
+    let between = format!(
+        "{}{comment}{}",
+        whole("del", 4, "d2"),
+        whole("ins", 5, "i3")
+    );
+    for fragment in [comment, between] {
+        let (mut dom, root) = document(&fragment);
+        let before = dom.serialize_element(root);
+        reorder_deleted_paragraphs_before_inserted(&mut dom, root);
+        assert_eq!(dom.serialize_element(root), before);
+    }
 }

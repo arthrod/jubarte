@@ -198,13 +198,26 @@ pub fn reorder_deletions_before_insertions(dom: &mut Dom, node: NodeId) {
 /// passes write Mac Word's order, the inserted block first; the Windows
 /// pipeline runs this pass in their place, once they have settled the
 /// paragraphs. Under every `w:body`, `w:tc`, `w:footnote`, `w:endnote`,
-/// `w:hdr`, `w:ftr`, `w:txbxContent`, `w:sdtContent` and `w:comment`, take
-/// each maximal run of adjacent whole-deleted and whole-inserted
-/// paragraphs that holds both kinds and stable-partition it, deletions
-/// first (#2555: the merge pass [`merge_replaced_paragraphs_in`] already
-/// walks the text-box, content-control and comment bodies, and so does
-/// this pass; a `w:tbl` or `w:sdt` block between two paragraphs ends the
-/// run, so no paragraph ever trades across one).
+/// `w:hdr`, `w:ftr`, `w:txbxContent` and `w:sdtContent` — the text-box
+/// and content-control bodies among them, as the merge pass
+/// [`merge_replaced_paragraphs_in`] walks them (#2555) — take each maximal
+/// run of adjacent whole-deleted and whole-inserted paragraphs that holds
+/// both kinds and stable-partition it, deletions first (a `w:tbl` or
+/// `w:sdt` block between two paragraphs ends the run, so no paragraph
+/// ever trades across one).
+///
+/// A text node holding only whitespace — the line break and indentation a
+/// part written with them keeps between two paragraphs — reads as no text.
+/// It is the one node below that ends no run: the paragraphs on either
+/// side of it are adjacent, and order as they do in the same tree without
+/// it. The node itself stays in the tree.
+///
+/// A comment body is no container of this pass: no path of the comparison
+/// gives it one. The comments part is carried as a part
+/// ([`crate::comparer::comments::carry_comments`]), never compared
+/// paragraph by paragraph, and only its anchors reach the result
+/// document, so a `w:comment` this pass meets keeps its paragraphs as
+/// they stand.
 ///
 /// A paragraph is whole-deleted when its mark is deleted (`w:pPr/w:rPr/w:del`
 /// and no `w:ins` there) and every `w:r` in it is covered by a `w:del`
@@ -218,9 +231,10 @@ pub fn reorder_deletions_before_insertions(dom: &mut Dom, node: NodeId) {
 /// (`merge_replaced_in_container`). The body's last paragraph, when it
 /// holds no run — the story's final pilcrow, which Word never deletes —
 /// also keeps its place: the story-tail passes have already settled which
-/// paragraph closes the story. Any other node, a mixed paragraph or one
-/// whose mark and runs disagree ends the run. Stable, so accepting and
-/// rejecting each read the same text as before. Idempotent (#2550).
+/// paragraph closes the story. Any other node but that whitespace, a mixed
+/// paragraph or one whose mark and runs disagree ends the run. Stable, so
+/// accepting and rejecting each read the same text as before. Idempotent
+/// (#2550).
 pub fn reorder_deleted_paragraphs_before_inserted(dom: &mut Dom, root: NodeId) {
     let containers = [
         W::body(),
@@ -231,7 +245,6 @@ pub fn reorder_deleted_paragraphs_before_inserted(dom: &mut Dom, root: NodeId) {
         W::ftr(),
         W::txbx_content(),
         W::sdt_content(),
-        W::comment(),
     ];
     for container in dom.descendants_and_self(root, None) {
         if !dom.name(container).is_some_and(|n| containers.contains(&n)) {
@@ -240,6 +253,9 @@ pub fn reorder_deleted_paragraphs_before_inserted(dom: &mut Dom, root: NodeId) {
         let mut kids: Vec<(NodeId, Option<bool>)> = dom
             .nodes(container)
             .into_iter()
+            // Indentation between two paragraphs reads as no text: it
+            // joins no run and ends none, and stays where it is.
+            .filter(|&k| !is_indentation(dom, k))
             .map(|k| (k, whole_revision_kind(dom, k)))
             .collect();
         if dom.name_is(container, &W::body())
@@ -281,6 +297,17 @@ pub fn reorder_deleted_paragraphs_before_inserted(dom: &mut Dom, root: NodeId) {
             start = end;
         }
     }
+}
+
+/// True for a text node holding only whitespace (space, tab, CR, LF): the
+/// line break and indentation a part written with them keeps between its
+/// elements. Word reads no text there, so it neither joins a run of
+/// paragraphs nor ends one.
+fn is_indentation(dom: &Dom, node: NodeId) -> bool {
+    dom.is_text(node)
+        && dom
+            .text_value(node)
+            .is_some_and(|t| t.bytes().all(|b| matches!(b, b' ' | b'\t' | b'\r' | b'\n')))
 }
 
 /// `Some(false)` for a paragraph that is wholly deleted, `Some(true)` for
