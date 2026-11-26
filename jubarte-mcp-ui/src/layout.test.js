@@ -693,7 +693,7 @@ describe("a table's layout and place are Word's (#67, #68, #69)", () => {
 
 describe("a table row splits across pages, as Word's rows do by default (#70)", () => {
   it("a tall row starts under the rows before it and continues on the next page", () => {
-    const cell = Array.from({ length: 6 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
+    const cell = Array.from({ length: 14 }, (_, i) => `ROW2_LINE_${i}_`).join("<br/>");
     const { composed, done } = compose(
       `---\nview: tracked\npage: A4 portrait, margins 1in, header/footer 0.5in\nsections:\n  2: {p1-p3, page: 6x4in landscape, margins 1in, header/footer 0.5in}\n---\n\n<!-- p0 section-break -->\nFIRST\n\n<!-- t0 2x1, cells p1-p2 by row, width auto -->\n|ROW1|\n|-|\n|${cell}|\n\n<!-- p3 empty -->\n`,
     );
@@ -705,8 +705,8 @@ describe("a table row splits across pages, as Word's rows do by default (#70)", 
     expect(onPage(1)).toContain("ROW2_LINE_0");
     // Nothing repeats and nothing is lost: the row continues where page 2 ended.
     const all = composed.layout.pages.map((_, i) => onPage(i)).join(" ");
-    for (let i = 0; i < 6; i++) expect(all.split(`ROW2_LINE_${i}`).length - 1).toBe(1);
-    expect(onPage(2)).toContain("ROW2_LINE_5");
+    for (let i = 0; i < 14; i++) expect(all.split(`ROW2_LINE_${i}_`).length - 1).toBe(1);
+    expect(onPage(2)).toContain("ROW2_LINE_13_");
     done();
   });
 });
@@ -725,13 +725,13 @@ describe("a row Word keeps on one page moves whole (#71)", () => {
         : [],
     );
   it("a cant-split row that fits a page starts on the next one", () => {
-    const { composed, done } = compose(doc71(6, ", cant-split t0.row1"));
+    const { composed, done } = compose(doc71(10, ", cant-split t0.row1"));
     expect(pagesOf(composed, "ROW1")).toEqual([1]);
     expect(pagesOf(composed, "ROW2_LINE_")).toEqual([2]);
     done();
   });
   it("a table's first row, kept on one page, leaves the text above it and moves whole", () => {
-    const cell = Array.from({ length: 5 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
+    const cell = Array.from({ length: 10 }, (_, i) => `ROW2_LINE_${i}`).join("<br/>");
     const source = (clause) =>
       `---\nview: tracked\npage: 6x4in landscape, margins 1in, header/footer 0.5in\n---\n\n<!-- p0 -->\nFIRST  \nSECOND  \nTHIRD\n\n<!-- t0 1x1, cells p1-p1 by row, width auto${clause} -->\n|${cell}|\n|-|\n\n<!-- p2 empty -->\n`;
     const split = compose(source(""));
@@ -1167,5 +1167,100 @@ describe("paragraphs take Word's line heights and spacing, not the 29px grid (#1
     expect(at(composed, "HUGE")).toMatchObject({ page: 1, y: 0 });
     expect(at(composed, "AFTER").page).toBe(2);
     done();
+  });
+});
+
+describe("table rows and footnotes take Word's line heights (#102)", () => {
+  const PX = 4 / 3;
+  const NORMAL = 1.220703 * 11 * 1.08 * PX;
+  const head = (extra = "") =>
+    `---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 8pt, line 1.08, left\n${extra}---\n\n`;
+  const rowsOf = (composed) => composed.tableFragments[0].rows.map((r) => r.height);
+  it("a row is as tall as its cell's lines, with the cell paragraph's own spacing", () => {
+    const { composed, done } = compose(
+      `${head()}<!-- t0 2x1, cells p0-p1 by row, p0-p0 before 0pt after 0pt, width auto -->\n|TIGHT|\n|-|\n|LOOSE|\n`,
+    );
+    const [tight, loose] = rowsOf(composed);
+    // Word's table fixture: a row with no paragraph spacing is its line (word-metrics, `table`).
+    expect(tight).toBeCloseTo(NORMAL, 2);
+    // Normal's space after counts inside a cell too.
+    expect(loose).toBeCloseTo(NORMAL + 8 * PX, 2);
+    done();
+  });
+  it("lines inside a cell advance by Word's line height, not 29px", () => {
+    const { composed, done } = compose(
+      `${head()}<!-- t0 1x1, cells p0-p1 by row, width auto -->\n|CELL_ONE<br/>CELL_TWO|\n|-|\n`,
+    );
+    const cell = composed.tableFragments[0].cells[0];
+    const tops = cell.lines.map((l) => l.y);
+    expect(tops).toHaveLength(2);
+    expect(tops[1] - tops[0]).toBeCloseTo(NORMAL, 2);
+    done();
+  });
+  it("a table whose rows the view names one range each still takes its cells' spacing (b097)", () => {
+    // The engine writes `cells t0.row0 p0-p2 …` when a row's cells do not hold one paragraph each.
+    const { composed, done } = compose(
+      `${head()}<!-- t0 2x2, cells t0.row0 p0-p2 t0.row1 p3-p4, p0-p4 before 0pt after 0pt line 2, width auto -->\n|A|B|\n|-|-|\n|C|D|\n`,
+    );
+    const cell = composed.tableFragments[0].cells.find((c) => c.lines.some((l) => l.runs.some((r) => r.text === "D")));
+    expect(cell.lines[0].advance).toBeCloseTo(2 * 1.220703 * 11 * PX, 2);
+    expect(composed.diagnostics?.find?.((d) => /cells t0/.test(d.message ?? ""))).toBeUndefined();
+    done();
+  });
+  it("footnote lines advance by the footnote style's height, not 29px", () => {
+    const words = Array.from({ length: 60 }, (_, i) => `note${i}`).join(" ");
+    const { composed, done } = compose(
+      `${head("  FootnoteText: Calibri 10pt, line 1\n")}<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 FootnoteText -->\n[^1]: ${words}\n`,
+    );
+    const lines = composed.footnoteFragments[0].lines;
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines[1].y - lines[0].y).toBeCloseTo(1.220703 * 10 * PX, 2);
+    done();
+  });
+});
+
+describe("table and footnote slicing keep every line (#119, codex review of #117)", () => {
+  const head =
+    "---\nview: tracked\npage: Letter portrait\nstyles:\n  Normal: Calibri 11pt, after 0pt, line 1\n---\n\n";
+  let composeDocument;
+  beforeAll(async () => {
+    ({ composeDocument } = await import("../reader/pagination.js"));
+  });
+  const cellTexts = (out) => out.tableFragments.flatMap((f) => f.cells.flatMap((c) => c.lines.flatMap((l) => l.runs.map((r) => r.text))));
+  it("a cell line taller than the page takes a page and the table goes on", () => {
+    const md = `${head}<!-- t0 2x1, cells p0-p1 by row, p0-p0 line 700pt exact, width auto -->\n|HUGE|\n|-|\n|AFTER|\n`;
+    const out = composeDocument(parseJubarte(md));
+    expect(cellTexts(out)).toEqual(["HUGE", "AFTER"]);
+  });
+  it("cells of different line heights lose no line at a page cut", () => {
+    const cell = (prefix) => Array.from({ length: 50 }, (_, i) => prefix + i).join("<br/>");
+    const md = `${head}<!-- t0 1x2, cells r0 p0 p1, p0-p0 line 15pt exact, p1-p1 line 22.5pt exact, width auto -->\n|${cell("A")}|${cell("B")}|\n|-|-|\n`;
+    const out = composeDocument(parseJubarte(md));
+    const drawn = cellTexts(out);
+    expect(drawn).toHaveLength(100);
+    expect(new Set(drawn).size).toBe(100);
+    // A cut crosses no line, so no line hangs past the foot of its page's slice.
+    for (const f of out.tableFragments)
+      for (const c of f.cells) for (const l of c.lines) expect(c.y + l.y + l.advance).toBeLessThanOrEqual(f.height + 0.01);
+  });
+  it("a footnote referenced from a table row is scheduled by that reference", () => {
+    const filler = Array.from({ length: 70 }, (_, i) => `<!-- p${i + 2} -->\nFILL${i}`).join("\n\n");
+    const md = `${head}<!-- t0 1x2, cells r0 p0 p1, p0-p0 line 15pt exact, p1-p1 line 22.5pt exact, width auto -->\n|A0<br/>A1|REFERENCE[^1]|\n|-|-|\n\n${filler}\n\n[^1]: NOTE\n`;
+    const out = composeDocument(parseJubarte(md));
+    expect(out.footnoteFragments[0].orphan).toBe(false);
+    expect(out.footnoteFragments[0].pageIndex).toBe(0);
+  });
+  it("a footnote line that fits the frame is laid out", () => {
+    const md =
+      head.replace("  Normal:", "  FootnoteText: Calibri 11pt, line 630pt exact\n  Normal:") +
+      "<!-- p0 -->\nBODY[^1]\n\n<!-- footnotes.p0 FootnoteText -->\n[^1]: NOTE\n";
+    expect(() => composeDocument(parseJubarte(md))).not.toThrow();
+  });
+  it("a heading stays with a table whose first cell spans two rows", () => {
+    const md = `${head}<!-- p0 line 450pt exact -->\nLEAD\n\n<!-- p1 line 150pt exact -->\n# HEADING\n\n<!-- t0 2x1, cells p2-p2 by row, p2-p2 line 67.5pt exact, merged t0.row0.cell0 down 2, width auto -->\n|CELL|\n|-|\n||\n`;
+    const out = composeDocument(parseJubarte(md));
+    const pageOf = (word) =>
+      out.layout.pages.find((p) => p.frames[0].fragments.some((f) => f.lines.some((l) => l.runs.some((r) => r.text.includes(word))))).index;
+    expect(pageOf("HEADING")).toBe(pageOf("CELL"));
   });
 });

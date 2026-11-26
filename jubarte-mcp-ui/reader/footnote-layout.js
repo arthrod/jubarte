@@ -19,8 +19,9 @@ export function flattenLayoutBlocks(blocks) {
 export function createFootnoteAllocator({snapshot, composeLines, width, height, lineHeight, warn}) {
  // Extremely short custom frames can still show one source line on a
  // continuation-only page. Suppress decorative label/rule spacing if needed.
- const labelHeight = Math.min(20, Math.max(0, height - lineHeight));
- const separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight));
+ // Sized again once the notes' lines are known: a note line can be taller than the default (#119).
+ let labelHeight = Math.min(20, Math.max(0, height - lineHeight));
+ let separator = Math.min(12, Math.max(0, height - lineHeight - labelHeight));
  const between = 6;
  const notes = new Map(), sourceRuns = new Map(), missing = new Set(), nestedReferences = new Set();
  const definitions = snapshot.footnotes || [];
@@ -60,12 +61,19 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  const wrap = note => {
   note.lines = composeLines(note.blocks, width);
   // An empty definition is still a visible labelled note.
-  if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
+  if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, advance: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
  };
  for (const note of notes.values()) wrap(note);
+ // The decoration gives way to the tallest note line, so a line that fits the frame is laid out (#119).
+ const tallest = Math.max(lineHeight, ...[...notes.values()].flatMap(note => note.lines.map(line => line.advance ?? lineHeight)));
+ labelHeight = Math.min(labelHeight, Math.max(0, height - tallest));
+ separator = Math.min(separator, Math.max(0, height - tallest - labelHeight));
  let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
- const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + item.count * lineHeight, 0) + between * (items.length - 1) : 0;
+ // A note's lines take their own heights (#102): Word sets footnote text in its own style.
+ const lineAt = (id, index) => notes.get(id).lines[index]?.advance ?? lineHeight;
+ const span = (id, offset, count) => { let sum = 0; for (let i = 0; i < count; i++) sum += lineAt(id, offset + i); return sum; };
+ const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + span(item.id, item.offset, item.count), 0) + between * (items.length - 1) : 0;
  function checkpoint() { return {scheduled: new Set(scheduled), pending: cloneEntries(pending), requests: cloneEntries(requests), allocations: cloneEntries(allocations), active}; }
  function restore(state) { scheduled = new Set(state.scheduled); pending = cloneEntries(state.pending); requests = cloneEntries(state.requests); allocations = cloneEntries(state.allocations); active = state.active; }
  function beginPage() { requests = cloneEntries(pending); allocations = []; active = false; }
@@ -95,7 +103,7 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   function addLine(item) {
    const old = counts.get(item.id) || 0;
    if (item.offset + old >= notes.get(item.id).lines.length) return false;
-   const cost = lineHeight + (old ? 0 : labelHeight + (counts.size ? between : separator));
+   const cost = lineAt(item.id, item.offset + old) + (old ? 0 : labelHeight + (counts.size ? between : separator));
    if (used + cost > budget + 0.001) return false;
    counts.set(item.id, old + 1); used += cost; return true;
   }
@@ -146,10 +154,12 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   for (const item of left) {
    const existing = allocations.find(part => part.id === item.id);
    const overhead = existing ? 0 : labelHeight + between;
-   const count = Math.min(notes.get(item.id).lines.length - item.offset, Math.floor((budget - overhead + 0.001) / lineHeight));
+   const start = item.offset;
+   let count = 0, used = 0;
+   while (start + count < notes.get(item.id).lines.length && overhead + used + lineAt(item.id, start + count) <= budget + 0.001) used += lineAt(item.id, start + count++);
    if (count <= 0) continue;
    if (existing) existing.count += count; else allocations.push({...item, count});
-   budget -= overhead + count * lineHeight;
+   budget -= overhead + used;
   }
  }
  function finishPage(pageIndex) {
@@ -157,8 +167,9 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   let y = height - total + separator;
   const fragments = allocations.map(item => {
    const note = notes.get(item.id), continuedBefore = item.offset > 0, continuedAfter = item.offset + item.count < contentEnd(note);
-   const lines = note.lines.slice(item.offset, item.offset + item.count).map((line, index) => ({...line, y: labelHeight + index * lineHeight}));
-   const fragment = {footnoteId: note.id, identifier: note.identifier, pageIndex, frameIndex: 0, x: 0, y, width, height: labelHeight + item.count * lineHeight, lines, continuedBefore, continuedAfter, orphan: note.orphan};
+   let top = labelHeight;
+   const lines = note.lines.slice(item.offset, item.offset + item.count).map(line => { const placed = {...line, y: top}; top += line.advance ?? lineHeight; return placed; });
+   const fragment = {footnoteId: note.id, identifier: note.identifier, pageIndex, frameIndex: 0, x: 0, y, width, height: top, lines, continuedBefore, continuedAfter, orphan: note.orphan};
    y += fragment.height + between; return fragment;
   });
   const emitted = new Map(allocations.map(item => [item.id, item.count]));

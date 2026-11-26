@@ -144,8 +144,8 @@ export function composeWithTables(snapshot,runtime,input){
  function indentObstacles(ind,inner){const out=[],wide=(id,yStart,yEnd,end)=>out.push({id,yStart,yEnd,intervalsForBand:()=>[{start:0,end:Math.min(end,inner-1)}]});
   if(ind.first>0)wide('first-line',0,lh,ind.first);if(ind.rest>0)wide('hanging',lh,1e9,ind.rest);return out;}
  function composeLines(blocks,w){const key=blocks.map(b=>b.id+':'+(b.attrs?.indentPx||0)+':'+(b.attrs?.clipFrom??'')).join('|')+'@'+w;if(lineCache.has(key))return lineCache.get(key);if(!blocks.length)return [];
-  let result=[];
-  for(const block of blocks){const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
+  let result=[],at=0,prev=null;
+  for(const block of blocks){if(prev&&block.attrs?.first!==false&&!block.attrs?.spacer)at+=pairGap(prev,block);if(!block.attrs?.spacer)prev=block;const ind=paragraphIndent(block),indent=Math.min((block.attrs?.indentPx||0)+ind.shift,Math.max(0,w-1)),inner=Math.max(1,w-indent-Math.min(ind.right,Math.max(0,w-indent-24)));const clean={...block,attrs:{...block.attrs,manualPageBreakBefore:false,keepWithNext:false}};
    const count=1+(block.runs||[]).reduce((n,r)=>n+r.text.length,0);
    const layout=composeLayout({...measured,blocks:[clean]},null,{...input,page:{widthPx:inner,heightPx:Math.max(lh,(count+1)*lh)},margins:{leftPx:0,rightPx:0,topPx:0,bottomPx:0},policies:{...input.policies,minSlotWidthPx:1},obstacles:indentObstacles(ind,inner)});
    let lines=[];for(const p of layout.pages)for(const f of p.frames)for(const fragment of f.fragments)for(const line of fragment.lines)lines.push({...line,blockId:fragment.blockId});
@@ -159,7 +159,7 @@ export function composeWithTables(snapshot,runtime,input){
    // the right margin (#93). A manual break ends a block, so the line before it stays as set.
    // Right-to-left lines keep their alignment.
    const justified=(line,i)=>{if(align!=='justify'||bidi||i===lines.length-1)return line;const extra=alignShift(line,inner,false);const last=line.runs.findLastIndex(r=>r.text?.trim());const spaces=line.runs.map((r,k)=>k>last?0:((k===last?r.text.replace(/[ \u00a0]+$/,''):r.text).match(/[ \u00a0]/g)||[]).length);const total=spaces.reduce((a,b)=>a+b,0);if(!total||extra<=0)return line;const add=extra/total;let before=0;return {...line,runs:line.runs.map((r,k)=>{const moved={...r,x:r.x+add*before,wordSpacing:add,width:(r.width||0)+add*spaces[k]};before+=spaces[k];return moved;})};};
-   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;result.push({...line,y:result.length*lh,advance:block.attrs?.lineBox?.advance??lh,ascent:block.attrs?.lineBox?.ascent,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});});
+   lines.forEach((drawn,i)=>{const line=justified(bidi?reorder(drawn,base):drawn,i);const shift=align==='right'||align==='center'?alignShift(line,inner,base===1)*(align==='center'?0.5:1):0;const advance=block.attrs?.lineBox?.advance??lh;result.push({...line,y:at,height:advance,advance,ascent:block.attrs?.lineBox?.ascent,runs:line.runs.map(run=>({...run,x:run.x+indent+shift}))});at+=advance;});
   }
   lineCache.set(key,result);return result;
  }
@@ -191,11 +191,11 @@ export function composeWithTables(snapshot,runtime,input){
   const want=src.tableAlignment==='center'?(width-drawn)/2:src.tableAlignment==='right'?width-drawn:Number.isFinite(src.indentIn)?src.indentIn*96:0;
   const offsetX=Math.min(hi,Math.max(src.tableAlignment?0:lo,want));
   const colTops=[0];for(const w of columnWidths)colTops.push(colTops.at(-1)+w);
-  const rowHeights=rows.map(()=>lh);
+  const rowHeights=rows.map(()=>0);
   for(const c of cells){c.x=colTops[c.columnIndex];c.width=colTops[c.columnIndex+c.colspan]-c.x;c.paddingX=Math.min(fit.pad,Math.max(0,(c.width-1)/4));c.innerWidth=Math.max(1,c.width-2*c.paddingX-1);// The engine writes a cell's alignment as its column's GFM marker; when present it is the
   // paragraph's alignment, applied once by composeLines (#81).
-  const align=c.sourceData?.align||c.align;c.lines=composeLines(align?c.blocks.map(b=>({...b,attrs:{...b.attrs,cellAlign:align}})):c.blocks,c.innerWidth);if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);c.naturalHeight=Math.max(lh,c.lines.length*lh);if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
-  for(const c of cells.filter(c=>c.rowspan>1)){const current=rowHeights.slice(c.rowIndex,c.rowIndex+c.rowspan).reduce((a,b)=>a+b,0);if(current<c.naturalHeight)rowHeights[c.rowIndex+c.rowspan-1]+=Math.ceil((c.naturalHeight-current)/lh)*lh;}
+  const align=c.sourceData?.align||c.align;c.lines=composeLines(align?c.blocks.map(b=>({...b,attrs:{...b.attrs,cellAlign:align}})):c.blocks,c.innerWidth);if(c.lines.some(l=>l.runs.some(r=>r.x+r.width>c.innerWidth+0.01)))warn('table-column-too-narrow',`Cell ${c.id} is narrower than a single rendered character. Its text remains visible without clipping, but may extend beyond the cell; use wider paper or fewer columns.`,table.id);const paras=c.blocks.filter(b=>!b.attrs?.spacer&&b.type!=='table'),before=sidePx(paras[0]?.attrs?.spacing,'before'),after=sidePx(paras.at(-1)?.attrs?.spacing,'after');if(before)c.lines=c.lines.map(l=>({...l,y:l.y+before}));const last=c.lines.at(-1);c.naturalHeight=last?last.y+advance(last)+after:lh;if(c.rowspan===1)rowHeights[c.rowIndex]=Math.max(rowHeights[c.rowIndex],c.naturalHeight);}
+  for(const c of cells.filter(c=>c.rowspan>1)){const current=rowHeights.slice(c.rowIndex,c.rowIndex+c.rowspan).reduce((a,b)=>a+b,0);if(current<c.naturalHeight)rowHeights[c.rowIndex+c.rowspan-1]+=c.naturalHeight-current;}
   const rowTops=[0];for(const h of rowHeights)rowTops.push(rowTops.at(-1)+h);
   for(const c of cells){c.y=rowTops[c.rowIndex];c.height=rowTops[c.rowIndex+c.rowspan]-c.y;}
   let headerCount=0;while(headerCount<rows.length&&(rows[headerCount].header||(rows[headerCount].cells.length&&rows[headerCount].cells.every(c=>c.header))))headerCount++;
@@ -207,7 +207,7 @@ export function composeWithTables(snapshot,runtime,input){
  const grids={cache:new Map(),get(id){const b=tableBlocks.get(id);if(!b)return undefined;const key=id+'@'+width;if(!this.cache.has(key))this.cache.set(key,grid(b));return this.cache.get(key);}};const tableBlocks=new Map(snapshot.blocks.filter(b=>b.type==='table').map(b=>[b.id,b]));
  notes=createFootnoteAllocator({snapshot,composeLines,width,height,lineHeight:lh,warn});newPage();
  function emitTableSlice(table,g,start,end,repeated=false){if(end<=start)return;const fragment={tableId:table.id,pageIndex:page.index,frameIndex:0,x:colX+(g.offsetX||0),y,width:g.width||width,height:end-start,columnWidths:g.columnWidths,rowStart:g.rowTops.findIndex((v,i)=>v<=start&&g.rowTops[i+1]>start),repeated,rows:g.rowHeights.flatMap((h,i)=>{const top=Math.max(g.rowTops[i],start),bottom=Math.min(g.rowTops[i+1],end);return bottom>top?[{rowIndex:i,y:top-start,height:bottom-top,header:i<g.headerCount,repeated}]:[]}),cells:[]};
-  for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y+lh<=end+0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
+  for(const c of g.cells){const top=Math.max(c.y,start),bottom=Math.min(c.y+c.height,end);if(bottom<=top)continue;const lines=c.lines.filter(l=>c.y+l.y>=start-0.001&&c.y+l.y<end-0.001).map(l=>({...l,y:c.y+l.y-top,runs:l.runs.map(r=>({...r,x:r.x+c.paddingX}))}));
    const cell={cellId:c.id,sourceCellIds:c.sourceCellIds,rowIndex:Math.max(c.rowIndex,fragment.rowStart),originalRowIndex:c.rowIndex,columnIndex:c.columnIndex,colspan:c.colspan,rowspan:fragment.rows.filter(r=>r.rowIndex>=c.rowIndex&&r.rowIndex<c.rowIndex+c.rowspan).length,originalRowspan:c.rowspan,pmRange:c.pmRange,x:c.x,y:top-start,width:c.width,height:bottom-top,lines,header:c.header,repeated,continuedBefore:top>c.y,continuedAfter:bottom<c.y+c.height,paddingX:c.paddingX};fragment.cells.push(cell);
    const byBlock=new Map();for(const l of lines){if(!byBlock.has(l.blockId))byBlock.set(l.blockId,[]);byBlock.get(l.blockId).push({...l,y:y+cell.y+l.y,runs:l.runs.map(r=>({...r,x:r.x+cell.x+colX+(g.offsetX||0)}))});}for(const [id,ls] of byBlock)addFragment(id,ls,{tableCell:true,tableId:table.id,cellId:c.id,repeated,repeatedHeader:repeated});
   }const previous=tableFragments.at(-1);if(previous&&previous.tableId===fragment.tableId&&previous.pageIndex===fragment.pageIndex&&Math.abs(previous.y+previous.height-fragment.y)<0.001){const offset=previous.height;previous.cells.push(...fragment.cells.map(c=>({...c,y:c.y+offset})));previous.rows.push(...fragment.rows.map(r=>({...r,y:r.y+offset})));previous.height+=fragment.height;previous.repeated=previous.repeated&&fragment.repeated;}else tableFragments.push(fragment);y+=fragment.height;
@@ -218,6 +218,8 @@ export function composeWithTables(snapshot,runtime,input){
  // breaks made it several blocks; they count together. When the group fits a page but not what
  // is left of this one, with the note band its own lines reserve, the page breaks before it.
  function paragraphAt(k){const b=snapshot.blocks[k];if(!b||b.type==='table'||b.attrs?.spacer)return null;const lines=[];let j=k;do{lines.push(...composeLines([snapshot.blocks[j]],width));j++;}while(b.attrs?.paragraph!=null&&snapshot.blocks[j]?.attrs?.paragraph===b.attrs.paragraph&&!snapshot.blocks[j].attrs?.spacer);return{block:b,lines,end:j};}
+ // The table's first rows that must stay together: up to the first row foot no cell spans past (#119).
+ function firstRowGroup(g){for(let k=1;k<g.rowTops.length;k++)if(!g.cells.some(c=>c.rowIndex<k&&c.rowIndex+(c.rowspan||1)>k))return g.rowTops[k];return g.total;}
  function keepTogether(k){
   const chainsOn=b=>!!(b.attrs?.keepWithNext&&input.policies.keepWithNextEnabled);
   let p=paragraphAt(k);if(!p)return;const first=p.block;if(!chainsOn(first)&&!first.attrs?.keepLines)return;
@@ -225,7 +227,7 @@ export function composeWithTables(snapshot,runtime,input){
   while(p){const chained=chainsOn(p.block);items.push({gap,lines:chained||p.block.attrs?.keepLines?p.lines:p.lines.slice(0,Math.max(1,input.policies.orphanLinesMin||1))});
    if(!chained)break;let n=p.end;while(snapshot.blocks[n]?.attrs?.spacer)n++;
    const next=snapshot.blocks[n];if(!next)break;
-   if(next.type==='table'){const g=grids.get(next.id),row=g?.rowHeights?.[0]||0;items.push({gap:sidePx(p.block.attrs?.spacing,'after'),height:row,lines:(g?.cells||[]).flatMap(c=>c.lines.filter(l=>c.y+l.y<row-0.001))});break;}
+   if(next.type==='table'){const g=grids.get(next.id),row=g?firstRowGroup(g):0;items.push({gap:sidePx(p.block.attrs?.spacing,'after'),height:row,lines:(g?.cells||[]).flatMap(c=>c.lines.filter(l=>c.y+l.y<row-0.001))});break;}
    const prev=p.block;p=paragraphAt(n);if(p)gap=pairGap(prev,p.block);}
   if(items.length===1&&!first.attrs?.keepLines)return;
   const need=items.reduce((sum,item)=>sum+item.gap+(item.height??item.lines.reduce((h,l)=>h+advance(l),0)),0);
@@ -259,15 +261,28 @@ export function composeWithTables(snapshot,runtime,input){
   if(y>0&&g.headerCount>0&&g.headerCount<g.rowHeights.length){const initialGroup=g.rowTops[g.headerCount+1];if(initialGroup<=height&&initialGroup>notes.bodyLimit-y)newPage();}
   let start=0;const repeat=g.headerHeight>0&&g.headerHeight<=height/4&&height-g.headerHeight>=lh&&block.repeatHeader!==false&&block.attrs?.repeatHeader!==false;
   if(g.headerHeight>0&&!repeat&&block.repeatHeader!==false&&block.attrs?.repeatHeader!==false)warn('header-too-tall','Header repetition is disabled because the header occupies more than one quarter of the page.',block.id);
-  const sliceLines=(from,to)=>g.cells.flatMap(c=>c.lines.filter(l=>c.y+l.y>=from-0.001&&c.y+l.y+lh<=to+0.001));
+  // A cell line belongs to the slice that holds its top, so a cut never loses or doubles one (#119).
+  const sliceLines=(from,to)=>g.cells.flatMap(c=>c.lines.filter(l=>c.y+l.y>=from-0.001&&c.y+l.y<to-0.001));
+  // The places a slice may end: the foot of any cell line, and every row's foot. A clean stop
+  // crosses no line of another cell; a cut takes one when it can.
+  const stops=[...new Set([...g.rowTops.slice(1),...g.cells.flatMap(c=>c.lines.map(l=>c.y+l.y+advance(l)))].map(v=>Math.round(v*1000)/1000))].sort((a,b)=>a-b);
+  const crossed=s=>g.cells.some(c=>c.lines.some(l=>{const t=c.y+l.y;return t<s-0.001&&t+advance(l)>s+0.001;}));
+  const clean=stops.filter(s=>!crossed(s));
+  const after=v=>clean.find(s=>s>v+0.001)??g.total,afterAny=v=>stops.find(s=>s>v+0.001)??g.total;
   let repeatedHeight=0;
   function nextTablePage(){newPage();repeatedHeight=0;if(repeat&&start>=g.headerHeight){emitTableSlice(block,g,0,g.headerHeight,true);repeatedHeight=g.headerHeight;}}
   while(start<g.total-0.001){
    // Prefer whole rows, but probe every source line because a reference within
    // a tall row may introduce a new reserved note band midway through it.
    const checkpoint=notes.checkpoint();let end=start,used=0;
-   while(end<g.total-0.001&&notes.accept(sliceLines(end,end+lh),y+used+lh,Math.max(0,y+used-repeatedHeight))){end+=lh;used+=lh;}
-   if(end<=start+0.001){notes.restore(checkpoint);nextTablePage();continue;}
+   while(end<g.total-0.001){const next=after(end),step=next-end;if(!notes.accept(sliceLines(end,next),y+used+step,Math.max(0,y+used-repeatedHeight)))break;end=next;used+=step;}
+   if(end<=start+0.001){
+    // No clean stop fits: cut through a line of another cell, which then starts the next page.
+    // At a page's top the table always moves on, even when that line is taller than the page.
+    const fine=afterAny(start),fits=fine<after(start)-0.001&&notes.accept(sliceLines(start,fine),y+fine-start,Math.max(0,y-repeatedHeight));
+    if(fits||y<=repeatedHeight+0.001){if(!fits)notes.accept(sliceLines(start,fine),y+fine-start,Math.max(0,y-repeatedHeight));end=fine;}
+    else{notes.restore(checkpoint);nextTablePage();continue;}
+   }
    const boundaries=g.rowTops.filter(v=>v>start+0.001&&v<=end+0.001);
    const nextBoundary=g.rowTops.find(v=>v>start+0.001),rowRemainder=nextBoundary-start;
    // A row splits at a line, as Word's rows do (#70); a cut inside the header rows falls back to
@@ -281,7 +296,7 @@ export function composeWithTables(snapshot,runtime,input){
    if(!boundaries.length&&y>repeatedHeight+0.001&&(kept||start<g.headerHeight-0.001)&&rowRemainder<=height){
     notes.restore(checkpoint);nextTablePage();continue;
    }
-   if(selected<end-0.001){notes.restore(checkpoint);let pos=start,offset=0;while(pos<selected-0.001){if(!notes.accept(sliceLines(pos,pos+lh),y+offset+lh,Math.max(0,y+offset-repeatedHeight)))throw new Error('Footnote row rollback lost a previously accepted line.');pos+=lh;offset+=lh;}}
+   if(selected<end-0.001){notes.restore(checkpoint);let pos=start,offset=0;while(pos<selected-0.001){const next=Math.min(after(pos),selected),step=next-pos;if(!notes.accept(sliceLines(pos,next),y+offset+step,Math.max(0,y+offset-repeatedHeight)))throw new Error('Footnote row rollback lost a previously accepted line.');pos=next;offset+=step;}}
    emitTableSlice(block,g,start,selected);start=selected;
    if(start<g.total-0.001)nextTablePage();
   }
