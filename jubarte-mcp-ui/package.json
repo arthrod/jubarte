@@ -8,7 +8,7 @@
   "packageManager": "pnpm@12.21.0",
   "scripts": {
     "build": "vite build",
-    "test": "vitest run && node --test reader/*.test.mjs",
+    "test": "vitest run --coverage && node --test --experimental-test-coverage reader/*.test.mjs",
     "dev": "vite --host 127.0.0.1",
     "e2e": "node --test e2e/card.e2e.mjs"
   },
@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.4.0",
+    "@vitest/coverage-v8": "5.1.1",
     "jsdom": "26.1.0",
     "playwright": "1.65.1",
     "vite": "7.3.5",

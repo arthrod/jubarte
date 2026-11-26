@@ -169,3 +169,59 @@ test("the tables legend gives each style its cell paragraph spacing, and a table
   assert.equal(t0.properties.unknown?.length ?? 0, 0);
   assert.deepEqual(metadata.tableStyles["MediumShading1-Accent1"].cellSpacing, { afterPt: 0, line: { rule: "auto", multiple: 1 } });
 });
+
+test('K130 prototype names are own table styles and do not contaminate later documents', () => {
+  const before = Object.getOwnPropertyDescriptor(Object.prototype, 'cellSpacing');
+  try {
+    const styles = parseTableLegend('__proto__, cell paragraphs after 24pt, constructor, cell paragraphs after 6pt');
+    assert.ok(Object.hasOwn(styles, '__proto__'));
+    assert.deepEqual(styles.__proto__.cellSpacing, {afterPt: 24});
+    assert.ok(Object.hasOwn(styles, 'constructor'));
+    assert.deepEqual(styles.constructor.cellSpacing, {afterPt: 6});
+    assert.deepEqual(Object.getOwnPropertyDescriptor(Object.prototype, 'cellSpacing'), before);
+    assert.equal(parseTableLegend('Ordinary').Ordinary.cellSpacing, undefined);
+  } finally {
+    if (before) Object.defineProperty(Object.prototype, 'cellSpacing', before);
+    else delete Object.prototype.cellSpacing;
+    delete Object.cellSpacing;
+  }
+});
+
+test('K126 invalid border clauses start a new table style, including unquoted IDs', () => {
+  for (const id of ['borders 2', '"borders 2"', 'all borders 9pt', 'borders top', 'borders top single top double']) {
+    const name = id.replaceAll('"', '');
+    const styles = parseTableLegend(`A, ${id}, cell paragraphs after 6pt`);
+    assert.deepEqual(Object.keys(styles), ['A', name]);
+    assert.equal(styles.A.cellSpacing, undefined);
+    assert.deepEqual(styles[name].cellSpacing, {afterPt: 6});
+  }
+  const valid = parseTableLegend('A, borders top double 0.75pt #FF0000 space 4pt left single, named "A, B", cell paragraphs after 6pt, B, all borders 0.5pt, cell paragraphs after 0pt');
+  assert.deepEqual(Object.keys(valid), ['A', 'B']);
+  assert.deepEqual(valid.A.cellSpacing, {afterPt: 6});
+  assert.deepEqual(valid.B.cellSpacing, {afterPt: 0});
+});
+
+test('K131 plain tables and neutral directives resolve identical default cell spacing', async () => {
+  const {parseJubarte} = await import('./jubarte.mjs');
+  function spacings(directive, legend = '') {
+    const result = parseJubarte(`---\nview: tracked\nstyles:\n  Normal: Aptos 11pt, after 8pt, line 1.08\n${legend}---\n\n${directive}| A | B |\n|---|---|\n| C | D |\n`);
+    const out = [];
+    result.doc.descendants(node => {
+      if (['td', 'th'].includes(node.type.name)) {
+        const data = node.attrs.data;
+        out.push(resolveSpacing(data.cellSpacing, data.documentStyle, result.metadata.styles.Normal, data.tableSpacing));
+      }
+    });
+    return out;
+  }
+  const plain = spacings('');
+  assert.equal(plain.length, 4);
+  assert.deepEqual(plain, spacings('<!-- t0 2x2 -->\n'));
+  for (const spacing of plain) {
+    assert.equal(spacing.afterPt, 0);
+    assert.deepEqual(spacing.line, {rule: 'auto', multiple: 1});
+  }
+  const custom = spacings('', '  table: Ledger, cell paragraphs after 6pt\n');
+  assert.deepEqual(custom, spacings('<!-- t0 2x2 -->\n', '  table: Ledger, cell paragraphs after 6pt\n'));
+  for (const spacing of custom) assert.equal(spacing.afterPt, 6);
+});

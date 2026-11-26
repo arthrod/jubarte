@@ -300,22 +300,60 @@ export function parseDirective(raw, options = {}) {
  * @param {unknown} raw
  */
 export function parseTableLegend(raw) {
-  const out = {};
+  const out = Object.create(null);
   if (typeof raw !== 'string') return out;
   let current = null;
+  let hasBorder = false, hasName = false, hasSpacing = false;
   for (const piece of splitClauses(raw)) {
     const value = piece.trim();
     let match;
-    if (current && (match = value.match(/^cell paragraphs\s+(.+)$/s))) {
+    if (current && !hasSpacing && (match = value.match(/^cell paragraphs\s+(.+)$/s))) {
       const spacing = parseSpacing(match[1]);
-      if (spacing) { current.cellSpacing = spacing; continue; }
+      if (spacing) { current.cellSpacing = spacing; hasSpacing = true; continue; }
     }
-    if (current && (value === 'borders vary' || /^(all borders|borders|named)\s/.test(value))) continue;
+    if (current && value === 'borders vary') continue;
+    if (current && !hasBorder && tableBorderClause(value)) { hasBorder = true; continue; }
+    if (current && !hasName && value.startsWith('named ')) {
+      const name = value.slice(6).trim();
+      try {
+        if (!name.startsWith('"') || typeof JSON.parse(name) === 'string') { hasName = true; continue; }
+      } catch { /* A malformed quoted name starts a new entry, as in view_styles.rs. */ }
+    }
     const id = value.startsWith('"') && value.endsWith('"') && value.length > 1 ? decodeLabel(value.slice(1, -1)) : value;
     if (!id) { current = null; continue; }
     current = out[id] ??= {styleId: id};
+    hasBorder = hasName = hasSpacing = false;
   }
   return out;
+}
+
+// Match view_styles.rs::border_sides before treating a clause as continuation.
+// Prefixes alone are also legal style IDs, for example `borders 2`.
+function tableBorderClause(value) {
+  const number = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?';
+  const points = token => new RegExp(`^(${number})pt$`).exec(token || '');
+  if (value.startsWith('all borders ')) {
+    const match = points(value.slice(12));
+    return !!match && Number(match[1]) >= 0.25 && Number(match[1]) <= 6;
+  }
+  if (!value.startsWith('borders ')) return false;
+  const sides = new Set(['top', 'left', 'bottom', 'right', 'insideH', 'insideV']);
+  const seen = new Set(), tokens = value.slice(8).split(' ');
+  let at = 0;
+  while (at < tokens.length) {
+    const side = tokens[at++];
+    if (!sides.has(side) || seen.has(side) || !/^[a-zA-Z0-9]+$/.test(tokens[at++] || '')) return false;
+    seen.add(side);
+    let size = false, color = false, space = false;
+    while (at < tokens.length && !sides.has(tokens[at])) {
+      const token = tokens[at++], match = points(token);
+      if (!size && match && Number(match[1]) >= 0 && Number(match[1]) <= 255) size = true;
+      else if (!color && /^#[a-fA-F0-9]{6}$/.test(token)) color = true;
+      else if (!space && token === 'space' && /^\+?\d+pt$/.test(tokens[at] || '') && Number(tokens[at].slice(0, -2)) <= 4294967295) { space = true; at++; }
+      else return false;
+    }
+  }
+  return seen.size > 0;
 }
 
 function parsePage(raw, warnings, path = 'page', inherited = false) {

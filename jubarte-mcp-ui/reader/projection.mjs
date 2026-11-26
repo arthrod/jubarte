@@ -157,7 +157,13 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
  for(const block of blocks){const refs=block.paragraphProperties?.openComments||[];const inherited=refs.map(ref=>comments.find(c=>(c.threadReference||c.referenceId)===ref.canonicalId)).filter(Boolean);if(inherited.length){const hasHighlight=n=>!!n.criticHighlight||(n.children||[]).some(hasHighlight);const explicit=hasHighlight(block);const visit=n=>{if(typeof n.text==='string'){if(explicit&&!n.criticHighlight)return;n.commentAnchor=true;n.comments=[...new Map([...(n.comments||[]),...inherited].map(c=>[c.referenceId||c.id,c])).values()]}else(n.children||[]).forEach(visit)};visit(block)}}
  // Table identity and merge intent remain on nodes; CSS honors non-overlapping merges.
  for(const table of blocks.filter(b=>b.type==='table')){
-  const d=table.directives?.find(d=>d.type==='table');if(!d)continue;
+  const d=table.directives?.find(d=>d.type==='table');
+  // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's,
+  // else the writer's Table Grid, Word's own, which the legend leaves unnamed (write.rs; xml.rs `tight`).
+  const tableId=d?.tableStyle??document.metadata?.tableStyle??'TableGrid',tableEntry=document.metadata?.tableStyles?.[tableId];
+  const tableSpacing=tableEntry?tableEntry.cellSpacing:tableId==='TableGrid'?WORD_TABLE_GRID_CELLS:undefined;
+  if(tableSpacing)for(const row of table.children)for(const cell of row.children)cell.tableSpacing=tableSpacing;
+  if(!d)continue;
   // The engine writes `header row repeats` only for a first row with w:tblHeader (#45).
   table.headerRowRepeats=(d.properties?.headerRowRepeats??d.parsed?.headerRowRepeats??d.headerRowRepeats)===true;
   // Rows Word keeps on one page (\`cant-split t0.row1\`, #71), by their index in the view.
@@ -184,11 +190,6 @@ function siblings(children){const kept=[];let carry=[];for(const x of children){
   for(const rowGroup of d.cells?.rows||[]){const row=table.children[rowGroup.row];if(!row)continue;const live=row.children.filter(c=>!c.spanCovered);if(rowGroup.paragraphRanges.length===1&&live.length>1){const r=rowGroup.paragraphRanges[0];for(const cell of live)cell.rowParagraphRange=r;continue;}rowGroup.paragraphRanges.forEach((r,i)=>{const cell=row.children.filter(c=>!c.spanCovered)[i];if(cell)cell.paragraphIds=Array.from({length:r.end-r.start+1},(_,n)=>'p'+(r.start+n))})}
   // A cell's paragraphs' own spacing (#101), as their size above.
   if(d.cellSpacings?.length)for(const row of table.children)for(const cell of row.children){const ids=cell.paragraphIds?.length?cell.paragraphIds.map(id=>Number(id.slice(1))):cell.rowParagraphRange?[cell.rowParagraphRange.start,cell.rowParagraphRange.end]:[];const group=d.cellSpacings.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(group)cell.cellSpacing=group.spacing}
-  // The table style's spacing for its cells' paragraphs (#124): the table line's style, else the `table:` legend's,
-  // else the writer's Table Grid, Word's own, which the legend leaves unnamed (write.rs; xml.rs `tight`).
-  const tableId=d.tableStyle??document.metadata?.tableStyle??'TableGrid',tableEntry=document.metadata?.tableStyles?.[tableId];
-  const tableSpacing=tableEntry?tableEntry.cellSpacing:tableId==='TableGrid'?WORD_TABLE_GRID_CELLS:undefined;
-  if(tableSpacing)for(const row of table.children)for(const cell of row.children)cell.tableSpacing=tableSpacing;
   if(d.cellSizes?.length)for(const row of table.children)for(const cell of row.children){const ids=cell.paragraphIds?.length?cell.paragraphIds.map(id=>Number(id.slice(1))):cell.rowParagraphRange?[cell.rowParagraphRange.start,cell.rowParagraphRange.end]:[];const size=d.cellSizes.find(z=>ids.some(n=>n>=z.from&&n<=z.to));if(size)cell.fontSizePt=size.points}
  }
  // Apply the browser-expressible portion of the style legend; preserve everything else as metadata.
