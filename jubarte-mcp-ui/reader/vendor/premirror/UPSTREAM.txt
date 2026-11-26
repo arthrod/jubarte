@@ -1,0 +1,10 @@
+https://github.com/arthrod/premirror
+29b78634d6496206c84015068eb7d66d9cdc312c
+
+Local integration changes:
+- Workspace package manifests use npm-compatible internal 0.1.0 dependencies; dev-only packages omitted.
+- TypeScript pretext-stub path aliases removed. Production uses real @chenglou/pretext 0.0.5.
+- Composer's character-fitting loop advances by Intl.Segmenter grapheme boundaries (code-point fallback), so combining marks and joined emoji stay together in supported modern browsers.
+- Other runtime source retained from the pinned arthrod commit.
+
+Security maintenance (2026-10-14): composer and adapter pretext dependencies are pinned to patched 0.0.5; upstream source revision is unchanged. See https://github.com/chenglou/pretext/security/advisories/GHSA-5478-66c3-rhxr.

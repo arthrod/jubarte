@@ -58,6 +58,10 @@ NOTICES = "THIRD_PARTY_NOTICES.md"
 # fonts take their notices from: the wheel installs the Python one with
 # the `jubarte` package.
 BUNDLES = ("jubarte-python/python/jubarte", "jubarte-wasm/npm")
+# The MCP App view jubarte-mcp serves (`ui/document.html`) ships in the
+# Python package only; its notices join that package's.
+UI = "jubarte-mcp-ui"
+UI_BUNDLE = "jubarte-python/python/jubarte"
 # The licence texts of the fonts the renderer embeds.
 FONT_LICENSES = (
     "crates/jubarte-render/assets/fonts/LICENSE-Carlito",
@@ -241,9 +245,10 @@ def for_bundle(text: str) -> str:
     return "\n".join(out).strip("\n")
 
 
-def bundle(root: Path) -> str:
+def bundle(root: Path, ui: bool = False) -> str:
     """The THIRD_PARTY_NOTICES.md of a package that carries the whole engine.
-    A notice text that two crates quote is written out once."""
+    A notice text that two crates quote is written out once. With `ui`, the
+    MCP App view's notices follow, for the package that ships the view."""
     parts = [BUNDLE_HEAD]
     seen: dict[str, str] = {}
     for notice in sorted((root / "crates").glob(f"*/{NOTICES}")):
@@ -259,14 +264,16 @@ def bundle(root: Path) -> str:
     for rel in FONT_LICENSES:
         body = (root / rel).read_text(encoding="utf-8").strip("\n")
         parts.append(f"### {Path(rel).name}\n\n```text\n{body}\n```")
+    if ui:
+        text = for_bundle((root / UI / NOTICES).read_text(encoding="utf-8"))
+        parts.append(f"## The MCP App view (`ui/document.html`, built from {UI})\n\n{text}")
     return "\n\n".join(parts) + "\n"
 
 
 def copies(root: Path) -> list[tuple[Path, bytes, str]]:
     """Every (copy, wanted bytes, source) this script keeps current."""
     pairs = [(folder / name, (root / name).read_bytes(), name) for folder in package_dirs(root) for name in FILES]
-    text = bundle(root).encode("utf-8")
-    pairs += [(root / b / NOTICES, text, "the crates' notices") for b in BUNDLES]
+    pairs += [(root / b / NOTICES, bundle(root, ui=b == UI_BUNDLE).encode("utf-8"), "the crates' notices") for b in BUNDLES]
     return pairs
 
 

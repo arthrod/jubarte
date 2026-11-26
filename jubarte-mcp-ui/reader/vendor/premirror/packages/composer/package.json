@@ -1,0 +1,20 @@
+{
+  "name": "@premirror/composer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "bun test",
+    "benchmark": "bun scripts/benchmark.ts"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "0.0.5",
+    "@premirror/core": "workspace:*"
+  }
+}

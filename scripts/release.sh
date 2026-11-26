@@ -748,7 +748,8 @@ adoption_main_rows() {
 }
 # Each tracked file that can carry a comment and lacks SPDX-License-Identifier
 # in its first 4 KiB (the 0.13.0 audit found six by hand, #1754).
-# wasm-bindgen writes npm/'s glue and the docs/api snapshots of it; a
+# wasm-bindgen writes npm/'s glue and the docs/api snapshots of it, and
+# pnpm rewrites its lockfile whole, dropping any header; a
 # fixture is test material, and tests/THIRD_PARTY_NOTICES.md names those
 # that come from other projects.
 headerless_files() {
@@ -756,6 +757,7 @@ headerless_files() {
   git ls-files -z -- '*.rs' '*.py' '*.sh' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.zsh' '*.awk' \
       '*.toml' '*.yml' '*.yaml' '*.pyi' '*.ini' '*.cfg' \
       ':(exclude)jubarte-wasm/npm/*/jubarte_wasm*' ':(exclude)docs/api/*' ':(exclude)tests/fixtures/*' \
+      ':(exclude,glob)**/pnpm-lock.yaml' \
     | while IFS= read -r -d '' f; do
         top=$(head -c 4096 -- "$f" 2>/dev/null) || top=""
         case "$top" in *SPDX-License-Identifier*) ;; *) printf '%s\n' "$f" ;; esac
