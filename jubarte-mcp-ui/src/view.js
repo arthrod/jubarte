@@ -12,7 +12,7 @@ import { parseJubarte } from "../reader/jubarte.mjs";
 import { mountPagination } from "../reader/pagination.js";
 import { discussions } from "../reader/comments.mjs";
 import { loadFonts } from "./fonts.js";
-import { baseName, linkAction, pickDocument, pickFiles } from "./pick.js";
+import { baseName, errorText, linkAction, pickDocument, pickFiles, readerNotices } from "./pick.js";
 import "../reader/style.css";
 import "../reader/embed.css";
 import "./desk/styles.css";
@@ -28,6 +28,13 @@ let preview = null;
 let mode = "tracked";
 let input = undefined;
 let listing = null;
+// The open document's previews by view: the engine's tracked, accepted and
+// original reads, each asked for the first time it is shown (#40).
+let docPath = null;
+let previews = new Map();
+// How the reader draws the markdown on screen: "tracked" for an engine view;
+// the button's mode when the card rebuilds it from the tracked view.
+let drawMode = "tracked";
 const fontsReady = loadFonts().catch(() => []);
 
 const app = new App({ name: "jubarte", version: VERSION || "0" }, {}, { autoResize: true });
@@ -40,17 +47,28 @@ function showEmpty(title, text = "", { busy = false, failed = false } = {}) {
   $("empty").classList.toggle("failed", failed);
   $("empty-title").textContent = title;
   $("empty-text").textContent = text;
+  // A failed document opened from the list keeps the way back to it (#36).
+  $("empty-back").hidden = !(failed && listing);
   $("result").hidden = true;
   $("files").hidden = true;
+  // The drawer sits outside #result: an empty state retires the previous document's
+  // discussions with its pages (#88).
+  $("embed-discussions").hidden = true;
+  $("threads").replaceChildren();
+  $("show-discussions").setAttribute("aria-expanded", "false");
 }
 
 function clearPages() {
   view?.destroy();
   view = null;
   result = null;
+  previews = new Map();
+  docPath = null;
   $("pages-mount").replaceChildren();
   $("notices").replaceChildren();
   $("embed-discussions").hidden = true;
+  $("show-discussions").setAttribute("aria-expanded", "false");
+  $("pages-fit").removeAttribute("aria-busy");
 }
 
 function fail(title, error) {
@@ -65,18 +83,23 @@ const DOC_GLYPH =
   '<svg class="docglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/><path d="M15 2v5h5"/></svg>';
 
 function showFiles(files, truncated) {
+  generation++; // a preview still on its way no longer answers anything (#32)
   listing = { files, truncated };
   clearPages();
   $("empty").hidden = true;
   $("result").hidden = true;
   $("files").hidden = false;
-  $("files-meta").textContent = `${files.length} ${files.length === 1 ? "document" : "documents"}${truncated ? " · first results only" : ""}`;
+  $("files-meta").textContent =
+    `${files.length} ${files.length === 1 ? "document" : "documents"}${truncated ? " · first results only" : ""}`;
   const grid = $("files-grid");
   grid.replaceChildren();
   if (!files.length) {
     const li = document.createElement("li");
     li.className = "file";
-    li.textContent = "No .docx files under this folder.";
+    // A listing cut short has not shown that none exist (#64).
+    li.textContent = truncated
+      ? "The search stopped before it found a .docx file. Ask for one by its path."
+      : "No .docx files under this folder.";
     grid.append(li);
     return;
   }
@@ -130,6 +153,16 @@ function showThreads(id) {
   for (const thread of threads) {
     const article = document.createElement("article");
     article.tabIndex = -1;
+    // Resolved is part of what the thread says, not only its colour (#44).
+    if (thread.resolved) {
+      article.classList.add("resolved");
+      article.append(
+        Object.assign(document.createElement("span"), {
+          className: "thread-status",
+          textContent: "Resolved",
+        }),
+      );
+    }
     for (const comment of thread.comments) {
       const by = document.createElement("strong");
       by.textContent = comment.author || "Reviewer";
@@ -154,7 +187,11 @@ async function compose(current) {
   }
   if (current !== generation) return;
   view?.destroy();
-  view = mountPagination($("pages-mount"), result, { mode, onSelect: showThreads });
+  // The reader's stylesheet hides and unmarks changes by this (#40).
+  $("pages-mount").dataset.mode = drawMode;
+  // The view on screen, engine's or rebuilt: what a test waits for.
+  $("pages-mount").dataset.view = drawMode === "tracked" ? (preview.view ?? "tracked") : drawMode;
+  view = mountPagination($("pages-mount"), result, { mode: drawMode, onSelect: showThreads });
   fit();
   const composed = view.composed;
   const pages = composed.layout.pages.length;
@@ -165,8 +202,19 @@ async function compose(current) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const warnings = [...(preview.warnings ?? []), ...result.warnings.map((w) => (typeof w === "string" ? w : w.message)), ...composed.warnings].filter(Boolean);
-  $("notices").replaceChildren(...[...new Set(warnings)].map((w) => Object.assign(document.createElement("span"), { textContent: `${w} ` })));
+  const warnings = [
+    drawMode === "tracked"
+      ? ""
+      : "This view is rebuilt in the card: the engine's own could not be read, so a formatting change or a renumbered list may differ.",
+    ...(preview.warnings ?? []),
+    ...readerNotices(result.warnings),
+    ...composed.warnings,
+  ].filter(Boolean);
+  $("notices").replaceChildren(
+    ...[...new Set(warnings)].map((w) =>
+      Object.assign(document.createElement("span"), { textContent: `${w} ` }),
+    ),
+  );
 }
 
 function render() {
@@ -203,7 +251,10 @@ async function open(path, { fromList = false } = {}) {
   clearPages();
   showEmpty("Opening the document…", baseName(path), { busy: true });
   if (!app.getHostCapabilities()?.serverTools) {
-    fail("This host does not let the card read documents", "The tool's text result above has the document.");
+    fail(
+      "This host does not let the card read documents",
+      "The tool's text result above has the document.",
+    );
     return;
   }
   let res;
@@ -215,25 +266,63 @@ async function open(path, { fromList = false } = {}) {
   }
   if (current !== generation) return;
   if (res?.isError || !res?.structuredContent?.markdown) {
-    const text = res?.content?.find?.((c) => c.type === "text")?.text;
-    fail("The document could not be read", text || "The server returned no preview.");
+    fail("The document could not be read", errorText(res) || "The server returned no preview.");
     return;
   }
-  preview = res.structuredContent;
+  docPath = path;
+  previews = new Map([["tracked", res.structuredContent]]);
+  showView(mode);
+}
+
+/** `show`, with a failure to draw reported on the card instead of lost. */
+function showView(view) {
+  show(view).catch((error) => fail("The document could not be drawn", error));
+}
+
+/** Draws the open document in `view`, asking the server the first time. */
+async function show(view) {
+  const have = previews.get(view);
+  if (have) {
+    // A view still on its way no longer answers anything (#43).
+    $("pages-fit").removeAttribute("aria-busy");
+    preview = have;
+    drawMode = "tracked";
+    render();
+    return;
+  }
+  const current = ++generation;
+  $("pages-fit").setAttribute("aria-busy", "true");
+  let res = null;
+  try {
+    res = await app.callServerTool({ name: "docx_preview", arguments: { path: docPath, view } });
+  } catch {
+    res = null;
+  }
+  if (current !== generation) return;
+  $("pages-fit").removeAttribute("aria-busy");
+  const got = res?.structuredContent;
+  if (!res?.isError && got?.markdown && got.view === view) {
+    previews.set(view, got);
+    preview = got;
+    drawMode = "tracked";
+  } else {
+    preview = previews.get("tracked");
+    drawMode = view;
+  }
   render();
 }
 
 // ---------- the bridge ----------
 
 app.ontoolinput = (params) => {
+  generation++; // a new call retires every preview still on its way (#32)
   input = params?.arguments;
   showEmpty("Working on the document…", "", { busy: true });
 };
 
 app.ontoolresult = (callResult) => {
   if (callResult?.isError) {
-    const text = callResult.content?.find?.((c) => c.type === "text")?.text;
-    fail("The tool call failed", text);
+    fail("The tool call failed", errorText(callResult));
     return;
   }
   const files = pickFiles(callResult);
@@ -252,9 +341,12 @@ app.onhostcontextchanged = (ctx) => applyHostContext(ctx);
 
 function applyHostContext(ctx) {
   if (!ctx) return;
-  if (ctx.theme === "dark" || ctx.theme === "light") document.documentElement.style.colorScheme = ctx.theme;
-  const height = ctx.containerDimensions?.height;
-  document.body.classList.toggle("fixed", typeof height === "number");
+  if (ctx.theme === "dark" || ctx.theme === "light")
+    document.documentElement.style.colorScheme = ctx.theme;
+  // A host-context update carries only what changed (#73): the height is
+  // decided only when the update names the container's dimensions.
+  if (ctx.containerDimensions)
+    document.body.classList.toggle("fixed", typeof ctx.containerDimensions.height === "number");
   fit();
 }
 
@@ -263,8 +355,9 @@ function applyHostContext(ctx) {
 for (const button of document.querySelectorAll(".view")) {
   button.onclick = () => {
     mode = button.dataset.mode;
-    for (const b of document.querySelectorAll(".view")) b.setAttribute("aria-pressed", String(b === button));
-    if (result) compose(++generation);
+    for (const b of document.querySelectorAll(".view"))
+      b.setAttribute("aria-pressed", String(b === button));
+    if (previews.size) showView(mode);
   };
 }
 $("show-discussions").onclick = () => showThreads();
@@ -273,7 +366,7 @@ $("close-discussions").onclick = () => {
   $("show-discussions").setAttribute("aria-expanded", "false");
   $("show-discussions").focus();
 };
-$("back").onclick = () => {
+$("back").onclick = $("empty-back").onclick = () => {
   if (listing) showFiles(listing.files, listing.truncated);
 };
 
@@ -283,7 +376,8 @@ document.addEventListener("click", (event) => {
   if (!a) return;
   event.preventDefault();
   const action = linkAction(a.getAttribute("href"));
-  if (action.kind === "anchor") document.getElementById(action.id)?.scrollIntoView({ block: "center" });
+  if (action.kind === "anchor")
+    document.getElementById(action.id)?.scrollIntoView({ block: "center" });
   else if (action.kind === "external") app.openLink({ url: action.url }).catch(() => {});
 });
 
@@ -291,5 +385,10 @@ window.addEventListener("resize", fit);
 new ResizeObserver(fit).observe($("pages-fit"));
 $("appbar-ver").textContent = VERSION ? `v${VERSION}` : "";
 
-await app.connect();
-applyHostContext(app.getHostContext());
+// A host that refuses ui/initialize leaves nothing to wait for (#74).
+try {
+  await app.connect();
+  applyHostContext(app.getHostContext());
+} catch (error) {
+  fail("Could not connect to the host", error);
+}

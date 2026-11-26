@@ -15,6 +15,10 @@ See [docs/maintainers/VERSIONING.md](docs/maintainers/VERSIONING.md) for the rel
 
 ## [Unreleased]
 
+### Added
+
+- **A document card for MCP Apps hosts.** `jubarte-mcp` serves `ui://jubarte/document.html`, jubarte-app's reader and desk styles built into one self-contained file. `docx_text`, `docx_compare`, `docx_edit` and the new `docx_view` point to it, so Claude, VS Code, ChatGPT and Antigravity (which also gets the `aux_pane`/`global` entrypoints) show paginated pages with tracked changes, Tracked/Original/Accepted views, discussions and change counts. `docx_view` lists the root's `.docx` files when it is given no path. `docx_preview` feeds the card and is hidden from the model. The write tools stay model-only. Hosts without MCP Apps get the same text results as before. `jubarte-mcp-ui/e2e/` tests the card in Chrome under the spec's sandbox and CSP.
+
 ### Changed
 
 - **One licence file, and each third-party notice beside what it covers.** The repository root keeps `LICENSE` (Apache-2.0) and a `NOTICE` that is Jandira's alone; `LICENSES/`, `LICENSES.md`, `REUSE.toml` and the 43 `.license` sidecars are gone. A `THIRD_PARTY_NOTICES.md` now sits beside what came from another project: in jubarte-dom, jubarte-opc and jubarte-redlines (Docxodus and Open-Xml-PowerTools, and Microsoft's default Word theme), jubarte-markdown (anymd, Word's table styles), jubarte-render (markdown2pdf, Carlito, Liberation) and jubarte-cli (zipsign), each shipped in its crate; in `assets/fonts/extra/`, with new licence texts for Selawik and Roboto Condensed; and in `tests/` for the test documents. The Python wheel (inside the `jubarte` package), the npm library and the release archives carry one `THIRD_PARTY_NOTICES.md` with every crate's notices and the embedded fonts' licence texts, in place of `LICENSE-OFL-1.1.txt`/`OFL-1.1.txt`. Adapted files' SPDX headers read `Apache-2.0 AND MIT`. `scripts/sync_license_files.py --check` replaces `reuse lint` in CI and release step 5: it fails on a file whose header names another licence or holder that no notice lists.

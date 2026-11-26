@@ -13,7 +13,7 @@ it shows the document as paginated paper, with tracked changes, the
 Tracked/Original/Accepted views and the discussions, inline or in a side
 panel.
 
-The view is jubarte-app's reader (`reader/`, copied from jubarte-app) dressed
+The view is jubarte-app's reader (`reader/`, copied from jubarte-app; its parser also reads the engine's `{r12 @A}` attribution tags) dressed
 in the desk's stylesheet (`src/desk/styles.css`, unchanged), around the
 [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) bridge. It is
 private to this repository: nothing here is published to npm. The build
@@ -27,7 +27,14 @@ cd jubarte-mcp-ui
 pnpm install
 pnpm build   # writes ../jubarte-python/python/jubarte/ui/document.html
 pnpm test    # vitest for src/, node:test for the copied reader
+pnpm e2e     # the card in Chrome, under the MCP Apps sandbox and CSP
 ```
+
+`pnpm e2e` starts `jubarte-mcp` (`$JUBARTE_MCP`, or
+`../jubarte-python/.venv/bin/jubarte-mcp`) and drives Google Chrome through
+Playwright. It needs a built `document.html` and a Chrome install; Playwright's
+own browsers are not downloaded. `node e2e/serve.mjs ROOT` serves the same
+test host for a look by hand, on documents under `ROOT`.
 
 The build is reproducible, so the same sources give the same bytes. After
 changing anything here, rebuild and commit `document.html` with the change.
@@ -54,6 +61,7 @@ changing anything here, rebuild and commit `document.html` with the change.
 | `src/fonts.js`, `src/fonts/` | Manrope, JetBrains Mono, Source Serif 4 (OFL-1.1) |
 | `src/desk/` | jubarte-app's stylesheet and icon |
 | `reader/` | jubarte-app's reader and its vendored Premirror |
+| `e2e/` | an MCP Apps test host (sandbox proxy, CSP, AppBridge) and the Playwright tests |
 | `THIRD_PARTY_NOTICES.md` | what comes from other projects |
 
 ## License

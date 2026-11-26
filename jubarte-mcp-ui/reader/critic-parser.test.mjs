@@ -119,13 +119,15 @@ test('same-kind nesting is literal and comment bodies do not parse markup', () =
   assert.equal(p.diagnostics[0].code, 'literal-nested-critic');
 });
 
-test('Critic preprocesses code globally, matching Jubarte', () => {
+test('Critic is literal in a code span and marks in a fenced block, matching Jubarte', () => {
+  // The engine (markdown_to_docx) writes `{++code++}` in a code span as text
+  // and {--old--} in a fence as a w:del (critic.rs, Literal; #25).
   const tree = parse('`{++code++}`\n\n```js\n{--old--}\n```');
   assert.equal(tree.children[0].children[0].type, 'inlineCode');
-  assert.equal(tree.children[0].children[0].value, 'code');
+  assert.equal(tree.children[0].children[0].value, '{++code++}');
   assert.equal(tree.children[1].type, 'code');
   assert.equal(tree.children[1].value, 'old');
-  assert.deepEqual(kinds(tree.data.critic), ['insertion', 'deletion']);
+  assert.deepEqual(kinds(tree.data.critic), ['deletion']);
 });
 
 test('noCritic initially bypasses scanning exactly and preserves code', () => {
@@ -143,13 +145,17 @@ test('agent tags are gated: ordinary notes outside agent view stay comments', ()
   assert.equal(p.comments[0].author, 'Modified User');
 });
 
-test('current and historical revision ID spellings share semantics', () => {
-  for (const prefix of ['r12', '#r12', '#12']) {
-    const p = prepareCritic(`{++new++}{>>${prefix} @AC<<}`, { agentView: true, authors: { AC: 'Ann Counsel' } });
-    assert.equal(p.comments.length, 0);
-    assert.equal(p.changes[0].author, 'Ann Counsel');
-    assert.deepEqual(p.changes[0].revisionIds, ['12']);
-    assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+test('a revision note in a comment is read by the engine grammar: #r12 and #12 are comments', () => {
+  const p = prepareCritic('{++new++}{>>r12 @AC<<}', { agentView: true, authors: { AC: 'Ann Counsel' } });
+  assert.equal(p.comments.length, 0);
+  assert.equal(p.changes[0].author, 'Ann Counsel');
+  assert.deepEqual(p.changes[0].revisionIds, ['12']);
+  assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+  // view_notes.rs refuses an id starting with '#': the engine keeps these as comments.
+  for (const prefix of ['#r12', '#12']) {
+    const q = prepareCritic(`{++new++}{>>${prefix} @AC<<}`, { agentView: true });
+    assert.equal(q.comments.length, 1, prefix);
+    assert.deepEqual(q.changes[0].revisionIds, [], prefix);
   }
 });
 
@@ -292,4 +298,72 @@ test('range/source maps remap after inserted literal escapes', () => {
   assert.equal(p.markdown.slice(p.changes[0].start, p.changes[0].end), 'new');
   assert.equal(p.sourceMap.length, p.markdown.length + 1);
   assert.equal(p.source[p.sourceMap[p.changes[0].start]], 'n');
+});
+
+// Engine 0.20.0 writes a change's attribution as a plain tag after it,
+// `{++new++}{r12 @AC}`, and refuses the old `{>>r12 @AC<<}` spelling
+// (crates/jubarte-markdown/src/markdown/critic.rs).
+test('the plain attribution tag after a change is its metadata, not text', () => {
+  const p = prepareCritic('A {++new++}{r12 @AC} B', { agentView: true, authors: { AC: 'Ann Counsel' } });
+  assert.equal(p.markdown, 'A new B');
+  assert.equal(p.comments.length, 0);
+  assert.equal(p.changes[0].author, 'Ann Counsel');
+  assert.deepEqual(p.changes[0].revisionIds, ['12']);
+  assert.deepEqual(p.changes[0].referenceIds, ['body:rev:12']);
+});
+
+test('plain tags: grouped ids, two authors, dates, stories and nesting', () => {
+  const grouped = prepareCritic('{~~a~>b~~}{r1+2 @AC}', { agentView: true });
+  assert.deepEqual(grouped.changes.map((c) => c.revisionIds), [['1', '2'], ['1', '2']]);
+  assert.equal(grouped.markdown, 'ab');
+
+  // A substitution's two authors share one brace, joined by `; ` (view_notes::revision_tags).
+  const two = prepareCritic('{~~a~>b~~}{r1 @AC; r2 @JD}', { agentView: true, authors: { AC: 'Ann', JD: 'Jane' } });
+  assert.deepEqual(two.changes.map((x) => [x.kind, x.author, x.revisionIds]), [['deletion', 'Ann', ['1']], ['insertion', 'Jane', ['2']]]);
+  assert.equal(two.markdown, 'ab');
+
+  const dated = prepareCritic('{++x++}{r1 @AC 2026-10-01T09:00:00Z}', { agentView: true });
+  assert.equal(dated.changes[0].date, '2026-10-01T09:00:00Z');
+
+  const story = prepareCritic('{++head++}{header1.r3 @AC}', { agentView: true });
+  assert.deepEqual(story.changes[0].referenceIds, ['header1:rev:3']);
+
+  // A change inside another names the outer after ` re `; it is the inner's own tag.
+  const nested = prepareCritic('{--x--}{r4+5 @AC re r3 @JD}', { agentView: true });
+  assert.deepEqual(nested.changes[0].revisionIds, ['4', '5']);
+  assert.equal(nested.markdown, 'x');
+});
+
+test('braces that are not an attribution tag stay text', () => {
+  assert.equal(prepareCritic('{++x++}{not a tag}', { agentView: true }).markdown, 'x{not a tag}');
+  assert.equal(prepareCritic('{++x++} {r1 @AC}', { agentView: true }).markdown, 'x {r1 @AC}');
+  // Outside the agent view nothing is read as a tag.
+  assert.equal(prepareCritic('{++x++}{r1 @AC}').markdown, 'x{r1 @AC}');
+});
+
+// The engine's grammar (critic.rs recognized_note): one brace per change;
+// every ` re ` segment must be a tag; a part may end in ` move [name]`.
+test('an attribution brace is metadata only when every part of it is a tag (#16)', () => {
+  assert.equal(prepareCritic('{++x++}{r1 @A re payment is due}', { agentView: true }).markdown, 'x{r1 @A re payment is due}');
+  const after = prepareCritic('{++x++}{r2 @A}{r1 @A re payment is due}', { agentView: true });
+  assert.equal(after.markdown, 'x{r1 @A re payment is due}');
+  assert.deepEqual(after.changes[0].revisionIds, ['2']);
+  // A brace right after a tag is metadata too (critic.rs `follows`: the
+  // closer or an AttributionEnd), as `jubarte convert` reads it.
+  assert.equal(prepareCritic('{++x++}{r1 @A}{r2 @B}', { agentView: true }).markdown, 'x');
+});
+
+test('move tags and two-author tags attach to their change (#17)', () => {
+  const moved = prepareCritic('{--Moved clause.--}{r7 @A move move1}', { agentView: true, authors: { A: 'Ann' } });
+  assert.equal(moved.markdown, 'Moved clause.');
+  assert.deepEqual(moved.changes[0].revisionIds, ['7']);
+  assert.equal(moved.changes[0].author, 'Ann');
+  const bare = prepareCritic('{++a++}{r1 @A move}', { agentView: true });
+  assert.equal(bare.markdown, 'a');
+  assert.deepEqual(bare.changes[0].revisionIds, ['1']);
+  const nested = prepareCritic('{++a++}{r4 @A move m2 re r3 @B}', { agentView: true });
+  assert.deepEqual(nested.changes[0].revisionIds, ['4']);
+  assert.equal(nested.markdown, 'a');
+  // ` move` followed by two words is not a move clause.
+  assert.equal(prepareCritic('{++a++}{r1 @A move two words}', { agentView: true }).markdown, 'a{r1 @A move two words}');
 });

@@ -461,3 +461,33 @@ fn header_text_naming_an_earlier_page_is_not_one() {
         "header text became the earlier page:\n{saved}"
     );
 }
+
+#[test]
+fn a_first_page_with_an_earlier_one_is_a_quoted_yaml_scalar() {
+    // `page: Letter …; was: A4 …` holds `: `, which no YAML reader takes in
+    // a plain scalar (#20). The value is quoted, and it still reads back.
+    let change = format!(
+        r#"<w:sectPrChange w:id="1" w:author="Alice" w:date="2026-10-17T09:00:00Z"><w:sectPr>{EARLIER_A4}</w:sectPr></w:sectPrChange>"#
+    );
+    let source = docx_with_sect_pr(
+        "<w:p><w:r><w:t>One</w:t></w:r></w:p>",
+        &[],
+        &format!("<w:sectPr>{LETTER}{change}</w:sectPr>"),
+    );
+    let markdown = view(&source);
+    let line = markdown
+        .lines()
+        .find(|line| line.starts_with("page: "))
+        .expect("a page line")
+        .to_string();
+    let value = line.strip_prefix("page: ").unwrap();
+    let text: String = serde_json::from_str(value)
+        .unwrap_or_else(|_| panic!("the page value is not a quoted scalar: {line}"));
+    assert!(text.contains("; was: "), "{text}");
+    let again = write(&markdown);
+    let saved = saved_section(&again);
+    assert!(
+        saved.contains(r#"w:w="11906""#),
+        "the earlier page was lost:\n{saved}"
+    );
+}

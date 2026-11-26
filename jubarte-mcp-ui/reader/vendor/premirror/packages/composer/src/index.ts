@@ -131,8 +131,24 @@ function pmPosAtRunOffset(run: StyledRun, charFrom: number, charTo: number): { f
   return { from, to };
 }
 
-function isWordChar(ch: string | undefined): boolean {
-  return ch !== undefined && /[A-Za-z0-9]/.test(ch);
+// Jubarte: letters, digits and combining marks of every script that puts
+// spaces between words; the upstream /[A-Za-z0-9]/ let a line end inside
+// "São". Scripts that may break between any two characters (Han, kana,
+// Thai and its neighbours) stay breakable. A UTF-16 surrogate half counts as
+// part of a word, so a pair is never cut.
+const LETTER = /[\p{L}\p{N}\p{M}]/u;
+const BREAKS_ANYWHERE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+
+// Kinsoku (Word's East Asian line breaking, #82): no line starts with the first set, none
+// ends with the second.
+export const NO_LINE_START = /^[)\]}）〕］｝〉》」』】〙〗〟’”｠»、。，．・：；？！ヽヾーァィゥェォッャュョヮヵヶぁぃぅぇぉっゃゅょゎゕゖ々〻‐゠–〜～…‥]$/u;
+export const NO_LINE_END = /^[([{（〔［｛〈《「『【〘〖〝‘“｟«]$/u;
+
+export function isWordChar(ch: string | undefined): boolean {
+  if (ch === undefined || ch === "") return false;
+  const unit = ch.charCodeAt(0);
+  if (unit >= 0xd800 && unit <= 0xdfff) return true;
+  return LETTER.test(ch) && !BREAKS_ANYWHERE.test(ch);
 }
 
 // -----------------------------------------------------------------------------
@@ -301,6 +317,11 @@ function splitPlacedRunAtWordBoundary(
   };
 }
 
+// Jubarte fork: no-break characters (no-break spaces, the non-breaking hyphen, the word
+// joiner) bind their neighbours as letters do, so no line ends or starts at one (#90).
+const NO_BREAK = /^[\u00a0\u202f\u2007\u2011\u2060\ufeff]$/u;
+const binds = (ch: string | undefined): boolean => isWordChar(ch) || (ch !== undefined && NO_BREAK.test(ch));
+
 function fixWordBoundarySplits(
   lines: LineDraft[],
   measured: MeasuredDocumentSnapshot["measuredRuns"],
@@ -325,13 +346,16 @@ function fixWordBoundarySplits(
     const nextFirstWord = firstWordCharIndex(nextText);
     if (nextFirstWord < 0) continue;
     const head = nextText[nextFirstWord];
-    if (!isWordChar(tail) || !isWordChar(head)) continue;
+    const glued = (NO_BREAK.test(tail ?? "") && binds(nextText[0])) || (binds(tail) && NO_BREAK.test(nextText[0] ?? ""));
+    if (!glued && (!isWordChar(tail) || !isWordChar(head))) continue;
+
+    const kept = [...current.runs];
 
     const moved: PlacedRun[] = [];
     while (current.runs.length > 0) {
       const last = current.runs[current.runs.length - 1]!;
       let j = last.text.length;
-      while (j > 0 && isWordChar(last.text[j - 1])) j--;
+      while (j > 0 && binds(last.text[j - 1])) j--;
       if (j === last.text.length) break;
       if (j === 0) {
         moved.unshift(last);
@@ -344,6 +368,11 @@ function fixWordBoundarySplits(
       break;
     }
     if (moved.length === 0) continue;
+    // A word longer than the line stays where it was broken; the line is never emptied.
+    if (current.runs.length === 0) {
+      current.runs = kept;
+      continue;
+    }
     next.runs = [...moved, ...next.runs];
     recalcLineDraft(current, measured);
     recalcLineDraft(next, measured);
@@ -353,9 +382,14 @@ function fixWordBoundarySplits(
 function breakBlockIntoLineDrafts(
   block: BlockSnapshot,
   snapshot: MeasuredDocumentSnapshot,
-  contentWidth: number,
+  widthOfLine: number | ((lineIndex: number) => number),
 ): LineDraft[] {
   const lines: LineDraft[] = [];
+  // Jubarte fork: each line is broken at its own slot's width, so an obstacle that narrows
+  // only some lines (a first-line or hanging indent) wraps those lines and no others.
+  const widthAt = (index: number): number =>
+    typeof widthOfLine === "function" ? widthOfLine(index) : widthOfLine;
+  let contentWidth = widthAt(0);
   const measuredRuns = snapshot.measuredRuns;
 
   let currentParts: PlacedRun[] = [];
@@ -374,6 +408,7 @@ function breakBlockIntoLineDrafts(
     lineWidthUsed = 0;
     linePmFrom = Number.POSITIVE_INFINITY;
     linePmTo = 0;
+    contentWidth = widthAt(lines.length);
   };
 
   const appendToLine = (pr: PlacedRun, pmFrom: number, pmTo: number) => {
@@ -424,12 +459,18 @@ function breakBlockIntoLineDrafts(
         const bestBeforeWhitespaceAdjust = best;
 
         // Prefer breaking at the most recent whitespace when we need a soft wrap.
+        // Jubarte fork: a soft hyphen is a break opportunity too, taken only when the
+        // hyphen Word draws there still fits the line (#89).
         if (best > offset && best < piece.length) {
           for (let i = best - 1; i > offset; i--) {
             const ch = piece[i];
             if (ch === " " || ch === "\t") {
               // Include the whitespace with the previous line so the next line
               // doesn't start with an undecorated/unstyled position.
+              best = i + 1;
+              break;
+            }
+            if (ch === "\u00ad" && lineWidthUsed + runWidthPx({ ...run, text: piece.slice(offset, i) + "-" }, measuredRuns) <= contentWidth) {
               best = i + 1;
               break;
             }
@@ -450,6 +491,22 @@ function breakBlockIntoLineDrafts(
                 best = backtracked;
               }
             }
+          }
+        }
+
+        // Jubarte fork: kinsoku, as Word wraps East Asian text. Closing punctuation never
+        // starts a line and an opening bracket never ends one; the break moves back a
+        // grapheme while the line keeps at least one (#82).
+        if (best > offset && best < piece.length) {
+          const previousStart = (at: number): number => {
+            let back = at - 1;
+            while (back > offset && !graphemeEnds.has(back)) back--;
+            return back;
+          };
+          while (best > offset && (NO_LINE_START.test(piece[best]!) || NO_LINE_END.test(piece[best - 1]!))) {
+            const back = previousStart(best);
+            if (back <= offset) break;
+            best = back;
           }
         }
 
@@ -666,6 +723,9 @@ export function composeLayout(
 
   const blocks = snapshot.blocks;
 
+  // The width of each of a block's lines, from the slot at that line's band.
+  const lineWidths = (yInFrame: number) => (lineIndex: number): number =>
+    contentWidthForBlockStart(yInFrame + lineIndex * lineHeight);
   const contentWidthForBlockStart = (yInFrame: number): number => {
     const bandTop = frame.y + yInFrame;
     const bandBottom = bandTop + lineHeight;
@@ -674,8 +734,7 @@ export function composeLayout(
   };
 
   const estimateBlockHeight = (b: BlockSnapshot, yInFrame: number): number => {
-    const w = contentWidthForBlockStart(yInFrame);
-    const d = breakBlockIntoLineDrafts(b, snapshot, w);
+    const d = breakBlockIntoLineDrafts(b, snapshot, lineWidths(yInFrame));
     return d.length * lineHeight;
   };
 
@@ -702,7 +761,7 @@ export function composeLayout(
       }
     }
 
-    const drafts = breakBlockIntoLineDrafts(block, snapshot, contentWidthForBlockStart(currentY));
+    const drafts = breakBlockIntoLineDrafts(block, snapshot, lineWidths(currentY));
     if (drafts.length === 0) continue;
 
     let lineCursor = 0;

@@ -171,13 +171,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@chenglou/pretext@0.0.5': 00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc
+
 importers:
 
   .:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@modelcontextprotocol/core':
         specifier: 2.4.0
         version: 2.4.0
@@ -254,9 +257,15 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: 2.4.0
+        version: 2.4.0
       jsdom:
         specifier: 26.1.0
         version: 26.1.0
+      playwright:
+        specifier: 1.65.1
+        version: 1.65.1
       vite:
         specifier: 7.3.5
         version: 7.3.5(yaml@2.8.3)
@@ -271,7 +280,7 @@ importers:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@premirror/core':
         specifier: workspace:*
         version: link:../core
@@ -282,7 +291,7 @@ importers:
     dependencies:
       '@chenglou/pretext':
         specifier: 0.0.5
-        version: 0.0.5
+        version: 0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)
       '@premirror/core':
         specifier: workspace:*
         version: link:../core
@@ -1035,6 +1044,16 @@ packages:
     resolution: {integrity: sha512-vCc54+qyIfKC5e2UN28AZKElwqjLINgiIV3RKI8pDu93TjaAJoB3QrgMzEBouy8yOKsXVXdAinO1QArJf9x5WA==}
     engines: {node: '>=16.20.0'}
 
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   postcss@8.5.33:
     resolution: {integrity: sha512-RVHEU9/Pp1Fnjr/MpAJsZoADukCKhfIi15OunEYiGktIkYLkPVvC1sioWolGDS7XByMTx9m/IGbro0Js13zhnQ==}
     engines: {node: ^10 || ^12 || >=14}
@@ -1358,7 +1377,7 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
       lru-cache: 10.4.3
 
-  '@chenglou/pretext@0.0.5': {}
+  '@chenglou/pretext@0.0.5(patch_hash=00c56e4d05f2fc42245afe1dcd79ffe6f9a7891b090e31015f5d7f159d5492bc)': {}
 
   '@csstools/color-helpers@5.1.0': {}
 
@@ -2094,6 +2113,12 @@ snapshots:
   picomatch@4.0.7: {}
 
   pkce-challenge@5.0.2: {}
+
+  playwright-core@1.65.1: {}
+
+  playwright@1.65.1:
+    dependencies:
+      playwright-core: 1.65.1
 
   postcss@8.5.33:
     dependencies:

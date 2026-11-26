@@ -617,7 +617,10 @@ it, then every other paragraph style the body uses, a text box's
 paragraphs included, keyed by its id
 (`TOC2: Times New Roman 12pt, after 6pt`), described the same way. A line
 names only what its style sets apart from the style it is based on:
-font and size, `before`/`after` (`after 0pt` too, when the base has
+font and size (with the style's own marks between them, in this order:
+`bold`, `italic`, `underline` for Word's single line or `underline-KIND`
+for another `w:u` kind such as `underline-double`, `strike`, `dstrike`;
+`Aptos underline strike 11pt`), `before`/`after` (`after 0pt` too, when the base has
 some), `line` (`line 1` for single, when the base is not), alignment, `keep-next`,
 `keep-lines`, `indent Xin` with `first-line`/`hanging Xin`, `right Xin`
 for the right indent (the id line's word; `right` alone is the alignment),

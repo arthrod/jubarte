@@ -3,28 +3,45 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { baseName, linkAction, pickDocument, pickFiles } from "./pick.js";
+import { baseName, errorText, linkAction, pickDocument, pickFiles, readerNotices } from "./pick.js";
 
 const ok = (structuredContent) => ({ content: [{ type: "text", text: "x" }], structuredContent });
 
 describe("pickDocument", () => {
   it("shows the redline docx_compare wrote", () => {
-    expect(pickDocument({ original: "a.docx", modified: "b.docx", out: "r.docx" }, ok({ out: "/root/r.docx", changes: [] }))).toBe("/root/r.docx");
+    expect(
+      pickDocument(
+        { original: "a.docx", modified: "b.docx", out: "r.docx" },
+        ok({ out: "/root/r.docx", changes: [] }),
+      ),
+    ).toBe("/root/r.docx");
   });
   it("shows docx_edit's redline, not its clean copy", () => {
-    expect(pickDocument({ path: "a.docx" }, ok({ clean: "/o/clean.docx", redline: "/o/redline.docx", report: {} }))).toBe("/o/redline.docx");
+    expect(
+      pickDocument(
+        { path: "a.docx" },
+        ok({ clean: "/o/clean.docx", redline: "/o/redline.docx", report: {} }),
+      ),
+    ).toBe("/o/redline.docx");
   });
   it("shows docx_view's path", () => {
     expect(pickDocument({ path: "a.docx" }, ok({ path: "/root/a.docx" }))).toBe("/root/a.docx");
   });
   it("falls back to the input path for docx_text, whose result is text only", () => {
-    expect(pickDocument({ path: "contract.docx" }, { content: [{ type: "text", text: "# x" }] })).toBe("contract.docx");
+    expect(
+      pickDocument({ path: "contract.docx" }, { content: [{ type: "text", text: "# x" }] }),
+    ).toBe("contract.docx");
   });
   it("needs no tool name", () => {
     expect(pickDocument(undefined, ok({ out: "r.docx" }))).toBe("r.docx");
   });
   it("shows nothing for a failed call, even when an old output exists", () => {
-    expect(pickDocument({ out: "r.docx", path: "a.docx" }, { isError: true, content: [{ type: "text", text: "exists" }] })).toBeNull();
+    expect(
+      pickDocument(
+        { out: "r.docx", path: "a.docx" },
+        { isError: true, content: [{ type: "text", text: "exists" }] },
+      ),
+    ).toBeNull();
   });
   it("shows nothing for a manual launch with {}", () => {
     expect(pickDocument({}, ok({ files: [], truncated: false }))).toBeNull();
@@ -34,7 +51,9 @@ describe("pickDocument", () => {
 
 describe("pickFiles", () => {
   it("returns the listed files and drops malformed rows", () => {
-    expect(pickFiles(ok({ files: [{ path: "a.docx" }, { nope: 1 }] }))).toEqual([{ path: "a.docx" }]);
+    expect(pickFiles(ok({ files: [{ path: "a.docx" }, { nope: 1 }] }))).toEqual([
+      { path: "a.docx" },
+    ]);
   });
   it("is null when the result is not a listing", () => {
     expect(pickFiles(ok({ path: "a.docx" }))).toBeNull();
@@ -54,10 +73,54 @@ describe("linkAction", () => {
     expect(linkAction("#fn-1")).toEqual({ kind: "anchor", id: "fn-1" });
   });
   it("sends web and mail links to the host", () => {
-    expect(linkAction("https://example.com/x")).toEqual({ kind: "external", url: "https://example.com/x" });
+    expect(linkAction("https://example.com/x")).toEqual({
+      kind: "external",
+      url: "https://example.com/x",
+    });
     expect(linkAction("mailto:a@b.c").kind).toBe("external");
   });
   it("ignores javascript:, file: and relative links", () => {
-    for (const href of ["javascript:alert(1)", "file:///etc/passwd", "../x", "", null]) expect(linkAction(href).kind).toBe("none");
+    for (const href of ["javascript:alert(1)", "file:///etc/passwd", "../x", "", null])
+      expect(linkAction(href).kind).toBe("none");
+  });
+});
+
+describe("readerNotices", () => {
+  it("keeps what changes the page and drops the lossless reader's bookkeeping", () => {
+    const warnings = [
+      { code: "unknown-frontmatter-key", message: "Unrecognized YAML field is preserved: sha256" },
+      {
+        code: "unknown-directive-clause",
+        message: "Unrecognized ID-line clause is preserved: holds",
+      },
+      { code: "unknown-style-clause", message: "Unrecognized style Title clause is preserved: x" },
+      {
+        code: "missing-revision-date",
+        message: "A revision without its own … falls back to the conversion time in UTC.",
+      },
+      { code: "yaml-repaired", message: "A header value that is not valid YAML was read as text." },
+      { code: "yaml-error", message: "Nested mappings are not allowed in compact mappings" },
+      "Nested insertion syntax at this depth is kept as literal text.",
+    ];
+    expect(readerNotices(warnings)).toEqual([
+      "Nested mappings are not allowed in compact mappings",
+      "Nested insertion syntax at this depth is kept as literal text.",
+    ]);
+  });
+});
+
+describe("errorText", () => {
+  it("shows the server's reason without the SDK's prefix (b106)", () => {
+    const failed = (text) => ({ isError: true, content: [{ type: "text", text }] });
+    expect(
+      errorText(
+        failed(
+          "Error executing tool docx_preview: big.docx is too large to preview; read it with docx_text",
+        ),
+      ),
+    ).toBe("big.docx is too large to preview; read it with docx_text");
+    expect(errorText(failed("path outside root: ../x.docx"))).toBe("path outside root: ../x.docx");
+    expect(errorText({ isError: true, content: [] })).toBe("");
+    expect(errorText(undefined)).toBe("");
   });
 });

@@ -676,6 +676,9 @@ pub(super) struct TableLine {
     /// Its rows' own table borders (`row-borders top double 0.5pt in
     /// t0.row1`, Word's `w:tblPrEx`), by row.
     pub row_borders: Vec<(usize, super::borders::Sides)>,
+    /// Its rows Word keeps on one page (`cant-split t0.row1 t0.row3`,
+    /// `w:cantSplit`, #71).
+    pub cant_split: Vec<usize>,
     /// A comment's range runs through the table (`in c5`).
     pub in_comment: bool,
     /// The table's formatting changes (`fmt r16 @AL; r14 @AL in t0.row0;
@@ -876,6 +879,7 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         borders: None,
         cell_borders: Vec::new(),
         row_borders: Vec::new(),
+        cant_split: Vec::new(),
         in_comment: false,
         fmt: None,
         grid_fmt: None,
@@ -938,6 +942,9 @@ pub(super) fn table_line(line: &str) -> Option<TableLine> {
         }
         if clause == "header row repeats" {
             parsed.header_repeats = true;
+        }
+        if let Some(rows) = clause.strip_prefix("cant-split ") {
+            parsed.cant_split.extend(rows.split(' ').filter_map(row_of));
         }
         if clause.strip_prefix("in ").is_some_and(comment_numbers) {
             parsed.in_comment = true;
@@ -1347,7 +1354,7 @@ const CLAUSE_WORDS: [&str; 27] = [
 /// The words that open a id line's clauses (`center`, `left 0.5in`,
 /// `break-ins r3 @AC`): beside [`CLAUSE_WORDS`], what a style id must not
 /// read as.
-const TABLE_WORDS: [&str; 14] = [
+const TABLE_WORDS: [&str; 15] = [
     "cells",
     "widths",
     "width",
@@ -1358,6 +1365,7 @@ const TABLE_WORDS: [&str; 14] = [
     "row-borders",
     "merged",
     "gaps",
+    "cant-split",
     "style",
     "header",
     "rev-del",

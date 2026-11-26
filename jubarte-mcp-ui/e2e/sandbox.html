@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+SPDX-License-Identifier: Apache-2.0
+-->
+<!-- The sandbox proxy of an MCP Apps web host (SEP-1865, "Sandbox proxy"):
+     a second origin that loads the view's HTML into an inner frame under the
+     view's CSP and relays messages, leaving sandbox-* notifications to itself. -->
+<meta charset="utf-8" />
+<meta name="view-csp" content="__VIEW_CSP__" />
+<title>sandbox</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; } iframe { border: 0; width: 100%; height: 100%; display: block; }</style>
+<script>
+  const host = new URLSearchParams(location.search).get("host");
+  const policy = document.querySelector("meta[name=view-csp]").content;
+  let inner = null;
+  window.addEventListener("message", (event) => {
+    const msg = event.data;
+    if (event.source === window.parent && event.origin === host) {
+      if (msg?.method === "ui/notifications/sandbox-resource-ready") {
+        if (!/<head[^>]*>/i.test(msg.params.html)) console.error("sandbox: the view has no <head> to carry its CSP");
+        const html = msg.params.html.replace(/<head([^>]*)>/i, `<head$1><meta http-equiv="Content-Security-Policy" content="${policy}">`);
+        inner = document.createElement("iframe");
+        inner.setAttribute("sandbox", msg.params.sandbox ?? "allow-scripts allow-same-origin allow-forms");
+        inner.srcdoc = html;
+        document.body.append(inner);
+        return;
+      }
+      if (typeof msg?.method === "string" && msg.method.startsWith("ui/notifications/sandbox-")) return;
+      inner?.contentWindow?.postMessage(msg, "*");
+    } else if (inner && event.source === inner.contentWindow) {
+      window.parent.postMessage(msg, host);
+    }
+  });
+  window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/sandbox-proxy-ready", params: {} }, host);
+</script>

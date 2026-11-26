@@ -70,7 +70,7 @@ function decodeLabel(value) {
 function parseTags(value, defaultStory, warnings, range) {
   return splitClauses(value, ';').map(part => {
     const raw = part.trim();
-    const match = raw.match(new RegExp(`^(?:(${STORY})\\.)?(?:r|#)(\\d+(?:\\+\\d+)*)\\s+@([\\p{L}\\p{N}_-]+)(?:\\s+(.+))?$`, 'u'));
+    const match = raw.match(new RegExp(`^(?:(${STORY})\\.)?(?:r|#)(\\d+(?:\\+\\d+)*)\\s+@(\\?\\?|[\\p{L}\\p{N}_-]+)(?:\\s+(.+))?$`, 'u'));
     if (!match) {
       warn(warnings, 'unknown-revision-tag', `Unrecognized revision tag is preserved: ${raw}`, range);
       return {raw, known: false};
@@ -152,7 +152,23 @@ function parseClause(raw, context) {
     const cells = parseCellGroups(match[1]);
     if (cells) return {...scopedBase, type: 'cells', ...cells};
   }
+  const NUM = '(\\d+(?:\\.\\d*)?|\\.\\d+)';
+  if ((match = value.match(new RegExp(`^size\\s+${NUM}pt$`)))) return {...scopedBase, type: 'size', points: Number(match[1])};
+  // A table line sizes its cells' paragraphs: `p153-p249 size 10pt`, among
+  // the space-joined words the engine writes for a cell group
+  // (`p8-p38 line 8.65pt exact size 9pt mark style`; from_docx cell_spacings).
+  if ((match = value.match(new RegExp(`^p(\\d+)(?:-p(\\d+))?\\s+(?:.*\\s)?size\\s+${NUM}pt(?:\\s+mark\\s+style)?$`)))) {
+    return {...scopedBase, type: 'cell-size', from: Number(match[1]), to: Number(match[2] ?? match[1]), points: Number(match[3])};
+  }
+  if (value === 'mark style') return {...scopedBase, type: 'mark-style'};
+  if ((match = value.match(/^widths\s+((?:(?:\d+(?:\.\d*)?|\.\d+)in\s*)+)$/))) {
+    return {...scopedBase, type: 'widths', inches: match[1].trim().split(/\s+/).map((w) => Number(w.slice(0, -2)))};
+  }
   if (/^header\s*row\s+repeats$/i.test(value)) return {...scopedBase, type: 'header-row', repeats: true};
+  // `cant-split t0.row1 t0.row3`: the rows Word keeps on one page (w:cantSplit, #71).
+  if ((match = value.match(/^cant-split\s+((?:t\d+\.row\d+\s*)+)$/))) {
+    return {...scopedBase, type: 'cant-split', rows: match[1].trim().split(/\s+/).map((id) => Number(id.split('.row')[1]))};
+  }
   if ((match = value.match(/^merged\s+(?:cells\s+)?(.+)$/s))) {
     const merges = parseMerges(match[1]);
     if (merges) return {...scopedBase, type: 'merged', merges};
@@ -162,7 +178,7 @@ function parseClause(raw, context) {
 }
 
 function looksLikeClause(value) {
-  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty)(?:\s|$)/.test(value);
+  return /^(?:left|center|right|justify|first-line|hanging|num|bullet|level|page-break|section-break|break-ins|break-del|fmt|rev|comments|in|empty|size|mark|before|after|line)(?:\s|$)/.test(value);
 }
 
 function normalizeDirective(directive) {
@@ -183,7 +199,11 @@ function normalizeDirective(directive) {
       case 'comments': properties.comments.push(...clause.comments); break;
       case 'in': properties.openComments.push(...clause.comments); break;
       case 'cells': properties.cells = clause; break;
+      case 'size': properties.fontSizePt = clause.points; break;
+      case 'cell-size': (properties.cellSizes ??= []).push({from: clause.from, to: clause.to, points: clause.points}); break;
+      case 'widths': properties.columnWidthsIn = clause.inches; break;
       case 'header-row': properties.headerRowRepeats = true; break;
+      case 'cant-split': properties.cantSplitRows = [...(properties.cantSplitRows || []), ...clause.rows]; break;
       case 'merged': properties.merges = [...(properties.merges || []), ...clause.merges]; break;
       case 'unknown': properties.unknown.push(clause.raw); break;
     }
@@ -304,14 +324,22 @@ function parseStyle(raw, key, warnings) {
     else if ((match = value.match(/^(before|after)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { style[`${match[1]}Pt`] = Number(match[2]); clause = {type: 'spacing', side: match[1], points: Number(match[2])}; }
     else if ((match = value.match(/^line\s+((?:\d+(?:\.\d*)?|\.\d+))$/))) { style.lineHeight = Number(match[1]); clause = {type: 'line-height', multiple: Number(match[1])}; }
     else if (['keep-next', 'keep-lines', 'page-break-before'].includes(value)) { style[value.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = true; clause = {type: value}; }
+    // A style's own indents (#96): `indent` is w:ind's left, `right Xin` its right (`right` alone is the alignment).
+    else if ((match = value.match(/^(indent|right|first-line|hanging)\s+([+-]?(?:\d+(?:\.\d*)?|\.\d+))in$/))) { const kind = match[1] === 'indent' ? 'left' : match[1]; style.indents = {...style.indents, [kind]: Number(match[2])}; clause = {type: 'indent', kind, inches: Number(match[2])}; }
+    else if (value === 'contextual spacing') { style.contextualSpacing = true; clause = {type: 'contextual-spacing'}; }
     else if ((match = value.match(/^all borders\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) { style.borders = {allPt: Number(match[1])}; clause = {type: 'borders', points: Number(match[1])}; }
     else if ((match = value.match(/^(.*?)\s+((?:\d+(?:\.\d*)?|\.\d+))pt$/))) {
       const fontWords = match[1].split(/\s+/);
-      const marks = fontWords.filter(word => ['bold', 'italic', 'underline', 'strike'].includes(word));
+      // `underline-double` names a w:u kind other than single; `dstrike` is the double strike (#96).
+      const marks = fontWords.filter(word => ['bold', 'italic', 'underline', 'strike', 'dstrike'].includes(word) || /^underline-[A-Za-z]+$/.test(word));
       const family = fontWords.filter(word => !marks.includes(word)).join(' ');
       if (family) style.fontFamily = family;
       style.fontSizePt = Number(match[2]);
-      for (const mark of marks) style[mark] = true;
+      for (const mark of marks) {
+        const kind = mark.match(/^underline-(.+)$/)?.[1];
+        if (kind) { style.underline = true; style.underlineKind = kind; }
+        else style[mark] = true;
+      }
       clause = {type: 'font', fontFamily: family, fontSizePt: style.fontSizePt, marks};
     } else if (i === 0 && !/\s/.test(value) && value) { style.styleId = value; clause = {type: 'style-id', styleId: value}; }
     else {
@@ -432,6 +460,30 @@ function assertAcyclic(value, active = new Set(), completed = new Set()) {
   completed.add(value);
 }
 
+/**
+ * The header with each top-level value YAML refuses written as a quoted
+ * string, or null when nothing was rewritten. jubarte 0.20.0 writes some
+ * values with a second `: ` in them (`page: A4; was: Letter; fmt r227 @ASR`),
+ * which plain YAML reads as a nested mapping. Only values are rewritten,
+ * never the `view` key, so a broken view still leaves the source literal.
+ */
+function quotedValues(yaml) {
+  let changed = false;
+  const lines = yaml.split('\n').map((line) => {
+    const match = line.match(/^([A-Za-z_][\w-]*):[ \t]+(\S.*?)\r?$/);
+    if (!match || match[1] === 'view') return line;
+    let [, key, rest] = match;
+    if (/^["'[{|>&*!]/.test(rest)) return line;
+    const hash = rest.search(/[ \t]#/);
+    const value = (hash < 0 ? rest : rest.slice(0, hash)).trimEnd();
+    const comment = hash < 0 ? '' : rest.slice(hash);
+    if (!YAML.parseDocument(`${key}: ${value}`).errors.length) return line;
+    changed = true;
+    return `${key}: ${JSON.stringify(value)}${comment}`;
+  });
+  return changed ? lines.join('\n') : null;
+}
+
 function frontmatterAtStart(source, warnings) {
   const opening = source.match(/^(?:\uFEFF)?---[ \t]*\r?\n/);
   if (!opening) return null;
@@ -449,6 +501,14 @@ function frontmatterAtStart(source, warnings) {
   let valid = true;
   try {
     document = YAML.parseDocument(yaml, {keepSourceTokens: true, uniqueKeys: true, prettyErrors: false});
+    const repaired = document.errors.length ? quotedValues(yaml) : null;
+    if (repaired !== null) {
+      const second = YAML.parseDocument(repaired, {keepSourceTokens: true, uniqueKeys: true, prettyErrors: false});
+      if (!second.errors.length) {
+        document = second;
+        warn(warnings, 'yaml-repaired', 'A header value that is not valid YAML was read as text.', range);
+      }
+    }
     for (const problem of [...document.errors, ...document.warnings]) {
       const position = problem.pos ? {start: opening[0].length + problem.pos[0], end: opening[0].length + problem.pos[1]} : range;
       warn(warnings, document.errors.includes(problem) ? 'yaml-error' : 'yaml-warning', problem.message, position);

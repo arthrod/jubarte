@@ -45,11 +45,24 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   const id = String(target); nestedReferences.add(id);
   if (!notes.has(id)) warn('missing-footnote-definition', `Footnote reference ${id} inside note ${note.identifier} has no visible definition.`, id);
  }
- for (const note of notes.values()) {
+ // A note's blocks from position `from` on: a run cut at `from` keeps its tail.
+ const clipBlocks = (blocks, from) => blocks.flatMap(block => {
+  const runs = (block.runs || []).flatMap(run => {
+   const r = run.pmRange;
+   if (!r || r.from >= from) return [run];
+   if (r.to <= from || typeof run.text !== 'string') return [];
+   const cut = from - r.from;
+   return [{...run, text: run.text.slice(cut), pmRange: {from, to: r.to}}];
+  });
+  if (!runs.length) return [];
+  return [{...block, runs, pmRange: {...block.pmRange, from: Math.max(block.pmRange?.from ?? from, from)}, attrs: {...block.attrs, clipFrom: from, first: false}}];
+ });
+ const wrap = note => {
   note.lines = composeLines(note.blocks, width);
   // An empty definition is still a visible labelled note.
   if (!note.lines.length) note.lines = [{blockId: note.blocks[0]?.id || `empty-footnote-${note.id}`, y: 0, height: lineHeight, runs: [], pmRange: note.pmRange || {from: 0, to: 0}}];
- }
+ };
+ for (const note of notes.values()) wrap(note);
  let scheduled = new Set(), pending = [], requests = [], allocations = [], active = false;
  const cloneEntries = items => items.map(item => ({...item}));
  const footprint = items => items.length ? separator + items.reduce((sum, item) => sum + labelHeight + item.count * lineHeight, 0) + between * (items.length - 1) : 0;
@@ -62,6 +75,8 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
    const value = run.footnoteId ?? sourceRuns.get(run.runId ?? run.id)?.footnoteId ?? snapshot.runMap?.get(run.runId ?? run.id)?.footnoteId;
    if (value == null || value === '') continue;
    const id = String(value);
+   // An endnote's reference: its note follows the body, not the page (#46).
+   if (snapshot.endnoteIds?.has(id)) continue;
    if (!notes.has(id)) {
     if (!missing.has(id)) { missing.add(id); warn('missing-footnote-definition', `Footnote reference ${id} has no visible definition.`, id); }
     continue;
@@ -72,6 +87,9 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  }
  // Allocate whole measured lines. Reserve one line per newly referenced note
  // first when possible, so a large earlier note cannot hide a short later one.
+ // Where a note's content ends: its trailing spacer is drawn when there is room but never
+ // continues the note onto another page (#58).
+ function contentEnd(note) { let end = note.lines.length; while (end > 0 && !(note.lines[end - 1].runs || []).length) end--; return Math.max(end, 1); }
  function allocate(items, budget, preferred = []) {
   const result = [], counts = new Map(); let used = 0;
   function addLine(item) {
@@ -122,7 +140,7 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
  // Once the body is finished, spend remaining page space on pending definitions.
  function fillRemainder(bodyBottom = 0) {
   const old = new Map(allocations.map(item => [item.id, item.count]));
-  const left = requests.map(item => ({...item, offset: item.offset + (old.get(item.id) || 0)})).filter(item => item.offset < notes.get(item.id).lines.length);
+  const left = requests.map(item => ({...item, offset: item.offset + (old.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
   if (!allocations.length) { allocations = allocate(left, height - bodyBottom); active = true; return; }
   let budget = height - bodyBottom - footprint(allocations);
   for (const item of left) {
@@ -138,17 +156,35 @@ export function createFootnoteAllocator({snapshot, composeLines, width, height, 
   const total = footprint(allocations), band = total ? {pageIndex, frameIndex: 0, x: 0, y: height - total, width, height: total} : null;
   let y = height - total + separator;
   const fragments = allocations.map(item => {
-   const note = notes.get(item.id), continuedBefore = item.offset > 0, continuedAfter = item.offset + item.count < note.lines.length;
+   const note = notes.get(item.id), continuedBefore = item.offset > 0, continuedAfter = item.offset + item.count < contentEnd(note);
    const lines = note.lines.slice(item.offset, item.offset + item.count).map((line, index) => ({...line, y: labelHeight + index * lineHeight}));
    const fragment = {footnoteId: note.id, identifier: note.identifier, pageIndex, frameIndex: 0, x: 0, y, width, height: labelHeight + item.count * lineHeight, lines, continuedBefore, continuedAfter, orphan: note.orphan};
    y += fragment.height + between; return fragment;
   });
   const emitted = new Map(allocations.map(item => [item.id, item.count]));
-  pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < notes.get(item.id).lines.length);
+  pending = requests.map(item => ({...item, offset: item.offset + (emitted.get(item.id) || 0)})).filter(item => item.offset < contentEnd(notes.get(item.id)));
   return {band, fragments};
  }
  return {beginPage, accept, checkpoint, restore, finishPage, enqueueOrphans, fillRemainder, referenceIds,
   get bodyLimit() { return height - footprint(allocations); },
+ // A section's pages bring their own content area (#47).
+ // Notes are rewrapped to its width (#49); a note continued from the previous
+ // page resumes at the new line holding the first text it had not shown.
+ // The lines already drawn stay as they were; only the text not yet shown is
+ // wrapped again, from its first character (#50), so nothing repeats.
+ setGeometry(geometry) {
+  const rewrap = Math.abs(geometry.width - width) > 0.001;
+  width = geometry.width; height = geometry.height;
+  if (!rewrap) return;
+  for (const note of notes.values()) {
+   const carried = pending.find(item => item.id === note.id && item.offset > 0);
+   if (!carried) { wrap(note); continue; }
+   const from = note.lines[carried.offset]?.pmRange?.from;
+   if (!Number.isFinite(from)) continue;
+   const rest = composeLines(clipBlocks(note.blocks, from), width);
+   note.lines = [...note.lines.slice(0, carried.offset), ...rest];
+  }
+ },
   get hasPending() { return pending.length > 0; },
   get enabled() { return notes.size > 0 || sourceRuns.size > 0; }};
 }

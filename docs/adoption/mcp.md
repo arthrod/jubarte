@@ -31,6 +31,8 @@ pip install 'jubarte-docx[mcp]' && jubarte-mcp --root .
 | `docx_validate` | `path`, `original=null`, `author=null`, `rules=null` (sets `word`, `edits`, `a11y`, `style`, `structure` or codes) | findings; one at a paragraph carries its id in `location` and `ref` (`p5`, `header1.p1`; 0.12 printed `body:p:5` in `location`) |
 | `docx_comments` | `path` | comment records |
 | `docx_audit` | `path`, `rules=null` (rule sets `a11y`, `style`, `structure` or codes) | accessibility, style and structure findings, each with its paragraph id |
+| `docx_view` | `path=null` | With `path`, a one-line summary and `{path}`, for a host to show the document card. Without it, the `.docx` files under the root (at most 200, six folders deep, dot folders, `node_modules`, `target` and `__pycache__` skipped, links not followed), each with its `size` and `modified` time |
+| `docx_preview` | `path` | Only the card calls it (`_meta.ui.visibility: ["app"]`), so it never shows in the model's tool list. Returns the document as the agent view's Markdown without page markers, its `sha256`, the engine's warnings, the move kind of each move revision and the counts of inserted, deleted, moved and formatted changes. A document whose preview would pass 2 MiB is refused, and the error points at `docx_text` |
 
 `docx_validate`, `docx_comments` and `docx_audit` are part of the tool
 contract. An engine build without the matching `Document` method returns an
@@ -53,6 +55,36 @@ every operation's `outcomes`. Nothing is written in that case.
 > unimplemented) replaces it with paired `short_id`/`long_id` references at
 > the schema-2 cutover. Until then, the table above is the current truth.
 
+## The document card (MCP Apps)
+
+A host that supports [MCP Apps](https://github.com/modelcontextprotocol/ext-apps)
+(the `io.modelcontextprotocol/ui` extension, as in Claude, VS Code, ChatGPT
+and Antigravity) shows `docx_text`, `docx_compare`, `docx_edit` and
+`docx_view` results as a document card instead of plain text. The card is
+`ui://jubarte/document.html` (`text/html;profile=mcp-app`), one
+self-contained file built from `jubarte-mcp-ui/` and shipped in the wheel.
+
+- It shows paginated pages, the tracked changes marked,
+  Tracked/Original/Accepted views, the discussion threads, and chips with
+  the counts of inserted, deleted, moved and formatted changes.
+- It asks the server for the document through `docx_preview`, never reading
+  files itself. It stays under the host's default-deny CSP: no network, no
+  external fonts, no `data:` fonts. A link in the document is passed to the
+  host (`ui/open-link`) and never opens inside the card.
+- `docx_edit` and `docx_compare` keep `visibility: ["model"]`, so the card
+  cannot call a tool that writes files. `docx_render`, `docx_accept` and
+  `docx_reject` carry no card.
+- Antigravity: `docx_view` also declares
+  `com.google.antigravity/ui` with the `aux_pane` and `global` entrypoints,
+  so the card can open in the side pane. Inline cards there start 150 px tall
+  and grow to at most 800 px.
+- A host without MCP Apps support ignores all of this: every tool still
+  returns its text result.
+
+`jubarte-mcp-ui/e2e/` drives the card in Chrome (Playwright) through the
+spec's sandbox-proxy pattern against a real `jubarte-mcp`: `pnpm e2e`, or
+`node e2e/serve.mjs ROOT` to open the test host by hand.
+
 ## Security model
 
 The server is a file-system tool that reads untrusted documents and untrusted
@@ -74,6 +106,13 @@ arguments from a model.
 - Every engine call goes through `Document`, which checks the package before
   parsing it.
 - The server speaks stdio only. It opens no network port.
+- `docx_view` lists only `.docx` files under the root and stops after 200
+  files, 5,000 directory entries (counted as they are read) or six levels.
+  It opens the root once without following a link and reopens each folder
+  from it one component at a time with `O_NOFOLLOW`, so a folder swapped
+  for a link while the list is built is not entered. On Windows, which
+  cannot open folders that way, each folder's real path is checked against
+  the root just before it is read.
 
 ## Claude Code
 
@@ -165,5 +204,10 @@ read on 2026-10-02 describes it:
 - The listing process for the gallery on geminicli.com/extensions.
 - safe-docx's tool list, tracked-change fidelity and Word validity. Only its
   repository page was read.
+- The document card in a real host. It was checked in Chrome under the
+  MCP Apps test host in `jubarte-mcp-ui/e2e/` (the spec's sandbox proxy and
+  CSP), not inside Claude, VS Code, ChatGPT or Antigravity. Antigravity's
+  `aux_pane` and `global` entrypoints are declared from its documentation
+  and are untested.
 - MCP `roots/list`. The server does not ask the host for roots; `--root` is
   the only boundary.

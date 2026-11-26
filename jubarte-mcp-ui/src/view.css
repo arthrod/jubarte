@@ -8,62 +8,272 @@
    tool and empty state is the app's. */
 
 body {
-  height: auto;
-  min-height: 0;
-  display: block;
-  overflow: visible;
-  background: var(--surface);
-  font-size: 13px;
-  user-select: text;
+    height: auto;
+    min-height: 0;
+    display: block;
+    overflow: visible;
+    background: var(--surface);
+    font-size: 13px;
+    user-select: text;
 }
 /* A host with a fixed height: the card scrolls inside it (view.js sets it). */
-body.fixed { height: 100vh; overflow: auto; }
+body.fixed {
+    height: 100vh;
+    overflow: auto;
+}
 
-.watermark { position: fixed; right: -90px; bottom: -70px; width: 360px; }
+.watermark {
+    position: fixed;
+    right: -90px;
+    bottom: -70px;
+    width: 360px;
+}
 
-.card { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 0; }
+.card {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
 
 /* the app bar, without the macOS traffic-light gutters */
-.appbar { grid-template-columns: 1fr auto 1fr; padding: 9px 16px; }
+.appbar {
+    grid-template-columns: 1fr auto 1fr;
+    padding: 9px 16px;
+}
 
-.preview-empty, .files, .result { padding: 18px 20px 22px; }
-.preview-empty { min-height: 150px; cursor: default; border: 0; }
-.preview-empty:hover { background: none; border-color: transparent; }
-.preview-empty.failed .empty-glyph { color: var(--del); }
+.preview-empty,
+.files,
+.result {
+    padding: 18px 20px 22px;
+}
+.preview-empty {
+    min-height: 150px;
+    cursor: default;
+    border: 0;
+}
+.preview-empty:hover {
+    background: none;
+    border-color: transparent;
+}
+.preview-empty.failed .empty-glyph {
+    color: var(--del);
+}
 
 /* The reader's generic `button` rule must not reach the desk's controls. */
-.view, .tool, .file { border-radius: 0; }
-.views { border-radius: var(--radius); overflow: hidden; background: var(--bg); }
-.tool { border-radius: var(--radius); background: var(--bg); }
-.tools-end { display: inline-flex; gap: 8px; }
-.result-title .ok { width: 34px; height: 22px; }
-.chip { border-radius: var(--radius); }
+.view,
+.tool,
+.file {
+    border-radius: 0;
+}
+.views {
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg);
+}
+.tool {
+    border-radius: var(--radius);
+    background: var(--bg);
+}
+.tools-end {
+    display: inline-flex;
+    gap: 8px;
+}
+.result-title .ok {
+    width: 34px;
+    height: 22px;
+}
+.chip {
+    border-radius: var(--radius);
+}
 
 /* docx_view's file list: the desk's drop-zone cells, as a shared-border grid */
-.files-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.files-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+/* Each cell draws its right and bottom rules over the list's edge, so a short
+   last row leaves the list's own background, not a block of rule colour. */
 .files-grid {
-  list-style: none; margin: 0; padding: 0;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1px;
-  background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.files-grid li {
+    margin: 0 -1px -1px 0;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
 }
 .file {
-  display: flex; align-items: center; gap: 12px; width: 100%;
-  padding: 14px 16px; text-align: left;
-  font: inherit; color: var(--ink); background: var(--bg); border: 0; cursor: pointer;
-  transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    height: 100%;
+    padding: 14px 16px;
+    text-align: left;
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 0;
+    cursor: pointer;
+    transition: background 0.15s;
 }
-.file:hover { background: var(--hover); }
-.file:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.file .docglyph { width: 26px; height: 26px; flex: none; color: var(--primary); }
-.file .filename { font-size: 13px; font-weight: 600; word-break: break-word; }
-.file .filemeta { display: block; margin-top: 2px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; word-break: break-all; }
+.file:hover {
+    background: var(--hover);
+}
+.file:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+}
+.file .docglyph {
+    width: 26px;
+    height: 26px;
+    flex: none;
+    color: var(--primary);
+}
+.file .filename {
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-word;
+}
+.file .filemeta {
+    display: block;
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    word-break: break-all;
+}
 
 /* the pages: paper in either appearance (the Paper Stays Paper Rule) */
-#pages-fit { color-scheme: light; margin-top: 4px; }
-.truncnote:empty { display: none; }
-.truncnote { text-align: left; font-size: 11px; line-height: 1.6; }
+/* `color` is set again here so the desk's light-dark() ink resolves under the
+   pages' light scheme; inherited, it would arrive as the dark theme's ink. */
+#pages-fit {
+    color-scheme: light;
+    color: var(--ink);
+    margin-top: 4px;
+}
+.truncnote:empty {
+    display: none;
+}
+.truncnote {
+    text-align: left;
+    font-size: 11px;
+    line-height: 1.6;
+}
 
 /* discussions: the reader's drawer, in desk colours */
-#embed-discussions { background: var(--bg); color: var(--ink); }
-#embed-discussions article { background: var(--page); color: oklch(18.2% 0 0); color-scheme: light; }
-#close-discussions { margin-bottom: 6px; }
+#embed-discussions {
+    background: var(--bg);
+    color: var(--ink);
+}
+#embed-discussions article {
+    background: var(--page);
+    color: oklch(18.2% 0 0);
+    color-scheme: light;
+}
+#close-discussions {
+    margin-bottom: 6px;
+}
+/* A resolved thread: said in words, and quieter (#44). */
+#embed-discussions article.resolved {
+    opacity: 0.72;
+}
+#embed-discussions .thread-status {
+    display: block;
+    margin-bottom: 4px;
+    font: 500 11px/1.4 "JetBrains Mono", monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #73736b;
+}
+
+/* An image the paginator cannot draw: its alt text, framed like the
+   reader's .image-placeholder. Outline only, so the measured width holds;
+   an inserted or deleted image keeps its revision colours. */
+.premirror-run.paged-image {
+    outline: 1px dashed var(--line-strong);
+    outline-offset: -1px;
+    border-radius: 2px;
+}
+.premirror-run.paged-image:not(.criticInsertion):not(.criticDeletion) {
+    color: var(--muted);
+    background: var(--surface);
+}
+
+/* Word's highlight colours (w:highlight), which the engine writes as
+   <mark class="hl-…">; a plain <mark> is yellow, as in Word. */
+.premirror-run.highlight {
+    background: #ffff00;
+}
+.premirror-run.hl-green {
+    background: #00ff00;
+}
+.premirror-run.hl-cyan {
+    background: #00ffff;
+}
+.premirror-run.hl-magenta {
+    background: #ff00ff;
+}
+.premirror-run.hl-blue {
+    background: #0000ff;
+    color: #fff;
+}
+.premirror-run.hl-red {
+    background: #ff0000;
+}
+.premirror-run.hl-darkblue {
+    background: #000080;
+    color: #fff;
+}
+.premirror-run.hl-darkcyan {
+    background: #008080;
+    color: #fff;
+}
+.premirror-run.hl-darkgreen {
+    background: #008000;
+    color: #fff;
+}
+.premirror-run.hl-darkmagenta {
+    background: #800080;
+    color: #fff;
+}
+.premirror-run.hl-darkred {
+    background: #800000;
+    color: #fff;
+}
+.premirror-run.hl-darkyellow {
+    background: #808000;
+    color: #fff;
+}
+.premirror-run.hl-darkgray {
+    background: #808080;
+    color: #fff;
+}
+.premirror-run.hl-lightgray {
+    background: #c0c0c0;
+}
+.premirror-run.hl-black {
+    background: #000;
+    color: #fff;
+}
+
+/* A focused link drawn in pieces (formatting, line wraps): every piece shows
+   the focus ring, as the reader's a:focus-visible draws it on the one that
+   holds focus (#57). */
+.premirror-run a.link-focus {
+    outline: 2px solid var(--ink);
+    outline-offset: 3px;
+}

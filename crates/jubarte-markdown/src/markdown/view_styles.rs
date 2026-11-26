@@ -346,6 +346,10 @@ pub struct StyleSpec {
     pub font: String,
     pub bold: bool,
     pub italic: bool,
+    /// The `w:u` kind (`single`, `double`, …), #96.
+    pub underline: Option<String>,
+    pub strike: bool,
+    pub dstrike: bool,
     /// Half points.
     pub size: u32,
     /// Twips.
@@ -387,22 +391,56 @@ pub(super) fn twips_in(value: &str) -> Option<i64> {
     (twips.is_finite() && twips.abs() <= 31680.0).then_some(twips as i64)
 }
 
-/// `Times New Roman bold italic 11pt`: the font, bold, italic and size.
-fn font_clause(clause: &str) -> Option<(String, bool, bool, u32)> {
+/// A font clause's parts.
+#[derive(Debug, PartialEq, Eq)]
+struct FontLook {
+    font: String,
+    bold: bool,
+    italic: bool,
+    underline: Option<String>,
+    strike: bool,
+    dstrike: bool,
+    /// Half points.
+    size: u32,
+}
+
+/// `Times New Roman bold italic underline strike 11pt`: the font, its
+/// marks in that order (`underline-double` for another kind of line,
+/// `dstrike` after `strike`, #96) and the size.
+fn font_clause(clause: &str) -> Option<FontLook> {
     let (rest, size) = clause.rsplit_once(' ')?;
     let size = points(size, 2.0)?;
     let mut rest = rest;
-    let mut italic = false;
-    let mut bold = false;
-    if let Some(r) = rest.strip_suffix(" italic") {
-        italic = true;
-        rest = r;
-    }
-    if let Some(r) = rest.strip_suffix(" bold") {
-        bold = true;
-        rest = r;
-    }
-    (!rest.is_empty()).then(|| (rest.to_string(), bold, italic, size))
+    let mut mark = |word: &str| {
+        let found = rest.strip_suffix(word).filter(|r| r.ends_with(' '));
+        if let Some(r) = found {
+            rest = &r[..r.len() - 1];
+        }
+        found.is_some()
+    };
+    let dstrike = mark("dstrike");
+    let strike = mark("strike");
+    let underline = if mark("underline") {
+        Some("single".to_string())
+    } else {
+        rest.rsplit_once(" underline-")
+            .filter(|(_, kind)| !kind.is_empty() && kind.chars().all(|c| c.is_ascii_alphanumeric()))
+            .map(|(r, kind)| {
+                rest = r;
+                kind.to_string()
+            })
+    };
+    let italic = rest.strip_suffix(" italic").inspect(|r| rest = r).is_some();
+    let bold = rest.strip_suffix(" bold").inspect(|r| rest = r).is_some();
+    (!rest.is_empty()).then(|| FontLook {
+        font: rest.to_string(),
+        bold,
+        italic,
+        underline,
+        strike,
+        dstrike,
+        size,
+    })
 }
 
 /// The style a legend value describes; `heading` is the `#` count.
@@ -415,17 +453,20 @@ fn spec(id: &str, heading: Option<u32>, default: bool, value: &str) -> Option<St
     // A character style leads with its kind, before the look. The default
     // style is a paragraph one: for it, `character` is no clause we know.
     let character = !default && clauses.next_if(|c| *c == "character").is_some();
-    let (font, bold, italic, size) = font_clause(clauses.next()?)?;
+    let look = font_clause(clauses.next()?)?;
     let mut spec = StyleSpec {
         id: id.to_string(),
         name,
         character,
         heading,
         default,
-        font,
-        bold,
-        italic,
-        size,
+        font: look.font,
+        bold: look.bold,
+        italic: look.italic,
+        underline: look.underline,
+        strike: look.strike,
+        dstrike: look.dstrike,
+        size: look.size,
         before: None,
         after: None,
         line: None,
@@ -904,6 +945,9 @@ struct Given {
     size: Option<u32>,
     bold: bool,
     italic: bool,
+    underline: Option<String>,
+    strike: bool,
+    dstrike: bool,
     before: u32,
     after: u32,
     line_twips: u32,
@@ -926,6 +970,9 @@ impl Given {
             size: None,
             bold: false,
             italic: false,
+            underline: None,
+            strike: false,
+            dstrike: false,
             before: 0,
             after: 0,
             line_twips: 240,
@@ -951,6 +998,9 @@ fn effective(spec: &StyleSpec) -> Given {
         size: Some(spec.size),
         bold: spec.bold,
         italic: spec.italic,
+        underline: spec.underline.clone(),
+        strike: spec.strike,
+        dstrike: spec.dstrike,
         before: spec.before.unwrap_or(0),
         after: spec.after.unwrap_or(0),
         line_twips,
@@ -1009,6 +1059,16 @@ fn document_defaults(styles: &str) -> Given {
         }
         if let Some(italic) = rpr.toggle("i") {
             given.italic = italic;
+        }
+        if let Some(u) = rpr.child("u") {
+            // No `w:val` is no line, as Word draws it.
+            given.underline = Some(u.attr("val").unwrap_or("none").to_string());
+        }
+        if let Some(strike) = rpr.toggle("strike") {
+            given.strike = strike;
+        }
+        if let Some(dstrike) = rpr.toggle("dstrike") {
+            given.dstrike = dstrike;
         }
     }
     if let Some(ppr) = defaults.path(&["pPrDefault", "pPr"]) {
@@ -1215,7 +1275,8 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
     if !ppr.is_empty() {
         out.push_str(&format!("<w:pPr>{ppr}</w:pPr>"));
     }
-    // rPr children in schema order: rFonts, b, bCs, i, iCs, sz, szCs.
+    // rPr children in schema order: rFonts, b, bCs, i, iCs, strike,
+    // dstrike, sz, szCs, u.
     let mut rpr = String::new();
     if inherited.font.as_deref() != Some(spec.font.as_str()) {
         let font = escape(&spec.font);
@@ -1236,11 +1297,30 @@ fn definition(spec: &StyleSpec, base: Option<&str>, inherited: &Given) -> String
     if spec.italic != inherited.italic {
         rpr.push_str(&toggle(spec.italic, "i"));
     }
+    let single = |on: bool, name: &str| {
+        if on {
+            format!("<w:{name}/>")
+        } else {
+            format!("<w:{name} w:val=\"0\"/>")
+        }
+    };
+    if spec.strike != inherited.strike {
+        rpr.push_str(&single(spec.strike, "strike"));
+    }
+    if spec.dstrike != inherited.dstrike {
+        rpr.push_str(&single(spec.dstrike, "dstrike"));
+    }
     if inherited.size != Some(spec.size) {
         rpr.push_str(&format!(
             "<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>",
             size = spec.size
         ));
+    }
+    // An omitted `w:u` and `none` are both no line (#96).
+    let line = |u: &Option<String>| u.clone().filter(|kind| kind != "none");
+    if line(&spec.underline) != line(&inherited.underline) {
+        let kind = line(&spec.underline).unwrap_or_else(|| "none".to_string());
+        rpr.push_str(&format!("<w:u w:val=\"{}\"/>", escape(&kind)));
     }
     if !rpr.is_empty() {
         out.push_str(&format!("<w:rPr>{rpr}</w:rPr>"));
@@ -2079,9 +2159,31 @@ mod branch_tests {
         assert_eq!(twips_in("30in"), None);
         assert_eq!(twips_in("-0.5in"), Some(-720));
         assert_eq!(font_clause(" bold 11pt"), None);
+        let look = font_clause("Arial bold italic 11pt").expect("a font clause");
         assert_eq!(
-            font_clause("Arial bold italic 11pt"),
-            Some(("Arial".to_string(), true, true, 22))
+            (look.font.as_str(), look.bold, look.italic, look.size),
+            ("Arial", true, true, 22)
+        );
+        let marked = font_clause("Arial Narrow italic underline-double strike dstrike 9pt")
+            .expect("a marked font clause");
+        assert_eq!(
+            (
+                marked.font.as_str(),
+                marked.italic,
+                marked.underline.as_deref(),
+                marked.strike,
+                marked.dstrike
+            ),
+            ("Arial Narrow", true, Some("double"), true, true)
+        );
+        assert_eq!(
+            font_clause("Calibri underline 11pt").and_then(|l| l.underline),
+            Some("single".to_string())
+        );
+        // A family that only ends in a mark's letters keeps them.
+        assert_eq!(
+            font_clause("Restrike 11pt").map(|l| (l.font, l.strike)),
+            Some(("Restrike".to_string(), false))
         );
         for bad in [
             "Arial 11pt, line 200",
