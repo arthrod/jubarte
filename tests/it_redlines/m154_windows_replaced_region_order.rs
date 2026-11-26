@@ -27,6 +27,7 @@ use jubarte::document_comparer::{
 use jubarte::namespaces::W;
 use jubarte::revision_processor::{accept_revisions_document, reject_revisions_document};
 use jubarte::xmllinq::{Dom, NodeId, XName};
+use jubarte_opc::validate_dom::has_unique_revision_id;
 use std::io::{Cursor, Read};
 
 const STYLES: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml";
@@ -777,9 +778,10 @@ fn windows_015_reject_restores_the_exact_closing_paragraph_properties() {
     );
 }
 
-/// Every `w:id` a revision carrier holds in every XML part of `docx`, with
-/// the part that holds it.
-fn revision_ids_in_package(docx: &[u8]) -> Vec<(String, String)> {
+/// Every `w:id` the package-wide carrier set — the validator's own
+/// [`has_unique_revision_id`] — holds in every `word/*.xml` part of `docx`,
+/// with the element's local name and the part that holds it.
+fn revision_ids_in_package(docx: &[u8]) -> Vec<(String, String, String)> {
     let mut ids = Vec::new();
     let names: Vec<String> = zip::ZipArchive::new(Cursor::new(docx.to_vec()))
         .unwrap()
@@ -795,36 +797,56 @@ fn revision_ids_in_package(docx: &[u8]) -> Vec<(String, String)> {
             let Some(node_name) = dom.name(node) else {
                 continue;
             };
-            let is_revision = [
-                "ins",
-                "del",
-                "moveFrom",
-                "moveTo",
-                "moveFromRangeStart",
-                "moveFromRangeEnd",
-                "moveToRangeStart",
-                "moveToRangeEnd",
-                "pPrChange",
-                "rPrChange",
-                "tblPrChange",
-                "tblGridChange",
-                "trPrChange",
-                "tcPrChange",
-                "sectPrChange",
-                "numberingChange",
-                "cellIns",
-                "cellDel",
-                "cellMerge",
-                "bookmarkStart",
-                "bookmarkEnd",
-            ]
-            .contains(&node_name.local_name());
-            if is_revision && let Some(id) = dom.attribute(node, &W::id()) {
-                ids.push((name.to_string(), id.to_string()));
+            if has_unique_revision_id(&node_name)
+                && let Some(id) = dom.attribute(node, &W::id())
+            {
+                ids.push((
+                    name.clone(),
+                    node_name.local_name().to_string(),
+                    id.to_string(),
+                ));
             }
         }
     }
     ids
+}
+
+/// A `…RangeStart` / `…RangeEnd` pair's two local names share one id by
+/// design; nothing else may.
+fn same_range_pair(first: &str, second: &str) -> bool {
+    match (
+        first.strip_suffix("RangeStart"),
+        second.strip_suffix("RangeEnd"),
+    ) {
+        (Some(stem), Some(end)) => stem == end,
+        _ => false,
+    }
+}
+
+/// Assert no revision id repeats in the whole package — styles included, the
+/// package-wide space the fourth review of #160 requires — allowing only the
+/// one documented repeat: a range's start and its end in the same part.
+fn assert_revision_ids_unique(docx: &[u8]) -> usize {
+    let ids = revision_ids_in_package(docx);
+    let mut by_id: std::collections::HashMap<&str, Vec<(&str, &str)>> =
+        std::collections::HashMap::new();
+    for (part, local, id) in &ids {
+        by_id.entry(id).or_default().push((part, local));
+    }
+    for (id, holders) in &by_id {
+        if holders.len() == 1 {
+            continue;
+        }
+        let paired = holders.len() == 2
+            && holders[0].0 == holders[1].0
+            && (same_range_pair(holders[0].1, holders[1].1)
+                || same_range_pair(holders[1].1, holders[0].1));
+        assert!(
+            paired,
+            "w:id {id} repeats: {holders:?} (a start/end pair in one part is the only allowed repeat)"
+        );
+    }
+    ids.len()
 }
 
 /// `prefix` as a header of 16 paragraphs, each of which the other side
@@ -847,6 +869,24 @@ fn header_part(xml: &str) -> Part<'_> {
     }
 }
 
+/// A stylesheet whose `Normal` style spaces paragraphs `after` twips (the
+/// comparison records the other side's value in a `w:pPrChange`).
+fn normal_style(after: &str) -> String {
+    format!(
+        r#"<w:styles xmlns:w="{W_NS}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="{after}" w:line="240" w:lineRule="auto"/></w:pPr></w:style></w:styles>"#
+    )
+}
+
+/// `xml` as the styles part.
+fn styles_part(xml: &str) -> Part<'_> {
+    Part {
+        name: "word/styles.xml",
+        content_type: STYLES,
+        rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles",
+        xml,
+    }
+}
+
 /// A changed header and a changed body are compared in separate parts, and
 /// each part numbers its revision ids from 1 — so the synthesized
 /// `w:pPrChange` reused a header's id. The review's `hdr16` probe requires
@@ -865,14 +905,51 @@ fn windows_015_revision_ids_do_not_repeat_in_the_package() {
     )
     .expect("the compare succeeds");
     assert_word_valid_package(&out);
-    let ids = revision_ids_in_package(&out);
-    let mut seen = std::collections::HashMap::new();
-    for (part, id) in &ids {
-        if let Some(first) = seen.insert(id.clone(), part.clone()) {
-            panic!("w:id {id} repeats in {first} and {part}");
-        }
-    }
-    assert!(ids.len() > 30, "the probe exercises both parts: {ids:?}");
+    let count = assert_revision_ids_unique(&out);
+    assert!(count > 30, "the probe exercises both parts: {count}");
+}
+
+/// The stylesheet is one more `word/*.xml` part of the revision-id space
+/// (the fourth review of #160). The comparison itself mints a style record:
+/// Normal's paragraph spacing differs, so the stylesheet gains a
+/// `w:pPrChange` numbered from 1 — the id the body's revisions take. Word
+/// never repeats a revision id across parts. The pass reserves the
+/// stylesheet's ids first and leaves its own numbering alone.
+#[test]
+fn windows_015_style_revision_ids_share_the_package_space() {
+    let (original, revised) =
+        pair_015_closing(r#"<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:p>"#);
+    let header_a = sixteen_paragraph_header("OLD");
+    let header_b = sixteen_paragraph_header("NEW");
+    let sect = r#"<w:headerReference w:type="default" r:id="rIdX0"/>"#;
+    let out = compare_documents_with_settings(
+        &docx_with_sect(
+            &original,
+            &[header_part(&header_a), styles_part(&normal_style("160"))],
+            sect,
+        ),
+        &docx_with_sect(
+            &revised,
+            &[header_part(&header_b), styles_part(&normal_style("400"))],
+            sect,
+        ),
+        &WmlComparerSettings::new(CompareMode::WordWindows),
+    )
+    .expect("the compare succeeds");
+    assert_word_valid_package(&out);
+    let count = assert_revision_ids_unique(&out);
+    assert!(count > 30, "the probe exercises both parts: {count}");
+    let (dom, root) = parse(&part(&out, "word/styles.xml"));
+    let style_ids: Vec<String> = dom
+        .descendants(root, Some(&W::p_pr_change()))
+        .into_iter()
+        .filter_map(|change| dom.attribute(change, &W::id()).map(str::to_string))
+        .collect();
+    assert_eq!(
+        style_ids,
+        ["1"],
+        "the stylesheet keeps the id the comparison gave its Normal record"
+    );
 }
 
 /// Mac Word 16's redline of the same pair (snapshot: must not move): the

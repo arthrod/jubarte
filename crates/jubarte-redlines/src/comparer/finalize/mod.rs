@@ -792,8 +792,16 @@ pub fn conjoin_paragraph_marks(
     )
 }
 
-/// A tracked-change / move / property-change carrier whose `w:id` shares the
-/// package's revision-id space ([`fix_up_revision_ids`]).
+/// A tracked-change / move / property-change carrier whose `w:id` the
+/// per-part numbering ([`fix_up_revision_ids`]) assigns from 1.
+///
+/// The package-wide pass ([`fix_up_revision_ids_with_set`]) instead uses the
+/// validator's own set, [`crate::validate_dom::has_unique_revision_id`] — the
+/// same predicate `RevisionIds::reserve_package` and the uniqueness check
+/// count by — so a copied part's `customXml*Range` marker or `tblPrExChange`
+/// shares the package space too. This list stays the pipeline's narrower
+/// numbering set: adding an element here renumbers every story of every
+/// comparison, Mac included.
 pub(crate) fn is_revision_id_carrier(name: &XName) -> bool {
     [
         W::ins(),
@@ -839,9 +847,24 @@ pub fn fix_up_revision_ids(dom: &mut Dom, roots: &[NodeId]) {
 pub fn fix_up_revision_ids_with(
     dom: &mut Dom,
     roots: &[NodeId],
-    mut ids: Option<&mut crate::revision_processor::RevisionIds>,
+    ids: Option<&mut crate::revision_processor::RevisionIds>,
 ) {
-    // Every tracked-change / move / property-change carrier that uses w:id.
+    fix_up_revision_ids_with_set(dom, roots, ids, &is_revision_id_carrier);
+}
+
+/// [`fix_up_revision_ids_with`] numbering the elements `carrier` names. The
+/// package-wide pass passes the validator's own set
+/// ([`crate::validate_dom::has_unique_revision_id`]) so a `customXml*Range`
+/// marker or a `tblPrExChange` a copied part carries is renumbered with the
+/// stories, exactly the ids the uniqueness check counts.
+#[doc(hidden)]
+pub fn fix_up_revision_ids_with_set(
+    dom: &mut Dom,
+    roots: &[NodeId],
+    mut ids: Option<&mut crate::revision_processor::RevisionIds>,
+    carrier: &dyn Fn(&XName) -> bool,
+) {
+    // Every carrier `carrier` names that uses w:id.
     // Missing any of these lets renumbered move ranges collide with e.g.
     // tblPrChange ids — Word then raises "unreadable content".
     // Comment anchors keep their own ids (must stay aligned with comments.xml).
@@ -853,10 +876,18 @@ pub fn fix_up_revision_ids_with(
     ];
     let mut reserved: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut all = Vec::new();
+    let mut ends: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
     for &root in roots {
         for d in dom.descendants(root, None) {
             let Some(n) = dom.name(d) else { continue };
-            if is_revision_id_carrier(&n) {
+            // A `*RangeEnd` pairs with its start's id; the validator does not
+            // require the end's id to be unique, but Word pairs them, so it
+            // is renumbered with the start.
+            let is_end = is_revision_range_end(&n);
+            if carrier(&n) || carried_range_end(&n, carrier) {
+                if is_end {
+                    ends.insert(d);
+                }
                 all.push(d);
             } else if reserved_names.contains(&n)
                 && let Some(id) = dom.attribute(d, &W::id()).and_then(|s| s.parse().ok())
@@ -892,29 +923,67 @@ pub fn fix_up_revision_ids_with(
         }
         v
     };
-    let (mffe, mtre, mffs, mtrs) = (
-        W::move_from_range_end(),
-        W::move_to_range_end(),
-        W::move_from_range_start(),
-        W::move_to_range_start(),
-    );
     for rev in all {
         let Some(old) = dom.attribute(rev, &W::id()).map(|s| s.to_string()) else {
             continue;
         };
         let n = dom.name(rev).unwrap();
-        let new_id = if n == mffe || n == mtre {
+        let new_id = if ends.contains(&rev) {
             match old_to_new.get(&old) {
                 Some(&v) => v,
                 None => alloc(&mut old_to_new, &old, true),
             }
-        } else if n == mffs || n == mtrs {
+        } else if is_revision_range_start(&n) {
             alloc(&mut old_to_new, &old, true)
         } else {
             alloc(&mut old_to_new, &old, false)
         };
         dom.set_attribute_value(rev, &W::id(), Some(&new_id.to_string()));
     }
+}
+
+/// A range-marker family whose start and end share one `w:id` (the comment
+/// anchors are ranges too, but their ids belong to `word/comments.xml`'s
+/// scope and are reserved, never renumbered).
+const REVISION_RANGE_STEMS: [&str; 6] = [
+    "moveFromRange",
+    "moveToRange",
+    "customXmlInsRange",
+    "customXmlDelRange",
+    "customXmlMoveFromRange",
+    "customXmlMoveToRange",
+];
+
+/// A revision range marker's end by name (`moveFromRangeEnd`,
+/// `customXmlInsRangeEnd`, …), whether or not the given `carrier` set holds
+/// it: its start allocates the shared id.
+fn is_revision_range_end(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && name
+            .local_name()
+            .strip_suffix("End")
+            .is_some_and(|stem| REVISION_RANGE_STEMS.contains(&stem))
+}
+
+/// A revision range marker's end whose start the same `carrier` numbers: it
+/// takes its start's id.
+fn carried_range_end(name: &XName, carrier: &dyn Fn(&XName) -> bool) -> bool {
+    if name.namespace_name() != W::URI {
+        return false;
+    }
+    let Some(stem) = name.local_name().strip_suffix("End") else {
+        return false;
+    };
+    REVISION_RANGE_STEMS.contains(&stem) && carrier(&W::name(&format!("{stem}Start")))
+}
+
+/// A revision range marker's start: it allocates the id its end reuses.
+fn is_revision_range_start(name: &XName) -> bool {
+    name.namespace_name() == W::URI
+        && name
+            .local_name()
+            .strip_suffix("Start")
+            .is_some_and(|stem| REVISION_RANGE_STEMS.contains(&stem))
 }
 
 /// M4.F.7 — `IgnorePt14Namespace` (WmlComparer.cs:2912): declare
