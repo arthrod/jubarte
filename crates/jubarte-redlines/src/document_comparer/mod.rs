@@ -2077,11 +2077,12 @@ fn compare_documents_impl(
     // Every other part resolves its own r:* references too (B's comments, notes,
     // headers/footers and picture bullets arrive without B's per-part rels).
     crate::comparer::parts::reconcile_part_relationships(&mut out, &main1, &pkg1, &pkg2);
-    // #155: Windows Word 2024 marks a B-only header/footer story inserted.
-    // The adopt pass wraps the parts it copies; parts the main-document
-    // reconcile carried over live kept no marks, so wrap them here.
+    // #155: Windows Word 2024 marks a header/footer story only the revised
+    // document holds inserted. The adopt pass wraps the parts it copies;
+    // parts the main-document reconcile carried over live kept no marks, so
+    // wrap them here.
     if settings.merge_replaced_paragraphs && settings.word_platform == WordPlatform::Windows {
-        mark_b_only_hf_content_as_inserted_for_windows(&mut out, &pkg1, &pkg2, settings);
+        mark_b_only_hf_content_as_inserted_for_windows(&mut out, &main1, &pkg1, settings);
     }
     // …and every copied part keeps the content type its source declared (a B
     // header's `.wdp` HD Photo arrived without B's `wdp` Default).
