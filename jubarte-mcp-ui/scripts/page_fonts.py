@@ -13,6 +13,7 @@ reserved name.
     uvx --from 'fonttools[woff]' python -I jubarte-mcp-ui/scripts/page_fonts.py [--check]
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from fontTools.ttLib import TTFont
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "crates/jubarte-render/assets/fonts"
 OUT = ROOT / "jubarte-mcp-ui/src/fonts/page"
+METRICS_JSON = ROOT / "jubarte-mcp-ui/reader/face-metrics.json"
 FAMILIES = {
     "Carlito": ("c", "Jubarte Page C"),
     "LiberationSans": ("sans", "Jubarte Page Sans"),
@@ -57,7 +59,7 @@ def faces():
 
 
 def build(source, target, family, style):
-    font = TTFont(source)
+    font = TTFont(source, recalcTimestamp=False)
     options = subset.Options()
     options.layout_features = ["*"]
     options.name_IDs = ["*"]
@@ -97,6 +99,21 @@ def check(source, target):
     return problems
 
 
+def face_metrics():
+    """Each bundled family's hhea heights in em, from its regular face: Word's
+    single line is (ascent + descent + line gap) x size (#100)."""
+    out = {}
+    for stem, (_slug, family) in FAMILIES.items():
+        font = TTFont(SRC / f"{stem}-Regular.ttf")
+        em, hhea = font["head"].unitsPerEm, font["hhea"]
+        out[family] = {
+            "ascent": round(hhea.ascent / em, 6),
+            "descent": round(-hhea.descent / em, 6),
+            "lineGap": round(hhea.lineGap / em, 6),
+        }
+    return out
+
+
 def main():
     verify = "--check" in sys.argv[1:]
     bad = 0
@@ -110,6 +127,15 @@ def main():
             + target.name
             + ("" if not problems else ": " + ", ".join(problems[:5]))
         )
+    metrics = json.dumps(face_metrics(), indent=2) + "\n"
+    if verify:
+        current = METRICS_JSON.read_text() if METRICS_JSON.exists() else ""
+        ok = current == metrics
+        bad += not ok
+        print(("ok  " if ok else "BAD ") + METRICS_JSON.name + ("" if ok else ": stale, run without --check"))
+    else:
+        METRICS_JSON.write_text(metrics)
+        print("ok  " + METRICS_JSON.name)
     sys.exit(1 if bad else 0)
 
 
