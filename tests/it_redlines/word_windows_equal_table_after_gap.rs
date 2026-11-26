@@ -517,3 +517,229 @@ fn file_8_file_9_keeps_the_capability_matrix_equal_in_word_windows() {
         });
     assert!(marked, "the word preset keeps the matrix's move pair");
 }
+
+/// A cell's revision marks: its kept text (`w:t`), its deleted text
+/// (`w:delText`) and its revision kinds.
+type CellMarks = (String, String, Vec<String>);
+
+/// The body's top-level blocks, each as its cells: a paragraph is one cell,
+/// a table one cell per `w:tc`, row by row.
+fn each_cell<T>(docx: &[u8], cell: impl Fn(&Dom, NodeId) -> T) -> Vec<Vec<T>> {
+    let (dom, root) = parse(&document_xml(docx));
+    let body = dom.element(root, &W::body()).unwrap();
+    dom.elements(body, None)
+        .into_iter()
+        .filter(|&b| dom.name_is(b, &W::p()) || dom.name_is(b, &W::tbl()))
+        .map(|b| {
+            if dom.name_is(b, &W::p()) {
+                vec![cell(&dom, b)]
+            } else {
+                dom.elements(b, Some(&W::tr()))
+                    .into_iter()
+                    .flat_map(|tr| dom.elements(tr, Some(&W::tc())))
+                    .map(|tc| cell(&dom, tc))
+                    .collect()
+            }
+        })
+        .collect()
+}
+
+/// Each cell's text, for a package that holds no revision.
+fn cell_texts(docx: &[u8]) -> Vec<Vec<String>> {
+    each_cell(docx, text)
+}
+
+/// Each cell's revision marks.
+fn cell_marks(docx: &[u8]) -> Vec<Vec<CellMarks>> {
+    each_cell(docx, |dom, c| {
+        let mut kept = String::new();
+        let mut deleted = String::new();
+        for n in dom.descendants(c, None) {
+            if dom.name_is(n, &W::t()) {
+                kept.push_str(&dom.value(n));
+            } else if dom.name_is(n, &W::del_text()) {
+                deleted.push_str(&dom.value(n));
+            }
+        }
+        (kept, deleted, revisions(dom, c))
+    })
+}
+
+fn kept(text: &str) -> CellMarks {
+    (text.to_string(), String::new(), Vec::new())
+}
+
+fn deleted(text: &str) -> CellMarks {
+    (String::new(), text.to_string(), vec!["del".to_string()])
+}
+
+fn edited(kept: &str, deleted: &str) -> CellMarks {
+    (
+        kept.to_string(),
+        deleted.to_string(),
+        vec!["del".to_string(), "ins".to_string()],
+    )
+}
+
+/// One of the review's probes of #162: the revision edits a table's value
+/// and removes a paragraph and a second table whose cells read the same as
+/// the revised table's once their text runs together (`["Tax", " rate12%"]`
+/// and `["Tax rate", "12%"]`).
+struct Probe {
+    label: &'static str,
+    original: String,
+    revised: String,
+    /// The marks of each block of the redline.
+    marks: Vec<Vec<CellMarks>>,
+    /// What Reject All reads as when it is not `original`: two tables that
+    /// touch, alike in every whole-table property, are one table in Word's
+    /// model, and Word's save joins them (R8).
+    rejected_as: Option<String>,
+}
+
+fn edited_table_before_a_lookalike() -> Vec<Probe> {
+    let rate_table = |value: &str| table(&[&["Tax rate", value]]);
+    let (first, edited_table, lookalike_table) = (
+        rate_table("10%"),
+        rate_table("12%"),
+        table(&[&["Tax", " rate12%"]]),
+    );
+    let (terms, end) = (para("Terms"), para("End"));
+    let (opening, other_opening) = (para("One opening"), para("Unrelated opening"));
+    let edited_marks = vec![kept("Tax rate"), edited("12%", "10")];
+    let lookalike_marks = vec![deleted("Tax"), deleted(" rate12%")];
+    let end_marks = vec![kept("End")];
+    // Both documents open with `opening`: the original goes on with the
+    // first table, `between`, the lookalike and the end; the revision with
+    // the edited table and the end.
+    let alike = |opening: &str, between: &str| {
+        (
+            format!("{opening}{first}{between}{lookalike_table}{end}"),
+            format!("{opening}{edited_table}{end}"),
+        )
+    };
+    let probe = |label: &'static str, bodies: (String, String), marks| Probe {
+        label,
+        original: bodies.0,
+        revised: bodies.1,
+        marks,
+        rejected_as: None,
+    };
+    vec![
+        probe(
+            "the tables alone",
+            alike("", &para("Remove this explanation")),
+            vec![
+                edited_marks.clone(),
+                vec![deleted("Remove this explanation")],
+                lookalike_marks.clone(),
+                end_marks.clone(),
+            ],
+        ),
+        probe(
+            "after a kept paragraph",
+            alike(&terms, &para("Remove this explanation")),
+            vec![
+                vec![kept("Terms")],
+                edited_marks.clone(),
+                vec![deleted("Remove this explanation")],
+                lookalike_marks.clone(),
+                end_marks.clone(),
+            ],
+        ),
+        probe(
+            "another paragraph between the tables",
+            alike("", &para("Exclusion list")),
+            vec![
+                edited_marks.clone(),
+                vec![deleted("Exclusion list")],
+                lookalike_marks.clone(),
+                end_marks.clone(),
+            ],
+        ),
+        Probe {
+            rejected_as: Some(format!(
+                "{}{end}",
+                table(&[&["Tax rate", "10%"], &["Tax", " rate12%"]])
+            )),
+            ..probe(
+                "the tables side by side",
+                alike("", ""),
+                vec![
+                    edited_marks.clone(),
+                    lookalike_marks.clone(),
+                    end_marks.clone(),
+                ],
+            )
+        },
+        probe(
+            "after a replaced paragraph",
+            (
+                format!(
+                    "{opening}{first}{}{lookalike_table}{end}",
+                    para("Deleted heading")
+                ),
+                format!("{other_opening}{edited_table}{end}"),
+            ),
+            vec![
+                vec![edited("Unrelated opening", "One")],
+                edited_marks.clone(),
+                vec![deleted("Deleted heading")],
+                lookalike_marks.clone(),
+                end_marks.clone(),
+            ],
+        ),
+    ]
+}
+
+/// The review of #162: a table that ends the region used to come off it
+/// when its text, run together, read like the revised table's, so the
+/// table the revision had edited came out deleted whole and the edit was
+/// written into another table. A table reads the same as another only when
+/// its cells do, cell for cell, so the revised table pairs with the one it
+/// was edited from, and the lookalike is the deletion.
+#[test]
+fn the_revised_table_pairs_with_the_table_it_was_edited_from_in_word_windows() {
+    for Probe {
+        label,
+        original,
+        revised,
+        marks,
+        rejected_as,
+    } in edited_table_before_a_lookalike()
+    {
+        let (original, revised) = (document(&original), document(&revised));
+        let out = redline(&original, &revised, CompareMode::WordWindows);
+        let xml = document_xml(&out);
+        for absent in ["moveFrom", "moveTo", "cellIns", "cellDel"] {
+            assert!(
+                !xml.contains(&format!("<w:{absent}")),
+                "{label}: the redline holds a w:{absent}:\n{}",
+                blocks_text(&out)
+            );
+        }
+        assert_eq!(
+            cell_marks(&out),
+            marks,
+            "{label}: the edited table keeps its label and its edit, the lookalike is deleted:\n{}",
+            blocks_text(&out)
+        );
+        let accepted = jubarte::document_comparer::accept_revisions(&out).unwrap();
+        let rejected = jubarte::document_comparer::reject_revisions(&out).unwrap();
+        assert_eq!(
+            cell_texts(&accepted),
+            cell_texts(&revised),
+            "{label}: accepted"
+        );
+        let reads_as = match rejected_as {
+            Some(body) => document(&body),
+            None => original,
+        };
+        assert_eq!(
+            cell_texts(&rejected),
+            cell_texts(&reads_as),
+            "{label}: rejected"
+        );
+        crate::common::validity::assert_word_valid_package(&out);
+    }
+}

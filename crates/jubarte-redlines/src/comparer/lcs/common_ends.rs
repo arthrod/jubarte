@@ -6,6 +6,7 @@
 //! blocks that end a region and read the same under Windows Word (arthrod/jubarte#156).
 
 use super::*;
+use crate::comparer::atoms::ComparisonUnitGroup;
 
 /// English closed-class words: shared scaffolding ("with", "this"), not
 /// evidence that two paragraphs correspond (docxodus `FunctionWords`).
@@ -333,21 +334,42 @@ fn unit_text(dom: &Dom, u: &ComparisonUnit) -> String {
     text
 }
 
+/// How a table reads: the text of each of its cells, row by row.
+fn table_text(dom: &Dom, table: &ComparisonUnitGroup) -> Vec<Vec<String>> {
+    table
+        .contents
+        .iter()
+        .filter_map(as_group)
+        .map(|row| {
+            row.contents
+                .iter()
+                .map(|cell| unit_text(dom, cell))
+                .collect()
+        })
+        .collect()
+}
+
 /// Two whole blocks of one kind — paragraphs, or tables — that hold text
 /// and read the same, and are not common by hash: what
 /// [`find_common_at_beginning_and_end`] cannot see.
+///
+/// A paragraph reads as its text. A table reads as its rows and cells, each
+/// cell's text where it sits: `["Tax", " rate12%"]` and `["Tax rate", "12%"]`
+/// hold the same text once it runs together. Matched that way, a trailing
+/// table came off the end of a region in place of the table the revision
+/// had edited, which then came out deleted whole (the review of #162).
 fn same_block_by_text(dom: &Dom, a: &ComparisonUnit, b: &ComparisonUnit) -> bool {
     let (ComparisonUnit::Group(ga), ComparisonUnit::Group(gb)) = (a, b) else {
         return false;
     };
-    if !matches!(
-        ga.group_type,
-        ComparisonUnitGroupType::Paragraph | ComparisonUnitGroupType::Table
-    ) || ga.group_type != gb.group_type
-    {
+    if ga.group_type != gb.group_type || a.sha1() == b.sha1() || !unit_has_text_token(dom, a) {
         return false;
     }
-    a.sha1() != b.sha1() && unit_has_text_token(dom, a) && unit_text(dom, a) == unit_text(dom, b)
+    match ga.group_type {
+        ComparisonUnitGroupType::Paragraph => unit_text(dom, a) == unit_text(dom, b),
+        ComparisonUnitGroupType::Table => table_text(dom, ga) == table_text(dom, gb),
+        _ => false,
+    }
 }
 
 /// arthrod/jubarte#156 — the whole paragraphs and tables that end a
@@ -365,8 +387,10 @@ fn same_block_by_text(dom: &Dom, a: &ComparisonUnit, b: &ComparisonUnit) -> bool
 /// [`WordPlatform::Windows`], whole paragraphs and tables that end the
 /// region, hold text and read the same come off its end as pairs of their
 /// own, in document order after the rest, each for the resolvers that
-/// follow. A block without text reads the same as any other empty one, so
-/// it stays in the region for the pilcrow logic to judge.
+/// follow. A table reads the same as another when its rows and cells do,
+/// cell for cell ([`same_block_by_text`]). A block without text reads the
+/// same as any other empty one, so it stays in the region for the pilcrow
+/// logic to judge.
 ///
 /// Returns `None` when nothing comes off, or when the region is that one
 /// pair: then it is the next resolver's, as it was.

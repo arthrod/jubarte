@@ -8,12 +8,23 @@
 
 use super::*;
 use crate::comparer::atoms::{ComparisonUnitGroup, ComparisonUnitWord, Sha1Keyed};
-use ComparisonUnitGroupType::{Cell, Paragraph, Table};
+use ComparisonUnitGroupType::{Cell, Paragraph, Row, Table};
 use CorrelationStatus::{Deleted, Inserted, Unknown};
 
 const HEADING: &str =
     "3. Capability matrix: Word has all the expected basics plus professional depth";
-const MATRIX: &str = "CapabilityGoogle Docs expectationMicrosoft Word answerReal-time coauthoring";
+const MATRIX: &[&[&str]] = &[
+    &[
+        "Capability",
+        "Google Docs expectation",
+        "Microsoft Word answer",
+    ],
+    &[
+        "Real-time coauthoring",
+        "Multiple users edit in a browser",
+        "Coauthoring in Word desktop and web",
+    ],
+];
 
 fn group(
     kind: ComparisonUnitGroupType,
@@ -43,6 +54,51 @@ fn block(dom: &mut Dom, kind: ComparisonUnitGroupType, text: &str, hash: &str) -
         ]))],
         hash,
     )
+}
+
+/// A paragraph group whose words are the pieces of `text` between its
+/// spaces, each space starting the word after it, the way a cell of several
+/// runs reads.
+fn words(dom: &mut Dom, text: &str) -> ComparisonUnit {
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for c in text.chars() {
+        if c == ' ' && !piece.is_empty() {
+            pieces.push(piece);
+            piece = String::new();
+        }
+        piece.push(c);
+    }
+    if !piece.is_empty() {
+        pieces.push(piece);
+    }
+    let contents = pieces
+        .iter()
+        .map(|piece| {
+            let node = dom.new_element(W::t());
+            dom.add_text(node, piece);
+            ComparisonUnit::Word(ComparisonUnitWord::new(vec![ComparisonUnitAtom::new(
+                node,
+                Vec::<NodeId>::new(),
+                piece,
+            )]))
+        })
+        .collect();
+    group(Paragraph, contents, text)
+}
+
+/// A table of `rows`, each cell holding a paragraph that reads as its
+/// text, nested as the unit builder nests a real table: table, row, cell.
+fn table(dom: &mut Dom, rows: &[&[&str]], hash: &str) -> ComparisonUnit {
+    let mut trs = Vec::new();
+    for row in rows {
+        let tcs: Vec<_> = row
+            .iter()
+            .map(|text| group(Cell, vec![words(dom, text)], text))
+            .collect();
+        trs.push(group(Row, tcs, &row.join("|")));
+    }
+    group(Table, trs, hash)
 }
 
 fn settings(platform: WordPlatform) -> WmlComparerSettings {
@@ -125,9 +181,9 @@ fn windows_takes_a_table_that_reads_the_same_off_too() {
     let mut dom = Dom::new();
     let left = vec![
         block(&mut dom, Paragraph, "Removed provision", "p:removed"),
-        block(&mut dom, Table, MATRIX, "t:matrix:original"),
+        table(&mut dom, MATRIX, "t:matrix:original"),
     ];
-    let right = vec![block(&mut dom, Table, MATRIX, "t:matrix:revision")];
+    let right = vec![table(&mut dom, MATRIX, "t:matrix:revision")];
     let out = windows(&dom, &left, &right).expect("the table ends both sides and reads the same");
     assert_eq!(shape(&out), vec![(Deleted, 1, 0), (Unknown, 1, 1)]);
     assert_eq!(
@@ -146,11 +202,11 @@ fn windows_takes_whole_blocks_off_the_end_one_after_the_other() {
     let left = vec![
         block(&mut dom, Paragraph, "Removed provision", "p:removed"),
         block(&mut dom, Paragraph, HEADING, "p:heading:original"),
-        block(&mut dom, Table, MATRIX, "t:matrix:original"),
+        table(&mut dom, MATRIX, "t:matrix:original"),
     ];
     let right = vec![
         block(&mut dom, Paragraph, HEADING, "p:heading:revision"),
-        block(&mut dom, Table, MATRIX, "t:matrix:revision"),
+        table(&mut dom, MATRIX, "t:matrix:revision"),
     ];
     let out = windows(&dom, &left, &right).expect("the heading and the matrix");
     assert_eq!(
@@ -162,6 +218,38 @@ fn windows_takes_whole_blocks_off_the_end_one_after_the_other() {
     assert_eq!(hashes(&out[2]).0, vec!["t:matrix:original"]);
     assert_eq!(hashes(&out[1]).1, vec!["p:heading:revision"]);
     assert_eq!(hashes(&out[2]).1, vec!["t:matrix:revision"]);
+}
+
+/// The review of #162: `["Tax", " rate12%"]` and `["Tax rate", "12%"]` read
+/// the same once their text runs together, and a trailing table came off
+/// the region in place of the table the revision had edited.
+#[test]
+fn a_table_reads_as_its_cells_not_as_its_text_run_together() {
+    let mut dom = Dom::new();
+    let (edited, lookalike) = (
+        table(&mut dom, &[&["Tax rate", "12%"]], "t:edited"),
+        table(&mut dom, &[&["Tax", " rate12%"]], "t:lookalike"),
+    );
+    let gap = block(&mut dom, Paragraph, "Remove this explanation", "p:gap");
+    // The lookalike ends the original and the edited table the revision.
+    assert!(
+        windows(&dom, [&gap, &lookalike], [&edited]).is_none(),
+        "the cells differ"
+    );
+    // And the other way round.
+    assert!(
+        windows(&dom, [&gap, &edited], [&lookalike]).is_none(),
+        "the cells differ"
+    );
+    // A cell that moved to another row is a difference too.
+    let two_rows = table(&mut dom, &[&["Tax rate"], &["12%"]], "t:rows");
+    let one_row = table(&mut dom, &[&["Tax rate", "12%"]], "t:row");
+    assert!(windows(&dom, [&gap, &two_rows], [&one_row]).is_none());
+    assert!(windows(&dom, [&gap, &one_row], [&two_rows]).is_none());
+    // A cell without text is a cell too.
+    let with_empty_cell = table(&mut dom, &[&["Tax rate", "12%", ""]], "t:empty");
+    assert!(windows(&dom, [&gap, &with_empty_cell], [&one_row]).is_none());
+    assert!(windows(&dom, [&gap, &one_row], [&with_empty_cell]).is_none());
 }
 
 #[test]
@@ -204,8 +292,8 @@ fn nothing_comes_off_that_is_not_the_same_block_of_text() {
     );
     assert!(windows(&dom, [&removed, &original], [&evidence]).is_none());
     // The ends are blocks of different kinds.
-    let table = block(&mut dom, Table, HEADING, "t:heading");
-    assert!(windows(&dom, [&removed, &original], [&table]).is_none());
+    let as_table = table(&mut dom, &[&[HEADING]], "t:heading");
+    assert!(windows(&dom, [&removed, &original], [&as_table]).is_none());
     // A cell is not a whole block, whatever it reads.
     let (cell, cell_revised) = (
         block(&mut dom, Cell, HEADING, "c:original"),
