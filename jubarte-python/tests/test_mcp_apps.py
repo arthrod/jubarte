@@ -8,6 +8,7 @@ the app-only docx_preview it reads documents through."""
 from __future__ import annotations
 
 import os
+import re
 import time
 from importlib import resources
 from io import BytesIO
@@ -724,7 +725,7 @@ def test_preview_sends_an_images_type_and_size_not_its_bytes(tmp_path: Path, mon
     markdown = preview.structured_content["markdown"]
     assert "base64" not in markdown
     kb = round(len(picture) / 1024)
-    assert f"[image1]: <image/png, {kb} KB>" in markdown, markdown
+    assert f"[image1]: <image/png, {kb} KB, 300x300 px>" in markdown, markdown
     assert "Before ![logo][image1] after" in markdown
 
 
@@ -778,3 +779,138 @@ def test_preview_serves_the_engines_accepted_and_original_views(tmp_path: Path) 
     assert "OneTwo" in accepted.structured_content["markdown"]
     assert "{--" not in original.structured_content["markdown"]
     assert bad.is_error
+
+
+# -- docx_image: the card draws a picture from its bytes (#95) --------------
+
+
+def _two_pictures(root: Path) -> tuple[bytes, bytes]:
+    import base64
+
+    first, second = _png(40), _png(60)
+    uri = [f"data:image/png;base64,{base64.b64encode(p).decode()}" for p in (first, second)]
+    docx = _native.markdown_to_docx(f"One ![a]({uri[0]}) two ![b]({uri[1]})\n")
+    (root / "p.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    return first, second
+
+
+def test_docx_image_is_the_cards_own_tool(tmp_path: Path) -> None:
+    tool = tools(tmp_path)["docx_image"]
+    assert ui_meta(tool).get("visibility") == ["app"]
+    assert tool.annotations.read_only_hint
+
+
+def test_docx_image_returns_the_pictures_bytes_as_image_content(tmp_path: Path) -> None:
+    import base64
+
+    first, second = _two_pictures(tmp_path)
+    preview, one, two = call(
+        tmp_path,
+        ("docx_preview", {"path": "p.docx"}),
+        ("docx_image", {"path": "p.docx", "id": "image1"}),
+        ("docx_image", {"path": "p.docx", "id": "image2"}),
+    )
+    # The ids the tool takes are the labels the preview's stand-ins carry.
+    markdown = preview.structured_content["markdown"]
+    assert "[image1]: <image/png," in markdown and "[image2]: <image/png," in markdown
+    for result, want in ((one, first), (two, second)):
+        assert not result.is_error, result.content[0].text
+        (content,) = result.content
+        assert content.type == "image" and content.mime_type == "image/png"
+        assert base64.b64decode(content.data) == want
+    # The same bytes as the package's media parts.
+    with ZipFile(tmp_path / "p.docx") as zf:
+        media = sorted(zf.read(n) for n in zf.namelist() if n.startswith("word/media/"))
+    assert sorted([first, second]) == media
+
+
+def test_docx_image_refuses_an_unknown_id_a_path_outside_and_a_picture_too_big(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    _two_pictures(root)
+    (tmp_path / "out.docx").write_bytes((root / "p.docx").read_bytes())
+    unknown, outside = call(
+        root,
+        ("docx_image", {"path": "p.docx", "id": "image9"}),
+        ("docx_image", {"path": "../out.docx", "id": "image1"}),
+    )
+    assert unknown.is_error and "image9" in unknown.content[0].text
+    assert outside.is_error and "outside root" in outside.content[0].text
+    monkeypatch.setattr(server, "_IMAGE_LIMIT", 1024)
+    (big,) = call(root, ("docx_image", {"path": "p.docx", "id": "image2"}))
+    assert big.is_error and "too large" in big.content[0].text
+
+
+def test_docx_image_ignores_a_definition_inside_code(tmp_path: Path) -> None:
+    # The shape inside a fence is the document's text, not a picture (#31).
+    literal = "[image1]: <data:image/png;base64,QUJD>"
+    docx = _native.markdown_to_docx(f"```\n{literal}\n```\n")
+    (tmp_path / "c.docx").write_bytes(bytes(docx[0] if isinstance(docx, tuple) else docx))
+    (result,) = call(tmp_path, ("docx_image", {"path": "c.docx", "id": "image1"}))
+    assert result.is_error
+
+
+def test_image_stand_ins_carry_the_rasters_pixel_size(tmp_path: Path) -> None:
+    # #122: a picture the engine regenerates has no drawing comment; the card
+    # sizes it from the raster (1 px per pixel), so the stand-in says the size.
+    _two_pictures(tmp_path)
+    (preview,) = call(tmp_path, ("docx_preview", {"path": "p.docx"}))
+    markdown = preview.structured_content["markdown"]
+    assert re.search(r"\[image1\]: <image/png, \d+ KB, 40x40 px>", markdown), markdown
+    assert re.search(r"\[image2\]: <image/png, \d+ KB, 60x60 px>", markdown), markdown
+
+
+def test_raster_size_reads_png_gif_bmp_and_jpeg_headers() -> None:
+    import base64
+    import struct
+
+    from jubarte.mcp_server import _raster_size
+
+    b64 = lambda raw: base64.b64encode(raw).decode()  # noqa: E731
+    assert _raster_size("image/png", b64(_png(7))) == (7, 7)
+    assert _raster_size("image/gif", b64(b"GIF89a" + struct.pack("<HH", 300, 20) + b"\x00" * 8)) == (300, 20)
+    bmp = b"BM" + b"\x00" * 16 + struct.pack("<ii", 120, -45) + b"\x00" * 30
+    assert _raster_size("image/bmp", b64(bmp)) == (120, 45)
+    jpeg = (
+        b"\xff\xd8"
+        + b"\xff\xe0"
+        + struct.pack(">H", 202)
+        + b"J" * 200
+        + b"\xff\xc0"
+        + struct.pack(">HBHH", 17, 8, 90, 160)
+        + b"\x00" * 12
+    )
+    assert _raster_size("image/jpeg", b64(jpeg)) == (160, 90)
+    assert _raster_size("image/png", b64(b"not a png")) is None
+    assert _raster_size("image/x-emf", b64(_png(7))) is None
+
+
+def test_raster_size_skips_jpeg_fill_bytes_and_reads_core_bmp_headers() -> None:
+    # #125: a marker may follow any number of 0xFF fill bytes (ITU T.81 B.1.1.2),
+    # and an OS/2 core BMP (12-byte BITMAPCOREHEADER) holds 16-bit sizes.
+    import base64
+    import struct
+
+    from jubarte.mcp_server import _raster_size
+
+    b64 = lambda raw: base64.b64encode(raw).decode()  # noqa: E731
+    sof = b"\xff\xc2" + struct.pack(">HBHH", 17, 8, 30, 40) + b"\x00" * 12
+    app = b"\xff\xe0" + struct.pack(">H", 16) + b"J" * 14
+    assert _raster_size("image/jpeg", b64(b"\xff\xd8\xff" + app + b"\xff\xff" + sof)) == (40, 30)
+    core = b"BM" + struct.pack("<IHHI", 26, 0, 0, 26) + struct.pack("<IHHHH", 12, 40, 30, 1, 24)
+    assert _raster_size("image/bmp", b64(core)) == (40, 30)
+
+
+def test_docx_image_refuses_a_document_changed_since_its_preview(tmp_path: Path) -> None:
+    # #122: the card caches a picture under the preview's sha256; bytes from a
+    # changed file must not land under the old hash.
+    _two_pictures(tmp_path)
+    (preview,) = call(tmp_path, ("docx_preview", {"path": "p.docx"}))
+    sha = preview.structured_content["sha256"]
+    (same,) = call(tmp_path, ("docx_image", {"path": "p.docx", "id": "image1", "sha256": sha}))
+    assert not same.is_error, same.content[0].text
+    _two_pictures(tmp_path)  # new random pixels: a different file
+    (stale,) = call(tmp_path, ("docx_image", {"path": "p.docx", "id": "image1", "sha256": sha}))
+    assert stale.is_error and "changed" in stale.content[0].text
