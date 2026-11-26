@@ -2502,6 +2502,272 @@ mod branch_tests {
         }
     }
 
+    /// Differential corpus: Rust is the authority, JS must match it on every
+    /// entry, border included. Regenerate with JUBARTE_REGEN_FIXTURES=1.
+    #[test]
+    fn table_legend_differential_corpus() {
+        fn rng(state: &mut u64) -> u64 {
+            let mut x = *state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *state = x;
+            x
+        }
+        fn pick<'a>(state: &mut u64, items: &'a [&'a str]) -> &'a str {
+            items[(rng(state) as usize) % items.len()]
+        }
+        fn border_clause(b: &TableBorders) -> String {
+            match b {
+                TableBorders::All(eighths) => {
+                    let pt = *eighths as f64 / 8.0;
+                    let s = format!("{pt:.2}");
+                    format!(
+                        "all borders {}pt",
+                        s.trim_end_matches('0').trim_end_matches('.')
+                    )
+                }
+                TableBorders::Sides(sides) => {
+                    let parts: Vec<String> = sides
+                        .iter()
+                        .map(|s| {
+                            let mut out = format!("{} {}", s.side, s.val);
+                            if let Some(sz) = s.size {
+                                let pt = sz as f64 / 8.0;
+                                let p = format!("{pt:.2}");
+                                let _ = std::fmt::Write::write_fmt(
+                                    &mut out,
+                                    format_args!(
+                                        " {}pt",
+                                        p.trim_end_matches('0').trim_end_matches('.')
+                                    ),
+                                );
+                            }
+                            if let Some(color) = &s.color {
+                                let _ =
+                                    std::fmt::Write::write_fmt(&mut out, format_args!(" #{color}"));
+                            }
+                            if let Some(space) = s.space {
+                                let _ = std::fmt::Write::write_fmt(
+                                    &mut out,
+                                    format_args!(" space {space}pt"),
+                                );
+                            }
+                            out
+                        })
+                        .collect();
+                    format!("borders {}", parts.join(" "))
+                }
+            }
+        }
+        fn cell_spacing_json(attrs: &str) -> serde_json::Value {
+            let mut obj = serde_json::Map::new();
+            let tokens: Vec<&str> = attrs.split_whitespace().collect();
+            let mut i = 0;
+            while i < tokens.len() {
+                let t = tokens[i];
+                if let Some(val) = t
+                    .strip_prefix("w:before=\"")
+                    .and_then(|v| v.strip_suffix('"'))
+                {
+                    obj.insert(
+                        "beforePt".into(),
+                        serde_json::json!(val.parse::<f64>().unwrap() / 20.0),
+                    );
+                } else if let Some(val) = t
+                    .strip_prefix("w:after=\"")
+                    .and_then(|v| v.strip_suffix('"'))
+                {
+                    obj.insert(
+                        "afterPt".into(),
+                        serde_json::json!(val.parse::<f64>().unwrap() / 20.0),
+                    );
+                } else if t == "w:beforeAutospacing=\"1\"" {
+                    obj.insert("beforeAuto".into(), serde_json::json!(true));
+                } else if t == "w:afterAutospacing=\"1\"" {
+                    obj.insert("afterAuto".into(), serde_json::json!(true));
+                } else if let Some(val) = t
+                    .strip_prefix("w:beforeLines=\"")
+                    .and_then(|v| v.strip_suffix('"'))
+                {
+                    obj.insert(
+                        "beforeLines".into(),
+                        serde_json::json!(val.parse::<f64>().unwrap() / 100.0),
+                    );
+                } else if let Some(val) = t
+                    .strip_prefix("w:afterLines=\"")
+                    .and_then(|v| v.strip_suffix('"'))
+                {
+                    obj.insert(
+                        "afterLines".into(),
+                        serde_json::json!(val.parse::<f64>().unwrap() / 100.0),
+                    );
+                } else if let Some(val) = t
+                    .strip_prefix("w:line=\"")
+                    .and_then(|v| v.strip_suffix('"'))
+                {
+                    let rule = tokens
+                        .get(i + 1)
+                        .and_then(|r| r.strip_prefix("w:lineRule=\""))
+                        .and_then(|r| r.strip_suffix('"'))
+                        .unwrap_or("auto");
+                    let n = val.parse::<f64>().unwrap();
+                    let line = if rule == "auto" {
+                        serde_json::json!({"rule": "auto", "multiple": n / 240.0})
+                    } else {
+                        serde_json::json!({"rule": rule, "points": n / 20.0})
+                    };
+                    obj.insert("line".into(), line);
+                    i += 1; // skip lineRule
+                }
+                i += 1;
+            }
+            serde_json::Value::Object(obj)
+        }
+        fn expected_for(legend: &str) -> serde_json::Value {
+            let mut map = serde_json::Map::new();
+            let mut rest = legend.trim();
+            while let Some(((id, (border, _name, spacing)), next)) = table_style_entry(rest) {
+                let mut entry = serde_json::Map::new();
+                entry.insert(
+                    "border".into(),
+                    border
+                        .as_ref()
+                        .map(border_clause)
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                entry.insert(
+                    "cellSpacing".into(),
+                    spacing
+                        .as_ref()
+                        .map(|s| cell_spacing_json(s))
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                map.insert(id, serde_json::Value::Object(entry));
+                rest = next;
+            }
+            serde_json::Value::Object(map)
+        }
+
+        let ids = [
+            "A",
+            "B",
+            "Custom",
+            "TableNormal",
+            "Plain",
+            "\"A, B\"",
+            "'A, B'",
+            "\"\"",
+            "''",
+            "\"A\\\"B\"",
+            "A B",
+        ];
+        let clause_kinds = [
+            "cell paragraphs after 6pt",
+            "cell paragraphs after 0pt",
+            "cell paragraphs before 6pt",
+            "cell paragraphs after 0pt line 1",
+            "cell paragraphs line 12pt exact",
+            "cell paragraphs after 0pt after 6pt",
+            "cell paragraphs bogus",
+            "cell paragraphs after 6pt, cell paragraphs after 0pt",
+            "borders top single",
+            "borders bottom double 0.75pt #FF0000 space 4pt",
+            "all borders 0.5pt",
+            "borders top double 1.5pt #abcdef space +2pt",
+            "borders top double 1e0pt",
+            "borders vary",
+            "named \"X\"",
+            "named \"A, B\"",
+            "unknown clause",
+            "",
+            "\"\"",
+        ];
+        let seps = [", ", ",", " , ", ",,", ", "]; // last is normal; trailing handled separately
+
+        let mut cases: Vec<serde_json::Value> = Vec::new();
+        // Review cases must be present.
+        let review_cases = [
+            "A, cell paragraphs after 6pt, ",
+            "A, borders top single, A, cell paragraphs after 6pt",
+            "A, cell paragraphs after 6pt, A, borders top single",
+            "A, borders top double 1.5pt #abcdef space +2pt",
+            "A, borders top double 1e0pt",
+            "A,borders top single",
+            "A, \"\", cell paragraphs after 6pt",
+            "A, borders top single , cell paragraphs after 6pt",
+            "A, cell paragraphs after 6pt,,B, cell paragraphs after 0pt",
+        ];
+        for legend in review_cases {
+            cases.push(serde_json::json!({"legend": legend, "expected": expected_for(legend)}));
+        }
+
+        let mut state: u64 = 0x5eed_1281_c0de_5eed;
+        for _ in 0..3000 {
+            let parts_count = 1 + (rng(&mut state) as usize % 6);
+            let mut legend = String::new();
+            for p in 0..parts_count {
+                if p > 0 {
+                    legend.push_str(pick(&mut state, &seps));
+                }
+                // Mix: id, clause, or repeated id
+                let roll = rng(&mut state) % 10;
+                if roll < 4 {
+                    legend.push_str(pick(&mut state, &ids));
+                } else if roll < 9 {
+                    legend.push_str(pick(&mut state, &clause_kinds));
+                } else {
+                    // repeat an id already used in this legend, or any id
+                    legend.push_str(pick(&mut state, &ids));
+                }
+            }
+            // Sometimes add a trailing separator
+            if rng(&mut state).is_multiple_of(5) {
+                legend.push_str(", ");
+            }
+            cases.push(serde_json::json!({"legend": legend, "expected": expected_for(&legend)}));
+        }
+
+        // Deduplicate by legend to keep corpus small and deterministic.
+        let mut seen = std::collections::HashSet::new();
+        let mut unique: Vec<serde_json::Value> = Vec::new();
+        for c in cases {
+            let legend = c["legend"].as_str().unwrap().to_string();
+            if seen.insert(legend) {
+                unique.push(c);
+            }
+        }
+        assert!(
+            unique.len() >= 1000,
+            "need >= 1000 unique cases, got {}",
+            unique.len()
+        );
+
+        let json = serde_json::to_string_pretty(&unique).unwrap() + "\n";
+        assert!(
+            json.len() < 1_000_000,
+            "corpus too large: {} bytes",
+            json.len()
+        );
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/table_legend_differential.json");
+        if std::env::var_os("JUBARTE_REGEN_FIXTURES").is_some() {
+            std::fs::write(&path, &json).unwrap();
+        } else {
+            let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+                panic!(
+                    "missing {}; regenerate with JUBARTE_REGEN_FIXTURES=1",
+                    path.display()
+                )
+            });
+            assert_eq!(
+                committed, json,
+                "differential corpus stale; regenerate with JUBARTE_REGEN_FIXTURES=1"
+            );
+        }
+    }
+
     #[test]
     fn review128_border_space_accepts_leading_plus() {
         assert_eq!("+5".parse::<u32>(), Ok(5));

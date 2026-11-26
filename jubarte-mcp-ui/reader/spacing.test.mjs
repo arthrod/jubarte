@@ -249,3 +249,24 @@ test('R2-F3 shared table legend cases (JS reads same fixture as Rust)', () => {
     assert.deepEqual(got, want, c.name);
   }
 });
+
+test('table legend differential corpus (JS matches Rust-generated expected, border included)', () => {
+  const cases = JSON.parse(readFileSync(new URL('../../tests/fixtures/table_legend_differential.json', import.meta.url), 'utf8'));
+  let failures = 0;
+  const first = [];
+  for (const c of cases) {
+    const styles = parseTableLegend(c.legend);
+    const got = Object.fromEntries(Object.entries(styles).map(([id, s]) => [id, {
+      border: s.border ?? null,
+      cellSpacing: s.cellSpacing ?? null,
+    }]));
+    const want = c.expected;
+    try {
+      assert.deepEqual(got, want);
+    } catch (e) {
+      failures++;
+      if (first.length < 20) first.push({legend: c.legend, got, want, message: e.message});
+    }
+  }
+  assert.equal(failures, 0, `${failures}/${cases.length} differential cases failed:\n${JSON.stringify(first, null, 2)}`);
+});

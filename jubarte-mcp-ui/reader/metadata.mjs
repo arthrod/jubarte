@@ -289,74 +289,165 @@ export function parseDirective(raw, options = {}) {
 }
 
 /**
- * The table styles a legend line names (`tables: A, borders vary, cell
- * paragraphs after 0pt line 1, B`; header.rs `table_style_line`), keyed by
- * id: each with the spacing its `w:pPr` gives cell paragraphs that Normal
- * leaves to it (#124). A clause the writer reads as part of an entry stays
- * in it; any other starts the next style, as view_styles.rs reads it.
+ * Port of view_styles.rs::table_legend. Reads the `tables:` legend into a
+ * null-prototype map keyed by style id: each entry has the spacing its `w:pPr`
+ * gives cell paragraphs that Normal leaves to it (#124). A repeated id replaces
+ * the whole entry, as BTreeMap::insert does. A clause the writer reads as part
+ * of an entry stays in it; any other starts the next style.
  * @param {unknown} raw
  */
 export function parseTableLegend(raw) {
   const out = Object.create(null);
   if (typeof raw !== 'string') return out;
-  let current = null;
-  let hasBorder = false, hasName = false, hasSpacing = false;
-  for (const piece of splitClauses(raw)) {
-    const value = piece.trim();
-    let match;
-    if ((match = value.match(/^cell paragraphs\s+(.+)$/s))) {
-      // A cell-paragraphs clause is consumed whole: malformed, duplicate
-      // attribute, or repeated, it is dropped and never becomes a style id
-      // (R2-F1/F2/F3). It only belongs to a current style entry.
-      if (current && !hasSpacing) {
-        const spacing = parseSpacing(match[1]);
-        if (spacing) { current.cellSpacing = spacing; hasSpacing = true; }
-      }
-      continue;
-    }
-    if (current && value === 'borders vary') continue;
-    if (current && !hasBorder && tableBorderClause(value)) { current.border = value; hasBorder = true; continue; }
-    if (current && !hasName && value.startsWith('named ')) {
-      const name = value.slice(6).trim();
-      try {
-        if (!name.startsWith('"') || typeof JSON.parse(name) === 'string') { hasName = true; continue; }
-      } catch { /* A malformed quoted name starts a new entry, as in view_styles.rs. */ }
-    }
-    const id = value.startsWith('"') && value.endsWith('"') && value.length > 1 ? decodeLabel(value.slice(1, -1)) : value;
-    if (!id) { continue; }
-    current = out[id] ??= {styleId: id};
-    hasBorder = hasName = hasSpacing = false;
+  let rest = raw.trim();
+  while (true) {
+    const entry = tableStyleEntry(rest);
+    if (!entry) break;
+    const [[id, look], next] = entry;
+    out[id] = {styleId: id, ...look};
+    rest = next;
   }
   return out;
 }
 
-// Match view_styles.rs::border_sides before treating a clause as continuation.
-// Prefixes alone are also legal style IDs, for example `borders 2`.
-function tableBorderClause(value) {
-  const number = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?';
-  const points = token => new RegExp(`^(${number})pt$`).exec(token || '');
-  if (value.startsWith('all borders ')) {
-    const match = points(value.slice(12));
-    return !!match && Number(match[1]) >= 0.25 && Number(match[1]) <= 6;
+/** Port of view_styles.rs::unquote. A YAML scalar as the legend prints it: plain, or a JSON string. */
+function unquote(value) {
+  if (value.startsWith('"')) {
+    try { return JSON.parse(value); } catch { return null; }
   }
-  if (!value.startsWith('borders ')) return false;
-  const sides = new Set(['top', 'left', 'bottom', 'right', 'insideH', 'insideV']);
-  const seen = new Set(), tokens = value.slice(8).split(' ');
+  return value;
+}
+
+/** Port of view_styles.rs::take_clause. First `", "`-separated clause, a quoted one whole (`"` only), and what follows. */
+function takeClause(value) {
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i];
+    if (escaped) escaped = false;
+    else if (c === '\\' && quoted) escaped = true;
+    else if (c === '"') quoted = !quoted;
+    else if (c === ',' && !quoted && value[i + 1] === ' ') return [value.slice(0, i), value.slice(i + 2)];
+  }
+  return [value, ''];
+}
+
+const TABLE_BORDER_SIDES = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'];
+
+/** Port of view_styles.rs::border_sides and its canonical form. `borders ...` clause as a canonical string, or null. */
+function borderSidesClause(clause) {
+  if (!clause.startsWith('borders ')) return null;
+  const tokens = clause.slice(8).split(' ');
+  const sides = [];
   let at = 0;
   while (at < tokens.length) {
     const side = tokens[at++];
-    if (!sides.has(side) || seen.has(side) || !/^[a-zA-Z0-9]+$/.test(tokens[at++] || '')) return false;
-    seen.add(side);
-    let size = false, color = false, space = false;
-    while (at < tokens.length && !sides.has(tokens[at])) {
-      const token = tokens[at++], match = points(token);
-      if (!size && match && Number(match[1]) >= 0 && Number(match[1]) <= 255) size = true;
-      else if (!color && /^#[a-fA-F0-9]{6}$/.test(token)) color = true;
-      else if (!space && token === 'space' && /^\+?\d+pt$/.test(tokens[at] || '') && Number(tokens[at].slice(0, -2)) <= 4294967295) { space = true; at++; }
-      else return false;
+    if (!TABLE_BORDER_SIDES.includes(side) || sides.some(s => s.side === side)) return null;
+    const val = tokens[at++];
+    if (!val || !/^[a-zA-Z0-9]+$/.test(val)) return null;
+    const border = {side, val, size: null, color: null, space: null};
+    while (at < tokens.length && !TABLE_BORDER_SIDES.includes(tokens[at])) {
+      const token = tokens[at++];
+      const sizeMatch = !border.size && /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(token);
+      if (sizeMatch) {
+        const pt = Number(sizeMatch[1]);
+        if (!(pt >= 0 && pt <= 255)) return null;
+        border.size = Math.round(pt * 8);
+      } else if (!border.color && /^#[a-fA-F0-9]{6}$/.test(token)) {
+        border.color = token.slice(1);
+      } else if (token === 'space' && border.space == null) {
+        const spaceToken = tokens[at++];
+        const spaceMatch = /^([+]?\d+)pt$/.exec(spaceToken || '');
+        if (!spaceMatch) return null;
+        const space = Number(spaceMatch[1]);
+        if (!(space <= 4294967295)) return null;
+        border.space = space;
+      } else return null;
     }
+    sides.push(border);
   }
-  return seen.size > 0;
+  if (sides.length === 0) return null;
+  return `borders ${sides.map(s => {
+    let out = `${s.side} ${s.val}`;
+    if (s.size != null) {
+      const pt = s.size / 8;
+      const p = pt.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+      out += ` ${p}pt`;
+    }
+    if (s.color != null) out += ` #${s.color}`;
+    if (s.space != null) out += ` space ${s.space}pt`;
+    return out;
+  }).join(' ')}`;
+}
+
+/** Port of view_styles.rs::table_style_entry border/name/cell parsing. One entry and the rest of the line. */
+function tableStyleEntry(value) {
+  let rest = value;
+  let id;
+  for (;;) {
+    const [clause, next] = takeClause(rest);
+    rest = next;
+    const unquoted = unquote(clause.trim());
+    if (unquoted == null || unquoted === '') {
+      if (rest === '') return null;
+      continue;
+    }
+    // A cell-paragraphs clause belongs to a style entry; at the front, with no
+    // style id, it is dropped and never becomes a style id (R2-F2).
+    if (unquoted.startsWith('cell paragraphs ')) {
+      if (rest === '') return null;
+      continue;
+    }
+    id = unquoted;
+    break;
+  }
+  let border = null;
+  let name = null;
+  let cells = null;
+  while (rest !== '') {
+    const [clause, next] = takeClause(rest);
+    if (clause.trim() === '') { rest = next; continue; }
+    const borderAll = clause.startsWith('all borders ') ? /^all borders ([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)pt$/.exec(clause) : null;
+    if (border == null && borderAll) {
+      const pt = Number(borderAll[1]);
+      if (pt >= 0.25 && pt <= 6) {
+        const eighths = Math.round(pt * 8);
+        const p = (eighths / 8).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+        border = `all borders ${p}pt`;
+        rest = next;
+        continue;
+      }
+    }
+    if (border == null) {
+      const sides = borderSidesClause(clause);
+      if (sides) { border = sides; rest = next; continue; }
+    }
+    if (name == null && clause.startsWith('named ')) {
+      const named = unquote(clause.slice(6).trim());
+      if (named != null) { name = named; rest = next; continue; }
+    }
+    if (clause.startsWith('cell paragraphs ')) {
+      // A cell-paragraphs clause is consumed whole: malformed, duplicated, or
+      // repeated, it is dropped and never becomes a style id (R2-F1/F2).
+      if (cells == null) {
+        const spacing = parseSpacing(clause.slice(16));
+        if (spacing) cells = spacing;
+      }
+      rest = next;
+      continue;
+    }
+    if (clause !== 'borders vary') {
+      const look = {};
+      if (border != null) look.border = border;
+      if (cells != null) look.cellSpacing = cells;
+      return [[id, look], rest];
+    }
+    rest = next;
+  }
+  const look = {};
+  if (border != null) look.border = border;
+  if (cells != null) look.cellSpacing = cells;
+  return [[id, look], ''];
 }
 
 function parsePage(raw, warnings, path = 'page', inherited = false) {
