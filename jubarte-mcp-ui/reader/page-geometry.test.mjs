@@ -161,13 +161,21 @@ test("every paper the engine names, and its WxHin custom size (#42)", () => {
   }
 });
 
-test("K112: line grids expose their point pitch without using character-only grids", () => {
-  for (const grid of ["line grid", "line and char grid"]) {
+test("K112: line and character grids expose their point pitch", () => {
+  for (const grid of ["line grid", "line and char grid", "char grid"]) {
     const geometry = read(`Letter portrait, ${grid} 15.6pt`);
     assert.equal(geometry.gridPitchPt, 15.6);
     assert.deepEqual(geometry.warnings, []);
   }
-  for (const clause of ["", ", char grid 18pt", ", line grid 0pt", ", line grid -1pt"]) {
+  for (const clause of ["", ", char grid", ", line grid 0pt", ", line grid -1pt"]) {
     assert.equal(read(`Letter portrait${clause}`).gridPitchPt, undefined);
   }
 });
+
+for (const tail of ["; fmt r2 @AC", "; was: Letter portrait, line grid 18pt"]) {
+  test(`K112 round 3: page geometry ignores revision tail ${tail}`, () => {
+    const geometry = read(`Letter portrait, line grid 15.6pt${tail}`);
+    assert.equal(geometry.gridPitchPt, 15.6);
+    assert.deepEqual(geometry.warnings, []);
+  });
+}

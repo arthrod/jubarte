@@ -49,7 +49,8 @@ export function buildSnapshot(result, mode = "tracked", geometry = resolvePageGe
   // section, not the preceding one. Flat cells have agentId; row-group cells
   // carry paragraphIds. Both name paragraphs in the same body index space.
   const gridPitchFor = (data) => {
-    const match = /^p(\d+)$/.exec(data.agentId ?? data.paragraphIds?.[0] ?? "");
+    const id = (data.agentId ?? data.paragraphIds?.[0] ?? "").replace(/^[^.]+\./, "");
+    const match = /^p(\d+)$/.exec(id);
     const index = match ? Number(match[1]) : null;
     const section =
       index == null

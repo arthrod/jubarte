@@ -72,6 +72,12 @@ test("K112: line-based gaps count the section's 15.6pt pitch", () => {
   assert.equal(resolved.afterPt, 31.2);
 });
 
+test("K112 round 3: line-based gaps round to hundredths of a point", () => {
+  const resolved = resolveSpacing(parseSpacing("before 2.3 lines after 2.3 lines"), {}, {}, 15.6);
+  assert.equal(resolved.beforePt, 35.88);
+  assert.equal(resolved.afterPt, 35.88);
+});
+
 test("each clause spacing_clauses can write reads as typed fields", () => {
   assert.deepEqual(parseSpacing("before 6pt"), { beforePt: 6 });
   assert.deepEqual(parseSpacing("after 10.05pt"), { afterPt: 10.05 });

@@ -90,7 +90,9 @@ export function resolvePageGeometry(result = {}) {
     } else for (const side of SIDES) margin(side, value);
   };
   if (typeof raw === "string") {
+    // The engine appends revision metadata after the live page setup.
     for (const clause of raw
+      .split(";")[0]
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean)) {
@@ -105,7 +107,7 @@ export function resolvePageGeometry(result = {}) {
       else if ((match = clause.match(/^(top|right|bottom|left)(?:\s+margin)?\s+(.+)$/i)))
         margin(match[1].toLowerCase(), match[2]);
       else if (
-        (match = clause.match(/^line(?: and char)? grid (\d+(?:\.\d+)?)pt$/i)) &&
+        (match = clause.match(/^(?:line(?: and char)?|char) grid (\d+(?:\.\d+)?)pt$/i)) &&
         Number(match[1]) > 0 &&
         Number.isFinite(Number(match[1]))
       )

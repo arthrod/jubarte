@@ -1056,6 +1056,43 @@ describe("each block carries the spacing Word applies to it (#101)", () => {
   const spacingOf = (composed, text) =>
     composed.snapshot.blocks.find((b) => b.runs?.some((r) => r.text?.includes(text)))?.attrs
       .spacing;
+  it.each([
+    "line grid 15.6pt; fmt r2 @AC",
+    "line grid 15.6pt; was: Letter portrait, line grid 18pt",
+    "char grid 15.6pt",
+  ])("K112 round 3: %s uses the live pitch without page warnings", (grid) => {
+    const source =
+      header().replace("page: Letter portrait", `page: Letter portrait, ${grid}`) +
+      "<!-- p0 before 1.5 lines -->\nLIVE\n";
+    const { composed, done } = compose(source);
+    try {
+      expect(spacingOf(composed, "LIVE").beforePt).toBe(23.4);
+      expect(composed.geometry.warnings).toEqual([]);
+      expect(composed.warnings.filter((warning) => /page setting/.test(warning))).toEqual([]);
+    } finally {
+      done();
+    }
+  });
+  it.each(["footnotes", "endnotes"])(
+    "K112 round 3: %s paragraph in section 2 uses its 18pt pitch",
+    (story) => {
+      const source =
+        header("sections:\n  2: {p1-p1, page: Letter portrait, line grid 18pt}\n") +
+        "<!-- p0 section-break -->\nFIRST\n\n<!-- p1 -->\nSECOND[^1]\n\n" +
+        `<!-- ${story}.p1 before 1.5 lines -->\n[^1]: NOTE\n`;
+      const { composed, done } = compose(source);
+      try {
+        const blocks =
+          story === "footnotes"
+            ? composed.snapshot.footnotes.flatMap((note) => note.blocks)
+            : composed.snapshot.blocks;
+        const note = blocks.find((block) => block.runs?.some((run) => run.text?.includes("NOTE")));
+        expect(note.attrs.spacing).toMatchObject({ beforeLines: 1.5, beforePt: 27 });
+      } finally {
+        done();
+      }
+    },
+  );
   it("K112: paragraph and cell line gaps reach layout as 12pt-based points", () => {
     const { composed, done } = compose(
       doc(

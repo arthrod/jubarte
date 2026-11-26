@@ -96,7 +96,7 @@ export function resolveSpacing(own, style, normal, gridPitchPt = 12) {
       if (layer[`${name}Auto`]) return { pt: 0, auto: true };
       if (layer[`${name}Lines`] != null) {
         const lines = layer[`${name}Lines`];
-        return { pt: lines * gridPitchPt, lines, auto: false };
+        return { pt: Math.round(lines * gridPitchPt * 100) / 100, lines, auto: false };
       }
       if (layer[`${name}Pt`] != null) return { pt: layer[`${name}Pt`], auto: false };
     }
