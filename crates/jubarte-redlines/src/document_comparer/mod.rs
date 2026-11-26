@@ -941,7 +941,7 @@ fn compare_documents_impl(
                         if settings.merge_replaced_paragraphs && !settings.preserve_untouched {
                             let a_ids = crate::comparer::footnotes::defined_style_ids(&sd, tr);
                             materialize_builtin_paragraph_defaults(&mut sd, tr);
-                            materialize_builtin_paragraph_defaults(&mut sd, fr);
+                            materialize_revised_paragraph_defaults(&mut sd, fr);
                             let b_to_out = copy_missing_styles_by_name(&mut sd, tr, fr);
                             let _ = adopt_missing_styles_structure(&mut sd, tr, fr);
                             style_renames = canonicalize_style_ids(&mut sd, tr);
@@ -1418,7 +1418,13 @@ fn compare_documents_impl(
                     let od = sd.parse_xdocument(&out_xml);
                     let bd = sd.parse_xdocument(&b_xml);
                     match (sd.root(od), sd.root(bd)) {
-                        (Some(or), Some(br)) => Some((sd, or, br)),
+                        (Some(or), Some(br)) => {
+                            // #173: the revised stylesheet the passes below
+                            // read takes Word's built-in paragraph defaults
+                            // here too, where it has no `w:pPrDefault`.
+                            materialize_revised_paragraph_defaults(&mut sd, br);
+                            Some((sd, or, br))
+                        }
                         _ => None,
                     }
                 }
@@ -1724,6 +1730,9 @@ fn compare_documents_impl(
     // pass above wrote them.
     if settings.word_platform == WordPlatform::Windows {
         adopt_revised_package_defaults(&mut out, &pkg2, &main1);
+        // #173: where the revised `w:docDefaults` carry no `w:pPrDefault`,
+        // the redline's get Word's built-in paragraph defaults.
+        materialize_output_paragraph_defaults(&mut out);
     }
 
     // Word-mode repair: Word synthesizes a default numbering definition when

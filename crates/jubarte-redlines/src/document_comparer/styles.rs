@@ -2327,6 +2327,10 @@ pub(super) fn factory_scaffold_bake_b_styles(
     root: NodeId,
     settings: &WmlComparerSettings,
 ) -> bool {
+    // #173: a revision with no `w:pPrDefault` of its own takes Word's built-in
+    // paragraph defaults here too, before they are captured and compared with
+    // the factory's.
+    materialize_revised_paragraph_defaults(dom, root);
     let style_nm = W::name("style");
     let style_id_nm = W::style_id();
     // --- capture B's docDefaults values ---
@@ -3653,6 +3657,62 @@ pub(super) fn materialize_builtin_paragraph_defaults(dom: &mut Dom, root: NodeId
     true
 }
 
+/// #173: the paragraph defaults Word reads a revision with. A revision whose
+/// stylesheet has no `w:docDefaults` at all (a LibreOffice export) is read
+/// with the same built-in defaults as one whose `w:docDefaults` has no
+/// `w:pPrDefault` ([`materialize_builtin_paragraph_defaults`]): in Word's
+/// redlines of 5fca0ac668 × 12809de7d6 and e54c9bd21f × 07b195a037, every
+/// style the revision defines that sets no spacing of its own takes 160
+/// after and 278 auto lines, where the spec's empty defaults give 0 and 240.
+/// Every style the revisions define in the 18 pairs of #173's census that
+/// lack a `w:pPrDefault` resolves so, on Mac Word 16 and on Windows Word
+/// 2024. A `w:pPrDefault` that is present, empty or not, is the revision's
+/// own: nothing is written over it.
+///
+/// The revision's stylesheet in the compare is given a `w:docDefaults` that
+/// holds those defaults, so every style pass reads the revision's styles as
+/// Word lays them out. Paragraph defaults only: the run defaults are a
+/// rule of the package (`w:rPrDefault`), which this leaves alone. Returns
+/// true when something was written.
+pub(super) fn materialize_revised_paragraph_defaults(dom: &mut Dom, b_root: NodeId) -> bool {
+    let doc_defaults = W::name("docDefaults");
+    if dom.element(b_root, &doc_defaults).is_none() {
+        let dd = dom.new_element(doc_defaults);
+        // `w:docDefaults` sorts before `w:latentStyles` and the `w:style`
+        // children of `w:styles`.
+        match dom.elements(b_root, None).first().copied() {
+            Some(first) => dom.add_before_self(first, dd),
+            None => dom.add(b_root, dd),
+        }
+    }
+    materialize_builtin_paragraph_defaults(dom, b_root)
+}
+
+/// #173: the paragraph defaults of the stylesheet as it ships, after
+/// [`adopt_revised_package_defaults`] ran. Under `--mode word-windows` the
+/// redline carries the revision's `w:docDefaults`; where those have no
+/// `w:pPrDefault`, Windows Word's redline writes its built-in paragraph
+/// defaults in their place (16 of 16 such pairs of #173's census), and the
+/// styles it leaves bare resolve to them. [`materialize_builtin_paragraph_defaults`]
+/// writes exactly that, and nothing where a `w:pPrDefault` is present.
+///
+/// A revision with no `w:docDefaults` at all is left to the passes above:
+/// its defaults are not adopted, and the redline keeps the original's,
+/// which already carry the revision's values under them (as under `word`).
+pub(super) fn materialize_output_paragraph_defaults(out: &mut PartFs) {
+    let Some(xml) = out.part_string("word/styles.xml") else {
+        return;
+    };
+    let mut dom = Dom::new();
+    let document = dom.parse_xdocument(&xml);
+    let Some(root) = dom.root(document) else {
+        return;
+    };
+    if materialize_builtin_paragraph_defaults(&mut dom, root) {
+        out.set_part("word/styles.xml", dom.serialize_element(root).into_bytes());
+    }
+}
+
 /// When the A-based styles part lacks `docDefaults` or `latentStyles`, copy
 /// them from B (Word redlines always carry both when B has a full stylesheet).
 /// Full styles swap is intentionally avoided — it regressed sales_report pairs.
@@ -4385,9 +4445,15 @@ pub(super) fn merge_normal_style_rpr(
         let dd_elem = |dom: &Dom, root: NodeId, name: &crate::xmllinq::XName| -> Option<NodeId> {
             rpr_default(dom, root).and_then(|r| dom.element(r, name))
         };
-        // A B with no docDefaults at all reads with Word's factory run
-        // defaults: kern 2 and standard contextual ligatures.
-        let b_factory = dom.element(b_root, &W::name("docDefaults")).is_none();
+        // A B with no `w:rPrDefault` of its own reads with Word's factory run
+        // defaults: kern 2 and standard contextual ligatures. Asked of the
+        // run defaults, not of a `w:docDefaults` element: #173 gives a B with
+        // no `w:docDefaults` a `w:docDefaults` that holds paragraph defaults
+        // alone.
+        let b_factory = dom
+            .element(b_root, &W::name("docDefaults"))
+            .and_then(|d| dom.element(d, &W::name("rPrDefault")))
+            .is_none();
         let kern_name = W::name("kern");
         let a_kern = dd_elem(dom, out_root, &kern_name)
             .and_then(|e| dom.attribute(e, &W::val()).map(str::to_string));
