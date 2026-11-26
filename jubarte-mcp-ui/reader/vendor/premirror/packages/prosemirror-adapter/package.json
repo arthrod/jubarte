@@ -1,0 +1,23 @@
+{
+  "name": "@premirror/prosemirror-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude='**/*.test.*' --test-coverage-exclude='**/test-support/**' src/*.test.ts"
+  },
+  "dependencies": {
+    "@chenglou/pretext": "0.0.5",
+    "@premirror/core": "workspace:*",
+    "prosemirror-keymap": "^1.2.0",
+    "prosemirror-model": "1.25.12",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-transform": "^1.10.4"
+  }
+}

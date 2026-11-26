@@ -1,0 +1,69 @@
+/* SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC
+
+   SPDX-License-Identifier: Apache-2.0 */
+
+/* The desk (desk/styles.css, jubarte-app's own stylesheet, unchanged) sized
+   for a card inside a host's chat or side panel instead of a fixed window.
+   Only what the window assumed is undone here; every token, chip, view toggle,
+   tool and empty state is the app's. */
+
+body {
+  height: auto;
+  min-height: 0;
+  display: block;
+  overflow: visible;
+  background: var(--surface);
+  font-size: 13px;
+  user-select: text;
+}
+/* A host with a fixed height: the card scrolls inside it (view.js sets it). */
+body.fixed { height: 100vh; overflow: auto; }
+
+.watermark { position: fixed; right: -90px; bottom: -70px; width: 360px; }
+
+.card { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* the app bar, without the macOS traffic-light gutters */
+.appbar { grid-template-columns: 1fr auto 1fr; padding: 9px 16px; }
+
+.preview-empty, .files, .result { padding: 18px 20px 22px; }
+.preview-empty { min-height: 150px; cursor: default; border: 0; }
+.preview-empty:hover { background: none; border-color: transparent; }
+.preview-empty.failed .empty-glyph { color: var(--del); }
+
+/* The reader's generic `button` rule must not reach the desk's controls. */
+.view, .tool, .file { border-radius: 0; }
+.views { border-radius: var(--radius); overflow: hidden; background: var(--bg); }
+.tool { border-radius: var(--radius); background: var(--bg); }
+.tools-end { display: inline-flex; gap: 8px; }
+.result-title .ok { width: 34px; height: 22px; }
+.chip { border-radius: var(--radius); }
+
+/* docx_view's file list: the desk's drop-zone cells, as a shared-border grid */
+.files-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.files-grid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1px;
+  background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+}
+.file {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 14px 16px; text-align: left;
+  font: inherit; color: var(--ink); background: var(--bg); border: 0; cursor: pointer;
+  transition: background 0.15s;
+}
+.file:hover { background: var(--hover); }
+.file:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.file .docglyph { width: 26px; height: 26px; flex: none; color: var(--primary); }
+.file .filename { font-size: 13px; font-weight: 600; word-break: break-word; }
+.file .filemeta { display: block; margin-top: 2px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; word-break: break-all; }
+
+/* the pages: paper in either appearance (the Paper Stays Paper Rule) */
+#pages-fit { color-scheme: light; margin-top: 4px; }
+.truncnote:empty { display: none; }
+.truncnote { text-align: left; font-size: 11px; line-height: 1.6; }
+
+/* discussions: the reader's drawer, in desk colours */
+#embed-discussions { background: var(--bg); color: var(--ink); }
+#embed-discussions article { background: var(--page); color: oklch(18.2% 0 0); color-scheme: light; }
+#close-discussions { margin-bottom: 6px; }
