@@ -22,6 +22,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from sync_license_files import table_cells, ui_for_bundle
+
 SCRIPT = Path(__file__).resolve().parent / "sync_license_files.py"
 
 JANDIRA = "// SPDX-FileCopyrightText: 2026 Jandira Technologies, LLC\n"
@@ -39,6 +41,48 @@ NOTICE_FILE = (
     "## upstream\n\n```text\n" + MIT + "```\n"
 )
 MANIFEST = '[package]\nname = "jubarte-x"\ninclude = ["/src/**", "/LICENSE", "/NOTICE", "/THIRD_PARTY_NOTICES.md"]\n'
+
+
+class UiForBundle(unittest.TestCase):
+    """Pure notice transformation checks; no repository or filesystem needed."""
+
+    def test_pipe_escaping_respects_backslash_parity(self) -> None:
+        self.assertEqual(table_cells(r"| a\\| b\|c |"), ["", "a\\\\", r"b\|c", ""])
+        self.assertEqual(table_cells(r"| a\\\|b |"), ["", r"a\\\|b", ""])
+
+    def test_headers_alignment_multiple_paths_and_fenced_text(self) -> None:
+        text = (
+            "# Third-party notices\n\n"
+            "| Files | Comes from | Licence |\n| :--- | ---: | :---: |\n"
+            "| `src/a.js`<br>`src/b.js` | Example | MIT |\n\n"
+            "```text\n| licence text, not a table\n```\n"
+        )
+        result = ui_for_bundle(text)
+        self.assertIn("| Files | Comes from | Licence |\n| :--- | ---: | :---: |", result)
+        self.assertIn("Source: `jubarte-mcp-ui/src/a.js`<br>`jubarte-mcp-ui/src/b.js`", result)
+        self.assertIn("```text\n| licence text, not a table\n```", result)
+
+    def test_escaped_pipes_remain_inside_cells(self) -> None:
+        row = r"| `src/a\|b.js` | Example\| upstream | MIT (`licenses/A\|B.txt`) |"
+        self.assertIn(
+            r"| `ui/document.html` | Example\| upstream<br>Source: `jubarte-mcp-ui/src/a\|b.js` | "
+            r"MIT (source: `jubarte-mcp-ui/licenses/A\|B.txt`; licence text embedded in `ui/document.html`) |",
+            ui_for_bundle(row),
+        )
+
+    def test_unrecognised_rows_fail_loudly(self) -> None:
+        for row in (
+            "| `src/a.js` | Example | MIT | extra |",
+            "| `src/a.js` | MIT |",
+            "| src/a.js | Example | MIT |",
+            "| `src/a.js` | Example | MIT",
+            "| `src/a.js` | | MIT |",
+            "| Unknown | Header | Shape |",
+            "| Files | Comes from | Licence |\n`src/a.js` | Example | MIT |",
+        ):
+            with self.subTest(row=row):
+                with self.assertRaisesRegex(ValueError, "Unrecognised UI notice table row"):
+                    ui_for_bundle(row)
 
 
 class SyncLicenseFiles(unittest.TestCase):

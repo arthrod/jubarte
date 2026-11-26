@@ -245,18 +245,44 @@ def for_bundle(text: str) -> str:
     return "\n".join(out).strip("\n")
 
 
+def table_cells(line: str) -> list[str]:
+    """Split Markdown cells on unescaped pipes, preserving their source text."""
+    cells, start, escaped = [], 0, False
+    for index, char in enumerate(line):
+        if char == "|" and not escaped:
+            cells.append(line[start:index].strip())
+            start = index + 1
+        escaped = char == "\\" and not escaped
+    cells.append(line[start:].strip())
+    return cells
+
+
 def ui_for_bundle(text: str) -> str:
     """Name the installed HTML carrier, preserving explicitly labelled sources."""
-    lines = []
+    lines, fenced, in_table = [], False, False
     for line in for_bundle(text).splitlines():
-        cells = line.split("|")
-        if len(cells) == 5 and cells[1].strip().startswith("`"):
-            source = CODE.sub(lambda m: f"`{UI}/{m[1]}`", cells[1].strip())
+        if line.startswith("```"):
+            fenced = not fenced
+        if not line.strip():
+            in_table = False
+        if not fenced and (line.lstrip().startswith("|") or (in_table and line.strip())):
+            in_table = True
+            cells = table_cells(line)
+            if len(cells) != 5 or cells[0] or cells[-1] or not all(cells[1:4]):
+                raise ValueError(f"Unrecognised UI notice table row: {line}")
+            if cells[1:4] in (["Files", "Comes from", "Licence"], ["Files", "From", "Licence"]) or all(
+                re.fullmatch(r":?-{3,}:?", cell) for cell in cells[1:4]
+            ):
+                lines.append(line)
+                continue
+            if not re.fullmatch(r"`[^`]+`(?:\s*<br>\s*`[^`]+`)*", cells[1]):
+                raise ValueError(f"Unrecognised UI notice table row: {line}")
+            source = CODE.sub(lambda m: f"`{UI}/{m[1]}`", cells[1])
             licence = CODE.sub(
                 lambda m: f"source: `{UI}/{m[1]}`; licence text embedded in `ui/document.html`",
-                cells[3].strip(),
+                cells[3],
             )
-            line = f"| `ui/document.html` | {cells[2].strip()}<br>Source: {source} | {licence} |"
+            line = f"| `ui/document.html` | {cells[2]}<br>Source: {source} | {licence} |"
         lines.append(line)
     return (
         "Files below name the installed package's carrier. Other paths describe the source repository; "

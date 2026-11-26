@@ -31,16 +31,34 @@ def test_build_preserves_source_supported_advertised_characters(source, target, 
         assert not missing, f"{path.name}: missing {[f'U+{cp:04X}' for cp in sorted(missing)]}"
 
 
-def test_check_rejects_missing_requested_cmap_entry(tmp_path):
+@pytest.mark.parametrize("complete_source", [False, True], ids=["original-cmap", "complete-cmap"])
+def test_check_rejects_missing_requested_cmap_entry(tmp_path, complete_source):
     """K93: deleting a cmap entry must fail even if all remaining advances match."""
     source, target, family, style = next(page_fonts.faces())
+    requested = set(subset.parse_unicodes(page_fonts.UNICODES))
+    with TTFont(source) as original:
+        if complete_source:
+            # Simulate an upstream face advertising every requested code point.
+            glyph = original.getBestCmap()[0xE9]
+            for table in original["cmap"].tables:
+                if table.isUnicode():
+                    for cp in requested:
+                        table.cmap.setdefault(cp, glyph)
+            assert requested <= original.getBestCmap().keys()
+        # Build the absent-from-source control explicitly, regardless of the face.
+        assert 0x41 in requested and 0x41 in original.getBestCmap()
+        for table in original["cmap"].tables:
+            if table.isUnicode():
+                table.cmap.pop(0x41, None)
+        assert 0x41 not in original.getBestCmap()
+        source = tmp_path / "source.ttf"
+        original.save(source)
     generated = tmp_path / target.name
     page_fonts.build(source, generated, family, style)
     assert page_fonts.check(source, generated) == []
-    with TTFont(source) as original:
-        # Requested code points absent from the source need not be invented.
-        assert set(subset.parse_unicodes(page_fonts.UNICODES)) - original.getBestCmap().keys()
     with TTFont(generated) as font:
+        # The checker must accept a requested code point absent from the source.
+        assert 0x41 not in font.getBestCmap()
         assert 0xE9 in font.getBestCmap()
         for table in font["cmap"].tables:
             if table.isUnicode():
