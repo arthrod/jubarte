@@ -7,7 +7,7 @@
 // 0.24pt grid, and multi-line pitches spread by up to 0.48pt.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { lineBox } from "./line-box.mjs";
+import { lineBox, measureFace } from "./line-box.mjs";
 
 const RULES = {
   auto100: { line: 240, rule: "auto" },
@@ -78,6 +78,122 @@ test("no rule means single spacing, and an exact line may be shorter than its te
 });
 
 test("a family with no twin measures with its class's face", () => {
-  assert.equal(lineBox("Georgia", 11).height, lineBox("Times New Roman", 11).height);
+  assert.equal(
+    lineBox("Georgia", 11).height,
+    lineBox("Times New Roman", 11).height,
+  );
   assert.equal(lineBox(undefined, 11).height, lineBox("Calibri", 11).height);
+});
+
+test("K108: the selected source face supplies baseline and auto/atLeast pitch", () => {
+  // A source face whose normalized hhea metrics differ from the serif fallback.
+  const source = { ascent: 1.1, descent: 0.3, lineGap: 0.2 };
+  const measure = (stack) => {
+    assert.equal(stack, '"Georgia", "Jubarte Page Serif", serif');
+    return source;
+  };
+  const box = lineBox("Georgia", 10, { line: 360, rule: "auto" }, measure);
+  assert.equal(box.ascent, 11);
+  assert.equal(box.descent, 3);
+  assert.equal(box.height, 24);
+  assert.equal(
+    lineBox("Georgia", 10, { line: 200, rule: "atLeast" }, measure).height,
+    16,
+  );
+  assert.equal(
+    lineBox("Georgia", 10, { line: 400, rule: "atLeast" }, measure).height,
+    20,
+  );
+});
+
+test("K109: exact zero is explicit spacing, not omitted spacing", () => {
+  assert.equal(lineBox("Calibri", 11, { line: 0, rule: "exact" }).height, 0);
+  assert.ok(lineBox("Calibri", 11).height > 0);
+  assert.ok(lineBox("Calibri", 11, { rule: "exact" }).height > 0);
+});
+
+// A layout fake, since a DOM without a layout engine reports zero rectangles.
+// Geometry comes from the selected fixture face, never the host's installed fonts.
+function fontDocument(faces) {
+  const elements = [];
+  const mounted = new Set();
+  const rect = (element) => {
+    const [line, text, baseline] = elements.slice(-3);
+    const stack = line.style.font.slice("1000px ".length);
+    const name = stack.split(", ").find((name) => faces[name]);
+    const { ascent, descent, lineGap } = faces[name];
+    if (element === text)
+      return { top: -ascent * 1000, bottom: descent * 1000 };
+    if (element === baseline) return { top: 0 };
+    return { height: (ascent + descent + lineGap) * 1000 };
+  };
+  return {
+    mounted,
+    body: { append: (element) => mounted.add(element) },
+    createElement() {
+      const element = {
+        style: {},
+        append(...children) {
+          this.children = children;
+        },
+        getBoundingClientRect() {
+          return rect(this);
+        },
+        remove() {
+          mounted.delete(this);
+        },
+      };
+      elements.push(element);
+      return element;
+    },
+  };
+}
+
+test("K108: browser measurement follows source selection and later font loads", () => {
+  const faces = {
+    '"Jubarte Page Serif"': { ascent: 0.9, descent: 0.2, lineGap: 0.1 },
+  };
+  const doc = fontDocument(faces);
+  const measure = (stack) => measureFace(stack, doc);
+  assert.equal(lineBox("Georgia", 10, {}, measure).ascent, 9);
+  // The source face becomes available after an earlier fallback measurement.
+  faces['"Georgia"'] = { ascent: 1.1, descent: 0.3, lineGap: 0.2 };
+  const box = lineBox("Georgia", 10, {}, measure);
+  assert.equal(box.ascent, 11);
+  assert.equal(box.descent, 3);
+  assert.equal(box.height, 16);
+  assert.equal(doc.mounted.size, 0, "measurement nodes are removed");
+});
+
+test("unavailable browser layout retains bundled metrics", () => {
+  assert.equal(measureFace("serif", {}), undefined);
+  for (const fixture of [
+    { ascent: 0, descent: 0, lineGap: 0 },
+    { ascent: NaN, descent: 0, lineGap: 0 },
+    { ascent: -1, descent: 2, lineGap: 0 },
+    { ascent: 2, descent: -1, lineGap: 0 },
+  ]) {
+    const doc = fontDocument({ '"Georgia"': fixture });
+    assert.equal(measureFace('"Georgia"', doc), undefined);
+    assert.equal(doc.mounted.size, 0);
+    assert.deepEqual(
+      lineBox("Georgia", 11, {}, (stack) => measureFace(stack, doc)),
+      lineBox("Georgia", 11, {}, () => undefined),
+    );
+  }
+});
+
+test("invalid spacing stays single spaced and zero is special only for exact", () => {
+  for (const line of [NaN, Infinity, -20]) {
+    assert.equal(
+      lineBox("Calibri", 11, { line, rule: "exact" }).height,
+      lineBox("Calibri", 11).height,
+    );
+  }
+  for (const rule of ["auto", "atLeast"]) {
+    assert.equal(
+      lineBox("Calibri", 11, { line: 0, rule }).height,
+      lineBox("Calibri", 11).height,
+    );
+  }
 });
