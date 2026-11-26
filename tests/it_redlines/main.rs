@@ -58,6 +58,7 @@ mod m15_coalesce_revisions;
 mod m161_unit_count;
 mod m16_relationship_ids;
 mod m1709_dangling_story_relationship;
+mod m171_final_mark_pairs;
 mod m17_replace_order;
 mod m18_ppr_first;
 mod m1914_merged_row_widths;
