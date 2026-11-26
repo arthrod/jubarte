@@ -927,6 +927,7 @@ fn compare_documents_impl(
     // parse is a lossless structural round-trip, so `tr` is identical to what
     // M-PAG would have re-parsed.
     let mut styles_arena: Option<(Dom, NodeId, NodeId)> = None;
+    let mut revised_style_numbering = std::collections::HashMap::new();
     for (part, is_styles) in [("word/styles.xml", true), ("word/numbering.xml", false)] {
         match (out.part_string(part), pkg2.part_string(part)) {
             (Some(to_xml), Some(from_xml)) => {
@@ -973,6 +974,9 @@ fn compare_documents_impl(
                     } else {
                         let (num_remap, copied_bullets) =
                             crate::comparer::footnotes::copy_missing_numbering(&mut sd, tr, fr);
+                        if settings.word_platform == WordPlatform::Windows {
+                            revised_style_numbering.clone_from(&num_remap);
+                        }
                         // B's picture bullets draw through B's numbering rels;
                         // give each its own relationships, since the same ids
                         // may already name A's images here.
@@ -1724,7 +1728,7 @@ fn compare_documents_impl(
     // properties are the revised style's own (#170). Mac Word 16's (`word`)
     // keeps the original's, as every pass above wrote them.
     if settings.word_platform == WordPlatform::Windows {
-        adopt_revised_package_defaults(&mut out, &pkg2, &main1);
+        adopt_revised_package_defaults(&mut out, &pkg2, &main1, &revised_style_numbering, settings);
     }
 
     // Word-mode repair: Word synthesizes a default numbering definition when

@@ -17,7 +17,9 @@
 //! document; the original's properties are in the change records.
 
 use jubarte::comparer::{CompareMode, WmlComparerSettings};
-use jubarte::document_comparer::compare_documents_with_settings;
+use jubarte::document_comparer::{
+    accept_revisions, compare_documents_with_settings, reject_revisions,
+};
 use jubarte::namespaces::W;
 use jubarte::settings::SETTINGS_ORDER;
 use jubarte::xmllinq::{Dom, NodeId, XName};
@@ -1142,7 +1144,7 @@ fn png(rgb: [u8; 3]) -> Vec<u8> {
     }
     // One scanline: no filter, then the pixel.
     let scanline = [0, rgb[0], rgb[1], rgb[2]];
-    let zlib = [0x78, 0x01, 0x01, 0, 4, 0xFB, 0xFF]
+    let zlib = [0x78, 0x01, 0x01, 4, 0, 0xFB, 0xFF]
         .into_iter()
         .chain(scanline)
         .chain(adler32(&scanline).to_be_bytes())
@@ -1467,8 +1469,13 @@ fn style(dom: &Dom, root: NodeId, id: &str) -> Option<NodeId> {
 /// The style `id` and each `w:basedOn` ancestor of it the stylesheet
 /// defines, nearest first; at most twelve, and never twice one.
 fn chain(dom: &Dom, root: NodeId, id: &str) -> Vec<NodeId> {
+    chain_from(dom, root, style(dom, root, id))
+}
+
+/// [`chain`] from the style `start` itself.
+fn chain_from(dom: &Dom, root: NodeId, start: Option<NodeId>) -> Vec<NodeId> {
     let mut chain = Vec::new();
-    let mut current = style(dom, root, id);
+    let mut current = start;
     while let Some(s) = current {
         if chain.len() >= 12 || chain.contains(&s) {
             break;
@@ -1485,6 +1492,11 @@ fn chain(dom: &Dom, root: NodeId, id: &str) -> Vec<NodeId> {
 /// else the nearest up its `w:basedOn` chain, else the one `w:docDefaults`
 /// set, else Word's default of 20. Change records are not read.
 fn run_size(dom: &Dom, root: NodeId, id: &str) -> String {
+    run_size_from(dom, root, style(dom, root, id))
+}
+
+/// [`run_size`] of the style `start` itself.
+fn run_size_from(dom: &Dom, root: NodeId, start: Option<NodeId>) -> String {
     let size = |block: Option<NodeId>| {
         block
             .and_then(|b| child(dom, b, "sz"))
@@ -1493,7 +1505,7 @@ fn run_size(dom: &Dom, root: NodeId, id: &str) -> String {
     let doc_default = child(dom, root, "docDefaults")
         .and_then(|d| child(dom, d, "rPrDefault"))
         .and_then(|d| child(dom, d, "rPr"));
-    chain(dom, root, id)
+    chain_from(dom, root, start)
         .into_iter()
         .find_map(|s| size(child(dom, s, "rPr")))
         .or_else(|| size(doc_default))
@@ -1768,4 +1780,331 @@ fn a_base_the_revision_gives_a_style_is_adopted_with_the_doc_defaults() {
         "`word` keeps the original's docDefaults"
     );
     crate::common::validity::assert_word_valid_package(&out);
+}
+
+// C55: adopting a new base must retain the old effective run properties.
+#[test]
+fn c55_based_on_only_change_round_trips() {
+    for size in ["20", "40"] {
+        let sheet = |base: &str| {
+            stylesheet_parts(
+                &defaults(
+                    &run_defaults(Some("22")),
+                    &paragraph_defaults(SINGLE_SPACING),
+                ),
+                "",
+                &format!(
+                    r#"<w:style w:type="paragraph" w:styleId="BaseA"><w:name w:val="BaseA"/><w:rPr><w:sz w:val="{size}"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="BaseB"><w:name w:val="BaseB"/><w:rPr><w:sz w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/><w:basedOn w:val="{base}"/></w:style>"#
+                ),
+            )
+        };
+        let out = redline(
+            &styled(&sheet("BaseA")),
+            &styled(&sheet("BaseB")),
+            CompareMode::WordWindows,
+        );
+        let (dom, root) = parse(&part(&accept_revisions(&out).unwrap(), "word/styles.xml"));
+        assert_eq!(run_size(&dom, root, "Child"), "40");
+        let (dom, root) = parse(&part(&reject_revisions(&out).unwrap(), "word/styles.xml"));
+        assert_eq!(
+            run_size(&dom, root, "Child"),
+            size,
+            "Reject restores the original base's size"
+        );
+        if size == "40" {
+            let (dom, root) = parse(&part(&out, "word/styles.xml"));
+            let s = style(&dom, root, "Child").unwrap();
+            assert!(dom.descendants(s, Some(&W::name("rPrChange"))).is_empty());
+        }
+    }
+}
+
+/// Resolve a concrete numbering id through its abstract definition.
+fn numbering_format(bytes: &[u8], id: &str) -> String {
+    let (dom, root) = parse(&part(bytes, "word/numbering.xml"));
+    let num = dom
+        .elements(root, Some(&W::name("num")))
+        .into_iter()
+        .find(|&n| attr(&dom, n, W::URI, "numId") == id)
+        .unwrap();
+    let abstract_id = val(&dom, child(&dom, num, "abstractNumId"));
+    let abstract_num = dom
+        .elements(root, Some(&W::name("abstractNum")))
+        .into_iter()
+        .find(|&n| attr(&dom, n, W::URI, "abstractNumId") == abstract_id)
+        .unwrap();
+    val(
+        &dom,
+        child(&dom, child(&dom, abstract_num, "lvl").unwrap(), "numFmt"),
+    )
+    .to_string()
+}
+
+#[test]
+fn c53_adopted_style_numbering_uses_the_revised_list_once() {
+    let make = |fmt: &str| {
+        let stylesheet = stylesheet_parts(
+            &defaults(
+                &run_defaults(Some("22")),
+                &paragraph_defaults(SINGLE_SPACING),
+            ),
+            "",
+            r#"<w:style w:type="paragraph" w:styleId="ListCustom"><w:name w:val="ListCustom"/><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr></w:style>"#,
+        );
+        // Force a non-idempotent map: B's 1 becomes 2, then its 2 becomes 3.
+        // Remapping a direct paragraph a second time would select lowerLetter.
+        let extra_abstract = if fmt == "upperRoman" {
+            r#"<w:abstractNum w:abstractNumId="2"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum>"#
+        } else {
+            ""
+        };
+        let extra_num = if fmt == "upperRoman" {
+            r#"<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>"#
+        } else {
+            ""
+        };
+        let numbering = format!(
+            r#"<w:numbering xmlns:w="{W_NS}"><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum>{extra_abstract}<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>{extra_num}</w:numbering>"#
+        );
+        docx::docx_with(
+            r#"<w:p><w:pPr><w:pStyle w:val="ListCustom"/></w:pPr><w:r><w:t>Shared list item</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="ListCustom"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Direct list item</w:t></w:r></w:p>"#,
+            &[
+                Part {
+                    name: "word/styles.xml",
+                    content_type: STYLES,
+                    rel_type: STYLES_REL,
+                    xml: &stylesheet,
+                },
+                Part {
+                    name: "word/numbering.xml",
+                    content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+                    rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering",
+                    xml: &numbering,
+                },
+            ],
+        )
+    };
+    let out = redline(
+        &make("decimal"),
+        &make("upperRoman"),
+        CompareMode::WordWindows,
+    );
+    for (settled, expected) in [
+        (accept_revisions(&out).unwrap(), "upperRoman"),
+        (reject_revisions(&out).unwrap(), "decimal"),
+    ] {
+        let (dom, root) = parse(&part(&settled, "word/styles.xml"));
+        let list = style(&dom, root, "ListCustom").unwrap();
+        let num = child(&dom, child(&dom, list, "pPr").unwrap(), "numPr").unwrap();
+        let id = val(&dom, child(&dom, num, "numId"));
+        assert_eq!(
+            numbering_format(&settled, id),
+            expected,
+            "style-driven list"
+        );
+        let (dom, root) = parse(&part(&settled, "word/document.xml"));
+        for num in dom.descendants(root, Some(&W::name("numId"))) {
+            assert_eq!(
+                numbering_format(&settled, attr(&dom, num, W::URI, "val")),
+                expected,
+                "direct list must not be remapped twice"
+            );
+        }
+    }
+}
+
+#[test]
+fn c44_adopted_theme_refreshes_live_colors_without_recoloring_history() {
+    for has_defaults in [false, true] {
+        let make = |color: &str, bold: &str| {
+            let dd = if has_defaults {
+                defaults(
+                    &run_defaults(Some("22")),
+                    &paragraph_defaults(SINGLE_SPACING),
+                )
+            } else {
+                String::new()
+            };
+            let sheet = stylesheet_parts(
+                &dd,
+                "",
+                &format!(
+                    r#"<w:style w:type="paragraph" w:styleId="Tint"><w:name w:val="Tint"/><w:rPr>{bold}<w:color w:val="{color}" w:themeColor="accent1"/></w:rPr></w:style>"#
+                ),
+            );
+            package(
+                &docx::para("Shared colored text"),
+                &Chrome {
+                    theme: Some((
+                        "word/theme/theme1.xml",
+                        theme("Tint", "Calibri", "Calibri").replace("4F81BD", color),
+                    )),
+                    styles: Some(sheet),
+                    settings: None,
+                },
+            )
+        };
+        let out = redline(
+            &make("FF0000", ""),
+            &make("00FF00", "<w:b/>"),
+            CompareMode::WordWindows,
+        );
+        let (dom, root) = parse(&part(&out, "word/styles.xml"));
+        let rpr = child(&dom, style(&dom, root, "Tint").unwrap(), "rPr").unwrap();
+        assert_eq!(
+            val(&dom, child(&dom, rpr, "color")),
+            "00FF00",
+            "live color uses the adopted theme"
+        );
+        let old = child(&dom, child(&dom, rpr, "rPrChange").unwrap(), "rPr").unwrap();
+        assert_eq!(
+            val(&dom, child(&dom, old, "color")),
+            "FF0000",
+            "historical cache stays original"
+        );
+        let (dom, root) = parse(&part(&accept_revisions(&out).unwrap(), "word/styles.xml"));
+        let rpr = child(&dom, style(&dom, root, "Tint").unwrap(), "rPr").unwrap();
+        assert_eq!(val(&dom, child(&dom, rpr, "color")), "00FF00");
+    }
+}
+
+#[test]
+fn c48_compat_container_without_mode_gets_mode_12() {
+    for extra in ["", "<w:doNotUseHTMLParagraphAutoSpacing/>"] {
+        let original = settings_document("Shared text", &compat(15, ""));
+        for (source, expected) in [
+            (format!("<w:compat>{extra}</w:compat>"), "12"),
+            (compat(14, extra), "14"),
+        ] {
+            let revised = settings_document("Shared text", &source);
+            let out = redline(&original, &revised, CompareMode::WordWindows);
+            let xml = part(&out, "word/settings.xml");
+            assert_eq!(compat_modes(&xml), [expected]);
+            if !extra.is_empty() {
+                assert!(xml.contains("doNotUseHTMLParagraphAutoSpacing"));
+            }
+            let mac = redline(&original, &revised, CompareMode::Word);
+            assert_eq!(compat_modes(&part(&mac, "word/settings.xml")), ["15"]);
+        }
+    }
+}
+
+fn related_document_part(bytes: &[u8], rel_type: &str) -> String {
+    let (dom, root) = parse(&part(bytes, "word/_rels/document.xml.rels"));
+    let rel = dom
+        .elements(root, None)
+        .into_iter()
+        .find(|&r| attr(&dom, r, "", "Type") == rel_type)
+        .unwrap();
+    resolve("word", attr(&dom, rel, "", "Target"))
+}
+
+#[test]
+fn c52_adoption_writes_the_active_output_parts() {
+    let original = docx::docx_with(
+        &docx::para("Shared text"),
+        &[
+            Part {
+                name: "word/layout.xml",
+                content_type: SETTINGS_CT,
+                rel_type: SETTINGS_REL,
+                xml: &settings(r#"<w:defaultTabStop w:val="720"/>"#),
+            },
+            Part {
+                name: "word/formatting.xml",
+                content_type: STYLES,
+                rel_type: STYLES_REL,
+                xml: &styles(Some((22, 160))),
+            },
+        ],
+    );
+    let revised = package(
+        &docx::para("Shared text"),
+        &Chrome {
+            theme: None,
+            styles: Some(styles(Some((36, 0)))),
+            settings: Some(settings(r#"<w:defaultTabStop w:val="360"/>"#)),
+        },
+    );
+    let out = redline(&original, &revised, CompareMode::WordWindows);
+    let (dom, root) = parse(&part(&out, &related_document_part(&out, SETTINGS_REL)));
+    assert_eq!(val(&dom, child(&dom, root, "defaultTabStop")), "360");
+    assert_eq!(
+        doc_defaults(&part(&out, &related_document_part(&out, STYLES_REL))),
+        ("36".into(), "0".into())
+    );
+}
+
+#[test]
+fn c54_direct_run_style_reference_uses_the_output_id() {
+    for revised_id in ["OldChar", "NewChar"] {
+        let make = |id: &str| {
+            styled(&stylesheet_parts(
+                &defaults(
+                    &run_defaults(Some("22")),
+                    &paragraph_defaults(SINGLE_SPACING),
+                ),
+                "",
+                &format!(
+                    r#"<w:style w:type="character" w:styleId="{id}"><w:name w:val="Emphasis Custom"/><w:rPr><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/><w:rPr><w:rStyle w:val="{id}"/></w:rPr></w:style>"#
+                ),
+            ))
+        };
+        let out = redline(
+            &make("OldChar"),
+            &make(revised_id),
+            CompareMode::WordWindows,
+        );
+        let (dom, root) = parse(&part(&out, "word/styles.xml"));
+        let rpr = child(&dom, style(&dom, root, "Child").unwrap(), "rPr").unwrap();
+        let target = val(&dom, child(&dom, rpr, "rStyle"));
+        let target_style =
+            style(&dom, root, target).expect("live rStyle resolves to an output style");
+        assert_eq!(
+            val(&dom, child(&dom, target_style, "name")),
+            "Emphasis Custom"
+        );
+    }
+}
+
+#[test]
+fn c56_theme_picture_fixture_decodes_to_its_pixel() {
+    for rgb in [[255, 0, 0], [0, 255, 0]] {
+        let image = image::load_from_memory(&png(rgb))
+            .expect("valid PNG")
+            .to_rgb8();
+        assert_eq!(image.dimensions(), (1, 1));
+        assert_eq!(image.get_pixel(0, 0).0, rgb);
+    }
+}
+
+#[test]
+fn c55_changed_base_history_uses_the_original_ancestor() {
+    for revised_base_size in ["30", "40"] {
+        let sheet = |base_size: &str, child_base: &str| {
+            stylesheet_parts(
+                &defaults(
+                    &run_defaults(Some("22")),
+                    &paragraph_defaults(SINGLE_SPACING),
+                ),
+                "",
+                &format!(
+                    r#"<w:style w:type="paragraph" w:styleId="BaseA"><w:name w:val="BaseA"/><w:rPr><w:sz w:val="{base_size}"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="BaseB"><w:name w:val="BaseB"/><w:rPr><w:sz w:val="40"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Child"><w:name w:val="Child"/><w:basedOn w:val="{child_base}"/></w:style>"#
+                ),
+            )
+        };
+        let out = redline(
+            &styled(&sheet("24", "BaseA")),
+            &styled(&sheet(revised_base_size, "BaseB")),
+            CompareMode::WordWindows,
+        );
+        let (dom, root) = parse(&part(&accept_revisions(&out).unwrap(), "word/styles.xml"));
+        assert_eq!(run_size(&dom, root, "Child"), "40");
+        let (dom, root) = parse(&part(&reject_revisions(&out).unwrap(), "word/styles.xml"));
+        assert_eq!(
+            run_size(&dom, root, "Child"),
+            "24",
+            "history must not read an already revised ancestor"
+        );
+    }
 }
