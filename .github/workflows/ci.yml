@@ -585,6 +585,28 @@ jobs:
       - run: python3 scripts/test_check_dco.py
       - run: python3 scripts/test_check_pypi_metadata.py
 
+  mcp-ui:
+    name: MCP App view (tests and reproducible bundle)
+    runs-on: ${{ vars.LINUX_RUNNER || 'self-hosted' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The reader's node:test suite needs node >= 18; the self-hosted
+      # runner's system node is far older. There is no pnpm action in this
+      # workflow, so its version comes from the packageManager field via
+      # corepack, which ships with the node this pinned action installs.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - name: Test and build the view
+        working-directory: jubarte-mcp-ui
+        run: pnpm install --frozen-lockfile && pnpm test && pnpm build
+      - name: The committed bundle is reproducible
+        run: git diff --exit-code -- jubarte-python/python/jubarte/ui/document.html
+
   # The npm packages are not tracked: this job builds all eight targets as a
   # release does, and runs everything that reads them.
   wasm:
