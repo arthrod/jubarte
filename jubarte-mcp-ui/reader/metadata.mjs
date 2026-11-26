@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import YAML from 'yaml';
+import {resolvePageGeometry} from './page-geometry.mjs';
 import {fromMarkdown} from 'mdast-util-from-markdown';
 
 /**
@@ -252,6 +253,15 @@ export function parseDirective(raw, options = {}) {
 function parsePage(raw, warnings, path = 'page', inherited = false) {
   const page = {raw: raw ?? null, size: 'Letter', orientation: 'portrait', widthIn: 8.5, heightIn: 11, margins: {top: 1, right: 1, bottom: 1, left: 1}, headerIn: 0.5, footerIn: 0.5, clauses: [], unknown: [], origin: raw == null ? (inherited ? 'source-document' : 'default') : 'header'};
   if (raw == null) return page;
+  if (mapping(raw)) {
+    const geometry=resolvePageGeometry({metadata:{page:{raw}}});
+    for(const message of geometry.warnings)warn(warnings,'unsupported-page-value',message,undefined,raw);
+    page.widthIn=geometry.page.widthPx/96;page.heightIn=geometry.page.heightPx/96;
+    page.orientation=geometry.label.endsWith('landscape')?'landscape':'portrait';
+    page.size=geometry.label.replace(/ (portrait|landscape)$/, '');
+    for(const side of ['top','right','bottom','left'])page.margins[side]=geometry.margins[side+'Px']/96;
+    return page;
+  }
   if (typeof raw !== 'string') {
     page.unknown.push(raw);
     warn(warnings, 'unsupported-page-value', `${path} must be a Jubarte page legend string; its original value is preserved.`, undefined, raw);

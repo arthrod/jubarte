@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-import { composeLayout } from "@premirror/composer";
+import { composeLayout, placedRunXAt } from "@premirror/composer";
 import type {
   ComposeDiagnostics,
   ComposeMetrics,
@@ -266,7 +266,7 @@ export function PremirrorPageViewport(props: PremirrorPageViewportProps): ReactE
   );
 }
 
-function collectRectsForPmRange(
+export function collectRectsForPmRange(
   layout: LayoutOutput,
   from: number,
   to: number,
@@ -274,53 +274,29 @@ function collectRectsForPmRange(
 ): Rect[] {
   const rects: Rect[] = [];
   const geometry = getPageLayoutGeometry(layout, pageLayoutMode);
-
-  layout.pages.forEach((page, pageIdx) => {
-    const pagePlacement = geometry.pagePlacements[pageIdx] ?? { left: 0, top: 0 };
-    for (const frame of page.frames) {
-      for (const frag of frame.fragments) {
-        for (const line of frag.lines) {
-          const lineFrom = line.pmRange.from;
-          const lineTo = line.pmRange.to;
-
-          if (from === to) {
-            if (from < lineFrom || from > lineTo) continue;
-            const runs = line.runs;
-            const x0 =
-              runs.length > 0
-                ? pagePlacement.left + frame.bounds.x + Math.min(...runs.map((r) => r.x))
-                : pagePlacement.left + frame.bounds.x;
-            rects.push({
-              x: x0,
-              y: pagePlacement.top + frame.bounds.y + line.y,
-              width: 2,
-              height: line.height,
-            });
-            continue;
-          }
-
-          const lo = Math.max(from, lineFrom);
-          const hi = Math.min(to, lineTo);
-          if (lo >= hi) continue;
-
-          const runs = line.runs;
-          let x0 = pagePlacement.left + frame.bounds.x;
-          let x1 = pagePlacement.left + frame.bounds.x + frame.bounds.width;
-          if (runs.length > 0) {
-            x0 = pagePlacement.left + frame.bounds.x + Math.min(...runs.map((r) => r.x));
-            x1 = pagePlacement.left + frame.bounds.x + Math.max(...runs.map((r) => r.x + r.width));
-          }
-          rects.push({
-            x: x0,
-            y: pagePlacement.top + frame.bounds.y + line.y,
-            width: Math.max(0, x1 - x0),
-            height: line.height,
-          });
-        }
-      }
+  const lines=layout.pages.flatMap((page,pageIdx)=>page.frames.flatMap(frame=>frame.fragments.flatMap(frag=>frag.lines.map(line=>({line,frame,placement:geometry.pagePlacements[pageIdx]??{left:0,top:0}})))));
+  const xAt=placedRunXAt;
+  if(from===to){
+    // Downstream affinity at shared soft-wrap boundaries; document end uses
+    // the last line ending there. Never return two carets for one selection.
+    const target=lines.find(({line})=>line.pmRange.from<=from&&from<line.pmRange.to)
+      ?? [...lines].reverse().find(({line})=>line.pmRange.to===from);
+    if(!target)return [];
+    const {line,frame,placement}=target;
+    const run=line.runs.find(r=>r.pmRange.from<=from&&from<r.pmRange.to)??line.runs.at(-1);
+    return [{x:placement.left+frame.bounds.x+(run?xAt(run,from):0),y:placement.top+frame.bounds.y+line.y,width:2,height:line.height}];
+  }
+  for(const {line,frame,placement} of lines){
+    for(const run of line.runs){
+      const lo=Math.max(from,run.pmRange.from),hi=Math.min(to,run.pmRange.to);
+      if(lo>=hi)continue;
+      const x=xAt(run,lo),end=xAt(run,hi);
+      const rect={x:placement.left+frame.bounds.x+x,y:placement.top+frame.bounds.y+line.y,width:Math.max(0,end-x),height:line.height};
+      const previous=rects.at(-1);
+      if(previous&&previous.y===rect.y&&previous.height===rect.height&&Math.abs(previous.x+previous.width-rect.x)<0.001)previous.width+=rect.width;
+      else rects.push(rect);
     }
-  });
-
+  }
   return rects;
 }
 

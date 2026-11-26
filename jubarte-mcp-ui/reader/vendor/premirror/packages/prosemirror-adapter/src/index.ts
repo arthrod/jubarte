@@ -192,6 +192,9 @@ function collectRunsForBlock(
       marks = toResolvedMarkSet(child.marks);
       runFrom = pos;
       flush(endPos);
+    } else {
+      flush(pos);
+      runFrom=pos+child.nodeSize;
     }
   });
 
@@ -272,6 +275,8 @@ function walkListItem(
       walkBlockquote(child, childPos, blocks, typography, { listFlattened: true });
     } else if (child.type.name === "list_item") {
       walkListItem(child, childPos, blocks, typography, ctx);
+    } else {
+      throw new Error(`Unsupported block: ${child.type.name}`);
     }
   });
 }
@@ -287,6 +292,8 @@ function walkList(
     const childPos = pos + 1 + offset;
     if (child.type.name === "list_item") {
       walkListItem(child, childPos, blocks, typography, ctx);
+    } else {
+      throw new Error(`Unsupported block: ${child.type.name}`);
     }
   });
 }
@@ -317,6 +324,8 @@ function walkBlockquote(
         ordered: child.type.name === "ordered_list",
         inBlockquote: true,
       });
+    } else {
+      throw new Error(`Unsupported block: ${child.type.name}`);
     }
   });
 }
@@ -338,6 +347,8 @@ function walkTopLevel(
       depth: 1,
       ordered: node.type.name === "ordered_list",
     });
+  } else {
+    throw new Error(`Unsupported block: ${node.type.name}`);
   }
 }
 
@@ -410,11 +421,15 @@ function insertPageBreakImpl(
   const paragraph = state.schema.nodes.paragraph;
   if (!paragraph) return false;
   const attrs = paragraphManualBreakAttrs(state.schema);
-  const { $from } = state.selection;
-  const depth = $from.depth > 0 ? $from.depth : 1;
-  const insertPos = $from.before(depth);
-  const node = attrs ? paragraph.create(attrs) : paragraph.create();
-  const tr = state.tr.insert(insertPos, node);
+  if (!attrs || !state.selection.$from.parent.isTextblock || !state.selection.$from.sameParent(state.selection.$to)) return false;
+  const tr=state.tr.deleteSelection();
+  const pos=tr.selection.from;
+  try {
+    tr.split(pos,1,[{type:paragraph,attrs:{...tr.selection.$from.parent.attrs,...attrs}}]);
+  } catch (error) {
+    if (error instanceof RangeError) return false;
+    throw error;
+  }
   if (dispatch) dispatch(tr.scrollIntoView());
   return true;
 }

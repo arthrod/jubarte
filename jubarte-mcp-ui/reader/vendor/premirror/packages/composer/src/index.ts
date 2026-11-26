@@ -25,7 +25,12 @@ import type {
 import { DEFAULT_LAYOUT_POLICIES } from "@premirror/core";
 
 const UNBOUNDED_WIDTH = 1_000_000_000;
+// FIFO bounds cap retained candidate strings across document lifetimes.
 const pretextWidthCache = new Map<string, number>();
+let cachedCodeUnits=0;
+const CACHE_ENTRIES=1024, CACHE_CODE_UNITS=1048576;
+/** Measurement cache diagnostics; sizes exclude the measurement backend itself. */
+export function measurementCacheUsage() { return {entries:pretextWidthCache.size,codeUnits:[...pretextWidthCache.keys()].reduce((n,key)=>n+key.length,0)}; }
 
 function widthByPretext(text: string, font: string): number | null {
   const key = `${font}\n${text}`;
@@ -38,11 +43,29 @@ function widthByPretext(text: string, font: string): number | null {
       return null;
     }
     const width = Math.max(0, line?.width ?? 0);
-    pretextWidthCache.set(key, width);
+    if(key.length<=CACHE_CODE_UNITS){
+      while(pretextWidthCache.size>=CACHE_ENTRIES||cachedCodeUnits+key.length>CACHE_CODE_UNITS){
+        const oldest=pretextWidthCache.keys().next().value!;
+        cachedCodeUnits-=oldest.length;pretextWidthCache.delete(oldest);
+      }
+      pretextWidthCache.set(key,width);cachedCodeUnits+=key.length;
+    }
     return width;
   } catch {
     return null;
   }
+}
+
+/** Measure a position within a placed run using the same font backend as layout. */
+export function placedRunXAt(run: PlacedRun, pos: number): number {
+  const fraction=Math.max(0,Math.min(1,(pos-run.pmRange.from)/Math.max(1,run.pmRange.to-run.pmRange.from)));
+  if(fraction===0)return run.x;
+  if(fraction===1)return run.x+run.width;
+  const offset=Math.round(fraction*run.text.length);
+  const whole=widthByPretext(run.text,run.font);
+  const prefix=widthByPretext(run.text.slice(0,offset),run.font);
+  const advance=whole!==null&&whole>0&&prefix!==null?prefix/whole:fraction;
+  return run.x+run.width*Math.max(0,Math.min(1,advance));
 }
 
 function nowMs(): number {
@@ -198,6 +221,7 @@ function contentFrameRect(page: LayoutInput["page"], margins: LayoutInput["margi
 // -----------------------------------------------------------------------------
 
 type LineDraft = {
+  hardBreak?: boolean;
   runs: PlacedRun[];
   pmFrom: number;
   pmTo: number;
@@ -317,7 +341,7 @@ function fixWordBoundarySplits(
   for (let i = 0; i < lines.length - 1; i++) {
     const current = lines[i]!;
     const next = lines[i + 1]!;
-    if (current.runs.length === 0 || next.runs.length === 0) continue;
+    if (current.hardBreak || current.runs.length === 0 || next.runs.length === 0) continue;
 
     const currentText = lineText(current);
     const nextText = lineText(next);
@@ -350,25 +374,28 @@ function fixWordBoundarySplits(
   }
 }
 
-function breakBlockIntoLineDrafts(
+export function breakBlockIntoLineDrafts(
   block: BlockSnapshot,
   snapshot: MeasuredDocumentSnapshot,
-  contentWidth: number,
+  contentWidth: number | ((lineIndex: number) => number),
 ): LineDraft[] {
   const lines: LineDraft[] = [];
   const measuredRuns = snapshot.measuredRuns;
+  const availableWidth=()=>typeof contentWidth==="function"?contentWidth(lines.length):contentWidth;
 
   let currentParts: PlacedRun[] = [];
   let lineWidthUsed = 0;
   let linePmFrom = Number.POSITIVE_INFINITY;
   let linePmTo = 0;
 
-  const flushCurrentLine = () => {
-    if (currentParts.length === 0) return;
+  let endedWithBreak=false, blankAnchor=block.pmRange.from;
+  const flushCurrentLine = (hardBreak=false, anchor=blankAnchor) => {
+    if (currentParts.length === 0 && !hardBreak) return;
     lines.push({
       runs: currentParts,
-      pmFrom: linePmFrom,
-      pmTo: linePmTo,
+      pmFrom: currentParts.length?linePmFrom:anchor,
+      pmTo: currentParts.length?linePmTo:anchor,
+      hardBreak,
     });
     currentParts = [];
     lineWidthUsed = 0;
@@ -377,6 +404,7 @@ function breakBlockIntoLineDrafts(
   };
 
   const appendToLine = (pr: PlacedRun, pmFrom: number, pmTo: number) => {
+    endedWithBreak=false;
     currentParts.push(pr);
     lineWidthUsed += pr.width;
     linePmFrom = Math.min(linePmFrom, pmFrom);
@@ -385,8 +413,9 @@ function breakBlockIntoLineDrafts(
 
   for (const run of block.runs) {
     const pieces = run.text.split("\n");
+    let pieceOffset=0;
     for (let pi = 0; pi < pieces.length; pi++) {
-      if (pi > 0) flushCurrentLine();
+      if (pi > 0) {pieceOffset+=(pieces[pi-1]?.length??0)+1;flushCurrentLine(true,pmPosAtRunOffset(run,pieceOffset-1,pieceOffset-1).from);endedWithBreak=true;blankAnchor=pmPosAtRunOffset(run,pieceOffset,pieceOffset).from;}
       const piece = pieces[pi] ?? "";
       // Jubarte fork: fit complete graphemes, not UTF-16 units or partial emoji.
       const graphemeEnds = new Map<number, number>();
@@ -398,14 +427,16 @@ function breakBlockIntoLineDrafts(
         let at = 0;
         for (const character of piece) { graphemeEnds.set(at, at + character.length); at += character.length; }
       }
+      const boundaries=new Set([0,...graphemeEnds.values()]);
       const nextBoundary = (at: number): number => graphemeEnds.get(at) ?? piece.length;
 
       if (run.atomic) {
         if (piece.length === 0) continue;
         const placed: PlacedRun[] = [];
-        const width = pushPlacedSegment(run, measuredRuns, piece, 0, piece.length, 0, placed);
+        const width = pushPlacedSegment(run, measuredRuns, piece, pieceOffset, pieceOffset+piece.length, 0, placed);
         const pr = placed[0]!;
-        if (lineWidthUsed > 0 && lineWidthUsed + width > contentWidth) flushCurrentLine();
+        if (lineWidthUsed > 0 && lineWidthUsed + width > availableWidth()) flushCurrentLine();
+        pr.x=lineWidthUsed;
         appendToLine(pr, pr.pmRange.from, pr.pmRange.to);
         continue;
       }
@@ -418,7 +449,7 @@ function breakBlockIntoLineDrafts(
           const mid = nextBoundary(best);
           const sub = piece.slice(offset, mid);
           const w = runWidthPx({ ...run, text: sub }, measuredRuns);
-          if (lineWidthUsed + w > contentWidth) break;
+          if (lineWidthUsed + w > availableWidth()) break;
           best = mid;
         }
         const bestBeforeWhitespaceAdjust = best;
@@ -427,7 +458,7 @@ function breakBlockIntoLineDrafts(
         if (best > offset && best < piece.length) {
           for (let i = best - 1; i > offset; i--) {
             const ch = piece[i];
-            if (ch === " " || ch === "\t") {
+            if ((ch === " " || ch === "\t") && boundaries.has(i+1)) {
               // Include the whitespace with the previous line so the next line
               // doesn't start with an undecorated/unstyled position.
               best = i + 1;
@@ -446,7 +477,7 @@ function breakBlockIntoLineDrafts(
             const lastSpace = Math.max(candidate.lastIndexOf(" "), candidate.lastIndexOf("\t"));
             if (lastSpace >= 0) {
               const backtracked = offset + lastSpace + 1;
-              if (backtracked > offset) {
+              if (backtracked > offset && boundaries.has(backtracked)) {
                 best = backtracked;
               }
             }
@@ -457,11 +488,11 @@ function breakBlockIntoLineDrafts(
           const nextOffset = nextBoundary(offset);
           const sub = piece.slice(offset, nextOffset);
           const w = runWidthPx({ ...run, text: sub }, measuredRuns);
-          if (lineWidthUsed > 0 && lineWidthUsed + w > contentWidth) {
+          if (lineWidthUsed > 0 && lineWidthUsed + w > availableWidth()) {
             flushCurrentLine();
           }
           const placed: PlacedRun[] = [];
-          pushPlacedSegment(run, measuredRuns, sub, offset, nextOffset, lineWidthUsed, placed);
+          pushPlacedSegment(run, measuredRuns, sub, pieceOffset+offset, pieceOffset+nextOffset, lineWidthUsed, placed);
           const pr = placed[0]!;
           appendToLine(pr, pr.pmRange.from, pr.pmRange.to);
           offset = nextOffset;
@@ -496,7 +527,7 @@ function breakBlockIntoLineDrafts(
           const sub = candidate;
           const placed: PlacedRun[] = [];
           const x = lineWidthUsed;
-          pushPlacedSegment(run, measuredRuns, sub, offset, best, x, placed);
+          pushPlacedSegment(run, measuredRuns, sub, pieceOffset+offset, pieceOffset+best, x, placed);
           const pr = placed[0]!;
           appendToLine(pr, pr.pmRange.from, pr.pmRange.to);
           offset = best;
@@ -516,7 +547,7 @@ function breakBlockIntoLineDrafts(
       pmTo: anchor,
     });
   }
-  flushCurrentLine();
+  flushCurrentLine(endedWithBreak,blankAnchor);
   fixWordBoundarySplits(lines, measuredRuns);
   return lines;
 }
@@ -702,11 +733,27 @@ export function composeLayout(
       }
     }
 
-    const drafts = breakBlockIntoLineDrafts(block, snapshot, contentWidthForBlockStart(currentY));
+    let remainingBlock=block;
+    const widthAtLine=(lineIndex:number)=>{
+      const firstCapacity=Math.max(0,Math.floor((frame.height-currentY)/lineHeight));
+      const fullCapacity=Math.max(1,Math.floor(frame.height/lineHeight));
+      const y=lineIndex<firstCapacity?currentY+lineIndex*lineHeight:((lineIndex-firstCapacity)%fullCapacity)*lineHeight;
+      return contentWidthForBlockStart(y);
+    };
+    let drafts = breakBlockIntoLineDrafts(remainingBlock, snapshot, widthAtLine);
     if (drafts.length === 0) continue;
 
     let lineCursor = 0;
     let fragmentIndex = 0;
+    const rebuildDrafts=()=>{
+      if(!obstacles?.length)return;
+      const from=drafts[lineCursor]!.pmFrom;
+      remainingBlock={...block,runs:block.runs.filter(r=>r.pmRange.to>from).map(r=>{
+        const offset=Math.max(0,Math.round((from-r.pmRange.from)*r.text.length/Math.max(1,r.pmRange.to-r.pmRange.from)));
+        return {...r,text:r.text.slice(offset),pmRange:{from:Math.max(from,r.pmRange.from),to:r.pmRange.to}};
+      })};
+      drafts=breakBlockIntoLineDrafts(remainingBlock,snapshot,widthAtLine);lineCursor=0;
+    };
 
     while (lineCursor < drafts.length) {
       const remaining = drafts.length - lineCursor;
@@ -721,14 +768,14 @@ export function composeLayout(
       let useFit = fit;
       let breakReasonForSplit: BreakReason | undefined = reason;
       if (useFit === 0) {
-        if (maxLines > 0) {
-          // Never move a whole paragraph fragment to the next page when at
-          // least one line can fit on this page. Split by line instead.
+        if (currentY > 0) {
+          flushPage(reason ?? "frame_overflow");
+          rebuildDrafts();
+          continue;
+        } else if (maxLines > 0) {
+          // A fresh page too small for the policy must still make progress.
           useFit = Math.min(remaining, maxLines);
           breakReasonForSplit = "frame_overflow";
-        } else if (currentY > 0) {
-          flushPage(reason ?? "frame_overflow");
-          continue;
         } else {
           useFit = 1;
           breakReasonForSplit = "frame_overflow";
@@ -782,6 +829,7 @@ export function composeLayout(
 
       if (lineCursor < drafts.length) {
         flushPage();
+        rebuildDrafts();
       }
     }
   }

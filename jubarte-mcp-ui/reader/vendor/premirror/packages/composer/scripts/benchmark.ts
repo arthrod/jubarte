@@ -9,6 +9,8 @@ import {
   type MeasuredDocumentSnapshot,
 } from "@premirror/core";
 
+import {durationStatistics} from "./statistics";
+
 function nowMs(): number {
   const perf = (globalThis as { performance?: { now(): number } }).performance;
   return perf && typeof perf.now === "function" ? perf.now() : Date.now();
@@ -70,9 +72,7 @@ for (let i = 0; i < iterations; i++) {
   durations.push(nowMs() - t0);
 }
 
-const sorted = [...durations].sort((a, b) => a - b);
-const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+const {median,p95}=durationStatistics(durations);
 
 console.log("Premirror compose benchmark");
 console.log(`iterations: ${iterations}`);

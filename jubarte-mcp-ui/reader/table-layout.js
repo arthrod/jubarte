@@ -80,10 +80,11 @@ export function composeWithTables(snapshot,runtime,input){
  }
  for(let bi=0;bi<snapshot.blocks.length;bi++){const block=snapshot.blocks[bi];ensurePage();if(block.attrs?.manualPageBreakBefore&&y>0){const previous=page.frames[0].fragments.at(-1);if(previous)previous.breakReason='manual_page_break';newPage();}
   if(block.type!=='table'){const lines=composeLines([block],width);let cursor=0,fragmentIndex=0;const next=snapshot.blocks[bi+1];if(block.attrs?.keepWithNext&&input.policies.keepWithNextEnabled&&next){const need=lines.length*lh+(next.type==='table'?(grids.get(next.id).rowHeights[0]||0):composeLines([next],width).length*lh);if(need<=height&&y>0&&notes.bodyLimit-y<need)newPage();}
-   while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow&&fit-(widow-(remaining-fit))>=orphan)fit-=widow-(remaining-fit);}
+   while(cursor<lines.length){let fit=Math.floor((notes.bodyLimit-y+0.001)/lh),remaining=lines.length-cursor;if(!fit){newPage();continue;}const orphan=input.policies.orphanLinesMin||1,widow=input.policies.widowLinesMin||1;if(remaining>fit){if(fit<orphan&&y>0){newPage();continue;}if(remaining-fit<widow){const reduced=remaining-widow;if(reduced>=orphan)fit=reduced;else if(y>0){newPage();continue;}}}
     const checkpoint=notes.checkpoint();let accepted=0;while(accepted<Math.min(fit,remaining)&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;
     if(!accepted){notes.restore(checkpoint);newPage();continue;}
     if(accepted<remaining&&accepted<orphan&&y>0){notes.restore(checkpoint);newPage();continue;}
+    if(remaining>accepted&&remaining-accepted<widow&&remaining-widow<orphan&&y>0){notes.restore(checkpoint);newPage();continue;}
     if(remaining>accepted&&remaining-accepted<widow&&accepted-(widow-(remaining-accepted))>=orphan){const reduced=accepted-(widow-(remaining-accepted));notes.restore(checkpoint);accepted=0;while(accepted<reduced&&notes.accept([lines[cursor+accepted]],y+(accepted+1)*lh,y+accepted*lh))accepted++;}
     const chunk=lines.slice(cursor,cursor+accepted).map((l,i)=>({...l,y:y+i*lh}));addFragment(block.id,chunk,{fragmentIndex:fragmentIndex++,...(cursor+accepted<lines.length?{breakReason:'frame_overflow'}:{})});cursor+=chunk.length;y+=chunk.length*lh;if(cursor<lines.length)newPage();}
    continue;}
