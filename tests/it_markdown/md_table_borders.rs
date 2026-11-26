@@ -1020,6 +1020,87 @@ fn review128_spacing_free_style_cycles_terminate() {
     );
 }
 
+/// Read custom table styles and spacing, checking every XML attribute.
+/// TableNormal is the built-in base style, independent of the input legend.
+fn review128_table_style_map(styles: &str) -> std::collections::BTreeMap<String, String> {
+    let mut result = std::collections::BTreeMap::new();
+    let mut current = None;
+    let mut reader = quick_xml::Reader::from_str(styles);
+    loop {
+        match reader.read_event().expect("well-formed styles XML") {
+            quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
+                let attrs: std::collections::BTreeMap<_, _> = e
+                    .attributes()
+                    .map(|attr| {
+                        let attr = attr.expect("unique, well-formed XML attribute");
+                        (
+                            attr.key.as_ref().to_string(),
+                            attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                                .unwrap()
+                                .into_owned(),
+                        )
+                    })
+                    .collect();
+                if e.name().as_ref() == "w:style" {
+                    current = (attrs.get("w:type").map(String::as_str) == Some("table"))
+                        .then(|| attrs["w:styleId"].clone());
+                    if let Some(id) = &current {
+                        assert!(result.insert(id.clone(), String::new()).is_none());
+                    }
+                } else if e.name().as_ref() == "w:spacing"
+                    && let Some(id) = &current
+                {
+                    *result.get_mut(id).unwrap() = attrs
+                        .iter()
+                        .map(|(key, value)| format!(" {key}=\"{value}\""))
+                        .collect();
+                }
+            }
+            quick_xml::events::Event::End(e) if e.name().as_ref() == "w:style" => {
+                current = None;
+            }
+            quick_xml::events::Event::Eof => break,
+            _ => {}
+        }
+    }
+    result.remove("TableNormal");
+    result
+}
+
+#[test]
+fn review128_rejected_spacing_keeps_table_legend_entries() {
+    for (key, legend, body, expected) in [
+        (
+            "tables",
+            "Custom, cell paragraphs after 0pt after 6pt, Other, cell paragraphs after 0pt",
+            "<!-- t0 1x1, style Custom -->\n| A |\n|---|\n\n<!-- t1 1x1, style Other -->\n| B |\n|---|\n",
+            vec![("Custom", ""), ("Other", " w:after=\"0\"")],
+        ),
+        (
+            "table",
+            "Custom, cell paragraphs after 0pt after 6pt",
+            "| A |\n|---|\n",
+            vec![("Custom", "")],
+        ),
+    ] {
+        let markdown = format!("---\nview: tracked\nstyles:\n  {key}: {legend}\n---\n\n{body}");
+        let bytes = markdown_to_docx(&markdown, &DocxOptions::default())
+            .unwrap()
+            .docx;
+        let styles = review128_table_style_map(&part(&bytes, "word/styles.xml"));
+        assert!(styles.keys().all(|id| !id.starts_with("cell paragraphs")));
+        assert_eq!(
+            styles,
+            expected
+                .into_iter()
+                .map(|(id, spacing)| (id.to_string(), spacing.to_string()))
+                .collect(),
+            "{key}: {legend}"
+        );
+        review128_table_style_map(&part(&bytes, "word/document.xml"));
+    }
+}
+
 #[test]
 fn review128_duplicate_spacing_attributes_are_not_serialized() {
     for clause in [
@@ -1036,23 +1117,15 @@ fn review128_duplicate_spacing_attributes_are_not_serialized() {
             .expect("view writes")
             .docx;
         let styles = part(&bytes, "word/styles.xml");
-        let mut reader = quick_xml::Reader::from_str(&styles);
-        loop {
-            match reader.read_event().expect("well-formed styles XML") {
-                quick_xml::events::Event::Start(e) | quick_xml::events::Event::Empty(e) => {
-                    for attr in e.attributes() {
-                        assert!(attr.is_ok(), "duplicate attribute for {clause}: {attr:?}");
-                    }
-                }
-                quick_xml::events::Event::Eof => break,
-                _ => {}
-            }
-        }
-        if clause == "after 6pt after 1.5 lines" {
-            assert!(
-                styles.contains(r#"w:after="120" w:afterLines="150""#),
-                "distinct attributes remain valid: {styles}"
-            );
-        }
+        let expected = if clause == "after 6pt after 1.5 lines" {
+            " w:after=\"120\" w:afterLines=\"150\""
+        } else {
+            ""
+        };
+        assert_eq!(
+            review128_table_style_map(&styles),
+            std::collections::BTreeMap::from([("Custom".to_string(), expected.to_string())]),
+            "{clause}"
+        );
     }
 }

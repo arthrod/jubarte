@@ -225,3 +225,11 @@ test('K131 plain tables and neutral directives resolve identical default cell sp
   assert.deepEqual(custom, spacings('<!-- t0 2x2 -->\n', '  table: Ledger, cell paragraphs after 6pt\n'));
   for (const spacing of custom) assert.equal(spacing.afterPt, 6);
 });
+
+
+test('K126 border space +5pt is accepted like Rust u32 parsing', () => {
+  const styles = parseTableLegend('A, borders top single space +5pt, cell paragraphs after 6pt, B, cell paragraphs after 0pt');
+  assert.deepEqual(Object.keys(styles), ['A', 'B']);
+  assert.deepEqual(styles.A.cellSpacing, {afterPt: 6});
+  assert.deepEqual(styles.B.cellSpacing, {afterPt: 0});
+});

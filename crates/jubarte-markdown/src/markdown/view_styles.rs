@@ -714,10 +714,12 @@ fn table_style_entry(value: &str) -> Option<(TableStyleEntry, &str)> {
         {
             name = Some(named);
         } else if cells.is_none()
-            && let Some(attrs) = clause
-                .strip_prefix("cell paragraphs ")
-                .and_then(cell_spacing_attrs)
+            && let Some(words) = clause.strip_prefix("cell paragraphs ")
         {
+            let Some(attrs) = cell_spacing_attrs(words) else {
+                // A rejected spacing clause is not the next style's id.
+                return Some(((id, (border, name, cells)), next));
+            };
             cells = Some(attrs);
         } else if clause != "borders vary" {
             return Some(((id, (border, name, cells)), rest));
@@ -2319,6 +2321,34 @@ mod branch_tests {
         ] {
             assert_eq!(cell_spacing_attrs(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn review128_rejected_spacing_keeps_parsed_table_legend_entries() {
+        let yaml = "styles:\n  tables: Custom, cell paragraphs after 0pt after 6pt, Other, cell paragraphs after 0pt\n";
+        assert_eq!(
+            table_legend(yaml),
+            std::collections::BTreeMap::from([
+                ("Custom".to_string(), (None, None, None)),
+                (
+                    "Other".to_string(),
+                    (None, None, Some(" w:after=\"0\"".to_string()))
+                ),
+            ])
+        );
+        assert_eq!(
+            table_style("styles:\n  table: Custom, cell paragraphs after 0pt after 6pt\n"),
+            Some(("Custom".to_string(), (None, None, None)))
+        );
+    }
+
+    #[test]
+    fn review128_border_space_accepts_leading_plus() {
+        assert_eq!("+5".parse::<u32>(), Ok(5));
+        assert_eq!(
+            border_sides("borders top single space +5pt").unwrap()[0].space,
+            Some(5)
+        );
     }
 
     #[test]
