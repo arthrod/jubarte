@@ -583,6 +583,63 @@ pub struct BorderSide {
 pub(crate) const TABLE_BORDER_SIDES: [&str; 6] =
     ["top", "left", "bottom", "right", "insideH", "insideV"];
 
+/// Eighths of a point as the legend prints them. `format!("{pt:.2}")`
+/// rounds an exact half to even: `1/8` is `0.12pt`, `3/8` `0.38pt`,
+/// `5/8` `0.62pt`, `7/8` `0.88pt`. Trailing zeroes are dropped. The
+/// writer, the shared fixture and the differential corpus all use this
+/// one spelling, so a reader cannot disagree with the engine's own.
+pub(crate) fn border_points(eighths: f64) -> String {
+    let pt = format!("{:.2}", eighths / 8.0);
+    format!("{}pt", pt.trim_end_matches('0').trim_end_matches('.'))
+}
+
+/// One canonical `borders …` clause for a parsed table border, used by
+/// the differential corpus's typed expected values.
+#[cfg(test)]
+pub(crate) fn border_clause(borders: &TableBorders) -> String {
+    match borders {
+        TableBorders::All(eighths) => format!("all borders {}", border_points(*eighths as f64)),
+        TableBorders::Sides(sides) => format!(
+            "borders {}",
+            sides
+                .iter()
+                .map(|s| {
+                    border_side_clause(
+                        &s.side,
+                        &s.val,
+                        s.size.map(|size| size as f64),
+                        s.color.as_deref(),
+                        s.space,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
+/// One side in the same canonical spelling, shared with the view writer
+/// (`from_docx/header.rs`).
+pub(crate) fn border_side_clause(
+    side: &str,
+    val: &str,
+    size: Option<f64>,
+    color: Option<&str>,
+    space: Option<u32>,
+) -> String {
+    let mut out = format!("{side} {val}");
+    if let Some(eighths) = size {
+        let _ = write!(out, " {}", border_points(eighths));
+    }
+    if let Some(color) = color {
+        let _ = write!(out, " #{color}");
+    }
+    if let Some(space) = space {
+        let _ = write!(out, " space {space}pt");
+    }
+    out
+}
+
 /// A `borders …` clause's sides (`borders bottom double 0.75pt`): a side
 /// name, its value, then a size in points, a `#RRGGBB` colour and a
 /// `space Npt`, each optional. A side the grammar does not know, or one
@@ -2252,6 +2309,16 @@ mod branch_tests {
     }
 
     #[test]
+    fn border_points_rounds_exact_halves_to_even() {
+        assert_eq!(border_points(0.0), "0pt");
+        assert_eq!(border_points(1.0), "0.12pt");
+        assert_eq!(border_points(3.0), "0.38pt");
+        assert_eq!(border_points(5.0), "0.62pt");
+        assert_eq!(border_points(7.0), "0.88pt");
+        assert_eq!(border_points(8.0), "1pt");
+    }
+
+    #[test]
     fn legend_values_refuse_what_word_cannot_hold() {
         assert_eq!(points("2000pt", 20.0), None);
         assert_eq!(points("-1pt", 20.0), None);
@@ -2419,49 +2486,6 @@ mod branch_tests {
     /// two parsers cannot drift on malformed, duplicated, or repeated clauses.
     #[test]
     fn r2_f3_shared_table_legend_cases() {
-        fn border_clause(b: &TableBorders) -> String {
-            match b {
-                TableBorders::All(eighths) => {
-                    let pt = *eighths as f64 / 8.0;
-                    let s = format!("{pt:.2}");
-                    format!(
-                        "all borders {}pt",
-                        s.trim_end_matches('0').trim_end_matches('.')
-                    )
-                }
-                TableBorders::Sides(sides) => {
-                    let parts: Vec<String> = sides
-                        .iter()
-                        .map(|s| {
-                            let mut out = format!("{} {}", s.side, s.val);
-                            if let Some(sz) = s.size {
-                                let pt = sz as f64 / 8.0;
-                                let p = format!("{pt:.2}");
-                                let _ = std::fmt::Write::write_fmt(
-                                    &mut out,
-                                    format_args!(
-                                        " {}pt",
-                                        p.trim_end_matches('0').trim_end_matches('.')
-                                    ),
-                                );
-                            }
-                            if let Some(color) = &s.color {
-                                let _ =
-                                    std::fmt::Write::write_fmt(&mut out, format_args!(" #{color}"));
-                            }
-                            if let Some(space) = s.space {
-                                let _ = std::fmt::Write::write_fmt(
-                                    &mut out,
-                                    format_args!(" space {space}pt"),
-                                );
-                            }
-                            out
-                        })
-                        .collect();
-                    format!("borders {}", parts.join(" "))
-                }
-            }
-        }
         let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
             "../../../../tests/fixtures/table_legend_cases.json"
         ))
@@ -2517,49 +2541,11 @@ mod branch_tests {
         fn pick<'a>(state: &mut u64, items: &'a [&'a str]) -> &'a str {
             items[(rng(state) as usize) % items.len()]
         }
-        fn border_clause(b: &TableBorders) -> String {
-            match b {
-                TableBorders::All(eighths) => {
-                    let pt = *eighths as f64 / 8.0;
-                    let s = format!("{pt:.2}");
-                    format!(
-                        "all borders {}pt",
-                        s.trim_end_matches('0').trim_end_matches('.')
-                    )
-                }
-                TableBorders::Sides(sides) => {
-                    let parts: Vec<String> = sides
-                        .iter()
-                        .map(|s| {
-                            let mut out = format!("{} {}", s.side, s.val);
-                            if let Some(sz) = s.size {
-                                let pt = sz as f64 / 8.0;
-                                let p = format!("{pt:.2}");
-                                let _ = std::fmt::Write::write_fmt(
-                                    &mut out,
-                                    format_args!(
-                                        " {}pt",
-                                        p.trim_end_matches('0').trim_end_matches('.')
-                                    ),
-                                );
-                            }
-                            if let Some(color) = &s.color {
-                                let _ =
-                                    std::fmt::Write::write_fmt(&mut out, format_args!(" #{color}"));
-                            }
-                            if let Some(space) = s.space {
-                                let _ = std::fmt::Write::write_fmt(
-                                    &mut out,
-                                    format_args!(" space {space}pt"),
-                                );
-                            }
-                            out
-                        })
-                        .collect();
-                    format!("borders {}", parts.join(" "))
-                }
-            }
-        }
+        /// The expected spacing is the typed value Rust stores, not the
+        /// legend's decimal spelling: twips/20 for points, hundredths/100
+        /// for line counts, 240ths/240 for line multiples. A reader that
+        /// rounds the same way as `cell_spacing_attrs` agrees even on the
+        /// writer's four-decimal `line 1.038` (`w:line="249"`).
         fn cell_spacing_json(attrs: &str) -> serde_json::Value {
             let mut obj = serde_json::Map::new();
             let tokens: Vec<&str> = attrs.split_whitespace().collect();
@@ -2650,6 +2636,11 @@ mod branch_tests {
             serde_json::Value::Object(map)
         }
 
+        // The alphabet covers both the engine's own spelling and the
+        // hand-written legends a reader must refuse exactly as Rust does.
+        // Unicode White_Space keys use \u{0085}/\u{00A0}/\u{3000}; U+FEFF is
+        // deliberately *not* whitespace, as in Rust. The escaped surrogate
+        // ids are quoted JSON strings: serde_json refuses the lone one.
         let ids = [
             "A",
             "B",
@@ -2662,29 +2653,139 @@ mod branch_tests {
             "''",
             "\"A\\\"B\"",
             "A B",
+            "__proto__",
+            "constructor",
+            "5",
+            "0",
+            "\"5\"",
+            "\u{0085}A",
+            "\u{FEFF}A",
+            "\u{3000}A",
+            "\u{00A0}A",
+            r#""\ud800""#,
+            r#""\ud83d\ude00""#,
         ];
-        let clause_kinds = [
+        let spacing_kinds = [
             "cell paragraphs after 6pt",
             "cell paragraphs after 0pt",
             "cell paragraphs before 6pt",
             "cell paragraphs after 0pt line 1",
             "cell paragraphs line 12pt exact",
+            "cell paragraphs before auto",
+            "cell paragraphs after auto line 20pt atLeast",
+            "cell paragraphs before 1.5 lines",
+            "cell paragraphs after +6pt",
+            "cell paragraphs after 6e0pt",
+            "cell paragraphs after 1.5E1pt",
+            "cell paragraphs after -0pt",
+            "cell paragraphs line 1e0",
+            "cell paragraphs line +1",
+            "cell paragraphs after 1e1 lines",
+            "cell paragraphs after\u{0085}6pt",
+            "cell paragraphs after\u{00A0}6pt",
+            "cell paragraphs after\u{3000}6pt",
+            "cell paragraphs after\t6pt",
+            "cell paragraphs after\u{FEFF}6pt",
+            "cell paragraphs after 1638pt",
+            "cell paragraphs after 1638.5pt",
+            "cell paragraphs line 132",
+            "cell paragraphs line 132.1",
+            "cell paragraphs before 100 lines",
+            "cell paragraphs before 101 lines",
+            "cell paragraphs line 1.038",
+            "cell paragraphs line 1.0375",
+            "cell paragraphs after 6.0004pt",
+            "cell paragraphs contextual spacing",
+            "cell paragraphs contextual spacing off",
             "cell paragraphs after 0pt after 6pt",
+            "cell paragraphs before auto before 6pt",
             "cell paragraphs bogus",
             "cell paragraphs after 6pt, cell paragraphs after 0pt",
+        ];
+        let border_kinds = [
             "borders top single",
             "borders bottom double 0.75pt #FF0000 space 4pt",
             "all borders 0.5pt",
+            "all borders 0.125pt",
+            "all borders 0.375pt",
+            "all borders 0.625pt",
+            "all borders 0.875pt",
+            "all borders 0.03pt",
+            "all borders 0.06pt",
+            "all borders 0pt",
+            "all borders 1e0pt",
+            "all borders 6pt",
+            "all borders 9pt",
             "borders top double 1.5pt #abcdef space +2pt",
             "borders top double 1e0pt",
+            "borders top single 0.125pt",
+            "borders bottom double 0.375pt #ABCDEF",
+            "borders left dashed 0.625pt",
+            "borders right dotted 0.875pt space 0pt",
+            "borders insideH thick 0.03pt space 2pt",
+            "borders insideV nil 0.06pt",
+            "borders top single 0.03pt 3pt",
+            "borders top single 0.06pt 0.06pt",
+            "borders top single 0pt",
+            "borders top single 0.5pt 0.75pt",
+            "borders top single space 4pt #A1B2C3",
+            "borders top single 0.5pt\t#FFFFFF",
+            "borders top dashDot bottom dashDotDot",
+            "borders left inSet right outSet",
+            "borders insideH 3d insideV dot3D",
+            "borders top wavy bottom doubleWave",
+            "borders top single 1pt left single 2pt bottom single 3pt right single 4pt insideH single 5pt insideV single 6pt",
+            "borders middle single",
+            "borders top s!ngle",
+            "borders top single 300pt",
+            "borders top single #FF00",
             "borders vary",
-            "named \"X\"",
-            "named \"A, B\"",
-            "unknown clause",
-            "",
-            "\"\"",
         ];
-        let seps = [", ", ",", " , ", ",,", ", "]; // last is normal; trailing handled separately
+        // Every `w:val` spelling the grammar accepts (an ASCII-alphanumeric
+        // word), on all six sides, with size, colour and space together.
+        let border_values = [
+            "single",
+            "double",
+            "nil",
+            "none",
+            "dotted",
+            "dashed",
+            "dotDash",
+            "dotDotDash",
+            "triple",
+            "thinThickSmallGap",
+            "thinThickMediumGap",
+            "thinThickLargeGap",
+            "thickThinSmallGap",
+            "thickThinMediumGap",
+            "thickThinLargeGap",
+            "thinThickThinSmallGap",
+            "thinThickThinMediumGap",
+            "thinThickThinLargeGap",
+            "wave",
+            "doubleWave",
+            "dashSmallGap",
+            "dashDotStroked",
+            "threeDEmboss",
+            "threeDEngrave",
+            "outset",
+            "inset",
+        ];
+        let clause_kinds: Vec<&str> = spacing_kinds
+            .iter()
+            .chain(border_kinds.iter())
+            .copied()
+            .chain([
+                "named \"X\"",
+                "named \"A, B\"",
+                "unknown clause",
+                "",
+                "\"\"",
+                "\u{0085}",
+                "\u{FEFF}",
+            ])
+            .collect();
+        let seps = [", ", ",", " , ", ",,", ", ", "\u{0085}, ", "\t, "];
 
         let mut cases: Vec<serde_json::Value> = Vec::new();
         // Review cases must be present.
@@ -2698,28 +2799,51 @@ mod branch_tests {
             "A, \"\", cell paragraphs after 6pt",
             "A, borders top single , cell paragraphs after 6pt",
             "A, cell paragraphs after 6pt,,B, cell paragraphs after 0pt",
+            "A, borders top single 0.03pt 3pt, B, cell paragraphs after 6pt",
+            "A, borders bottom single 0.125pt #999999, B, cell paragraphs line 1.038",
+            "A, \u{0085}, borders top single",
+            "A, \u{FEFF}, borders top single",
+            "\u{0085}A, cell paragraphs after 6pt",
+            "\u{FEFF}A, cell paragraphs after 6pt",
+            "cell paragraphs after\u{0085}6pt, A, cell paragraphs after 6pt",
+            r#""\ud800", A, cell paragraphs after 6pt"#,
+            r#""\ud83d\ude00", A, cell paragraphs after 6pt"#,
+            "__proto__, cell paragraphs after 24pt, constructor, cell paragraphs after 6pt, 5, all borders 0.5pt",
+            "tables: A, borders top single 1pt #FF0000, B, cell paragraphs after 6pt",
         ];
         for legend in review_cases {
             cases.push(serde_json::json!({"legend": legend, "expected": expected_for(legend)}));
         }
+        // Every side, value, size spelling and spacing word gets its own
+        // case, so the corpus cannot pass by never generating e.g. insideV.
+        for clause in clause_kinds.iter().chain(ids.iter()) {
+            let legend = format!("S, {clause}");
+            cases.push(serde_json::json!({"legend": legend, "expected": expected_for(&legend)}));
+        }
+        // The border grammar accepts any ASCII-alphanumeric `w:val`; one
+        // case per value per side keeps the port honest on all 26 spellings.
+        for side in TABLE_BORDER_SIDES {
+            for value in border_values {
+                let legend = format!("S, borders {side} {value} 1.5pt #123456 space 2pt");
+                cases
+                    .push(serde_json::json!({"legend": legend, "expected": expected_for(&legend)}));
+            }
+        }
 
         let mut state: u64 = 0x5eed_1281_c0de_5eed;
-        for _ in 0..3000 {
+        for _ in 0..2200 {
             let parts_count = 1 + (rng(&mut state) as usize % 6);
             let mut legend = String::new();
             for p in 0..parts_count {
                 if p > 0 {
                     legend.push_str(pick(&mut state, &seps));
                 }
-                // Mix: id, clause, or repeated id
+                // Mix: id, clause, or an id that may repeat one used above.
                 let roll = rng(&mut state) % 10;
-                if roll < 4 {
+                if roll < 4 || roll == 9 {
                     legend.push_str(pick(&mut state, &ids));
-                } else if roll < 9 {
-                    legend.push_str(pick(&mut state, &clause_kinds));
                 } else {
-                    // repeat an id already used in this legend, or any id
-                    legend.push_str(pick(&mut state, &ids));
+                    legend.push_str(pick(&mut state, &clause_kinds));
                 }
             }
             // Sometimes add a trailing separator
@@ -2746,13 +2870,13 @@ mod branch_tests {
 
         let json = serde_json::to_string_pretty(&unique).unwrap() + "\n";
         assert!(
-            json.len() < 1_000_000,
+            json.len() < 2_000_000,
             "corpus too large: {} bytes",
             json.len()
         );
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/table_legend_differential.json");
-        if std::env::var_os("JUBARTE_REGEN_FIXTURES").is_some() {
+        if std::env::var("JUBARTE_REGEN_FIXTURES").as_deref() == Ok("1") {
             std::fs::write(&path, &json).unwrap();
         } else {
             let committed = std::fs::read_to_string(&path).unwrap_or_else(|_| {
